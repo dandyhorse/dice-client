@@ -1,0 +1,28 @@
+# Progress: current-sparc client
+
+## Status: done
+
+## Completed
+- [x] Farkle scoring client mirror updated in `src/domain/scorer.ts`: `scoreRoll()` exposes smaller valid N-of-a-kind choices from 4/5/6 same-face rolls, while preserving the shared score table.
+- [x] Auth UX added to `src/main.ts`: top-left registration/login controls; guests choose a display name, authenticated users use `@username` as display name.
+- [x] Production server URL fixed in `src/engine/config.ts`: production uses `window.location.origin`, avoiding hardcoded `:3002` and CORS/mixed-origin failures behind nginx.
+- [x] Client PM2 setup added in `ecosystem.config.cjs`: `npm run preview -- --host 0.0.0.0 --port 5174`, watching `dist`.
+- [x] Room protocol mirror extended with `ROOM_MODE.MATCH | ROOM_MODE.TEST` in `src/network/protocol/types.ts` and `src/network/protocol/codecs.ts`.
+- [x] Lobby gained `Тестовая комната`: creates an active free-play test room for multi-screen physics checks.
+- [x] `GameEngine` supports test rooms without turn HUD/selection: any player in a test room can throw while the room is active and not rolling.
+- [x] Added bottom-right `Назад` button in lobby room screen, network game, and local game.
+- [x] Added cleanup path for leaving game: `GameEngine.destroy()`, `ShakeInputService.destroy()`, `SelectionService.destroy()`, and WS disconnect via `NetworkService.disconnect()`.
+
+## Verification
+- [x] `npm run build` in `dice-client` passed after test-room changes.
+- [x] `npm run build` in `dice-client` passed after `Назад`/destroy changes.
+- [x] Built frontend bundle contains `Тестовая комната` and `Назад`.
+- [x] `pm2 list` showed `dice-client` online after `dist` rebuild and watch restart.
+- [x] Local nginx check for `https://farklepit.online/` returned `200`.
+
+## Notes
+- Public routing target is nginx on `80/443`; client preview remains internal on `127.0.0.1:5174`.
+- For production, browser should call `/auth`, `/ws`, `/health` on the same origin, not `:3002`.
+- `ecosystem.config.cjs` must be used instead of `.js` because `dice-client/package.json` has `"type": "module"`.
+- Protocol files remain synced with server except the first marker comment.
+- Hard refresh may be needed after rebuild because the Vite asset hash changes.

@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build:*)",
+      "Bash(npm run dev:*)",
+      "Bash(npm run preview:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vite:*)",
+      "Bash(npm run *)",
+      "Bash(npx eslint *)",
+      "Bash(mv /home/dandyhorse/projects/kosti /home/dandyhorse/projects/dice-client)",
+      "Bash(mv /home/dandyhorse/.claude/projects/-home-dandyhorse-projects-kosti /home/dandyhorse/.claude/projects/-home-dandyhorse-projects-dice-client)"
+    ]
+  }
+}
