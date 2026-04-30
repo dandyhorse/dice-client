@@ -5,6 +5,7 @@ import {
   DICE_HALF_SIZE,
   DICE_MASS,
   DICE_SPACING,
+  INTERPOLATION_DELAY_MS,
   THROW_ANGULAR_RANDOM,
 } from '../../../config';
 import type { DieStateFull } from './network.service';
@@ -22,6 +23,17 @@ interface RemoteDie {
   v: THREE.Vector3;
   w: THREE.Vector3;
   lastUpdateMs: number;
+  samples: RemoteSample[];
+  sampleCursor: number;
+  sampleCount: number;
+}
+
+interface RemoteSample {
+  atMs: number;
+  p: THREE.Vector3;
+  q: THREE.Quaternion;
+  v: THREE.Vector3;
+  w: THREE.Vector3;
 }
 
 // Three.js BoxGeometry materials indexed in порядке: [+X, -X, +Y, -Y, +Z, -Z].
@@ -71,7 +83,19 @@ const getFaceTextures = (): THREE.CanvasTexture[] => {
   return cachedFaceTextures;
 };
 
+const createFaceMaterials = (): THREE.MeshStandardMaterial[] =>
+  getFaceTextures().map(
+    (texture) =>
+      new THREE.MeshStandardMaterial({
+        map: texture,
+        roughness: 0.4,
+        metalness: 0.05,
+      }),
+  );
+
 const PARKED_Y = -1000;
+const REMOTE_SAMPLE_CAPACITY = 8;
+const INTERPOLATION_DELAY_RAMP_MS = 120;
 
 // Максимальное время экстраполяции без свежего снапшота. Если сервер молчит
 // дольше этого, кости не продолжают лететь — застывают на последнем известном
@@ -80,12 +104,19 @@ const MAX_EXTRAPOLATION_MS = 250;
 
 export type DiceMode = 'local' | 'network';
 
+export interface DiceServiceOptions {
+  shadowsEnabled?: boolean;
+}
+
 export class DiceService {
   private scene: THREE.Scene;
   private world: CANNON.World | null;
   private material: CANNON.Material | null;
   private readonly mode: DiceMode;
+  private readonly shadowsEnabled: boolean;
   private isHeld = false;
+  private interpolationRampStartMs = 0;
+  private readonly tmpDeltaQ = new THREE.Quaternion();
 
   // В local mode — массив LocalDie (cannon body + mesh).
   // В network mode — массив RemoteDie (только mesh + state от сервера).
@@ -97,30 +128,24 @@ export class DiceService {
     world: CANNON.World | null,
     material: CANNON.Material | null,
     mode: DiceMode = 'local',
+    options: DiceServiceOptions = {},
   ) {
     this.scene = scene;
     this.world = world;
     this.material = material;
     this.mode = mode;
+    this.shadowsEnabled = options.shadowsEnabled ?? mode === 'local';
   }
 
   spawn(): void {
     const size = DICE_HALF_SIZE * 2;
     const geometry = new THREE.BoxGeometry(size, size, size);
 
-    const faceTextures = getFaceTextures();
     for (let i = 0; i < DICE_COUNT; i++) {
-      const materials = faceTextures.map(
-        (texture) =>
-          new THREE.MeshStandardMaterial({
-            map: texture,
-            roughness: 0.4,
-            metalness: 0.05,
-          }),
-      );
+      const materials = createFaceMaterials();
       const mesh = new THREE.Mesh(geometry, materials);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      mesh.castShadow = this.shadowsEnabled;
+      mesh.receiveShadow = this.shadowsEnabled;
       this.scene.add(mesh);
 
       const offsetX = (i - (DICE_COUNT - 1) / 2) * DICE_SPACING;
@@ -161,6 +186,9 @@ export class DiceService {
           v: new THREE.Vector3(),
           w: new THREE.Vector3(),
           lastUpdateMs: 0,
+          samples: this.createRemoteSamples(),
+          sampleCursor: 0,
+          sampleCount: 0,
         });
       }
     }
@@ -186,11 +214,13 @@ export class DiceService {
     // пока не придёт первый снапшот (начала нового броска) — кости скрыты.
     for (const die of this.remoteDice) {
       die.mesh.visible = false;
+      this.clearRemoteSamples(die);
       // Обнуляем velocity чтобы extrapolate не уводил мешь в сторону
       // на случай запоздалого снапшота с velocity != 0.
       die.v.set(0, 0, 0);
       die.w.set(0, 0, 0);
     }
+    this.interpolationRampStartMs = 0;
   }
 
   release(velocity: THREE.Vector3, position: THREE.Vector3): void {
@@ -244,10 +274,9 @@ export class DiceService {
 
   /**
    * network mode: принять снапшот серверного state. Пишет внутреннее состояние,
-   * `extrapolate()` на следующем кадре положит его в меш. На первом снапшоте
-   * снимает isHeld — если пользователь держал кости, бросок начался.
+   * `extrapolate()` на следующем кадре отрендерит буферизированное состояние.
    */
-  applySnapshot(dice: DieStateFull[], now: number): void {
+  applySnapshot(dice: DieStateFull[], now: number, options: { immediate?: boolean } = {}): void {
     if (this.mode !== 'network') return;
     // ВАЖНО: isHeld здесь НЕ сбрасываем — это делает release(). Иначе любой snapshot
     // (например, опоздавший REST от прошлого броска) сорвёт hold и кости замерцают,
@@ -267,14 +296,24 @@ export class DiceService {
       // пул в 6-1 = 5 кубиков и т.д. без отдельного opcode'а.
       if (state.p[1] < -100) {
         die.mesh.visible = false;
+        this.clearRemoteSamples(die);
         continue;
       }
+
       if (this.isHeld) continue; // игрок держит — state обновили, mesh оставляем спрятанным
+
+      const wasEmpty = die.sampleCount === 0;
+      if (options.immediate) this.clearRemoteSamples(die);
+      this.pushRemoteSample(die, now);
+      if (wasEmpty && !options.immediate) this.interpolationRampStartMs = now;
+
       die.mesh.visible = true;
-      // Сразу пишем в меш, чтобы при снапшоте с v=0 (rest) не было кадра со
-      // старой позой до следующего extrapolate тика.
-      die.mesh.position.copy(die.p);
-      die.mesh.quaternion.copy(die.q);
+      // Первый/финальный state пишем сразу. Обычные rolling-снапшоты дальше
+      // идут через interpolation buffer, чтобы не ловить jitter от сети.
+      if (wasEmpty || options.immediate) {
+        die.mesh.position.copy(die.p);
+        die.mesh.quaternion.copy(die.q);
+      }
     }
   }
 
@@ -305,38 +344,114 @@ export class DiceService {
   }
 
   /**
-   * network mode: между снапшотами. Экстраполирует position/orientation от
-   * последнего известного state + velocity * dt. Даёт плавность при jitter'е
-   * серверной рассылки (snapshot HZ ≈ RAF HZ, но гапсы покрываются extrapolate).
+   * network mode: рендерит state с небольшой задержкой от реального времени.
+   * Нормальный путь — interpolation между двумя серверными снапшотами; если
+   * следующий снапшот опаздывает, коротко extrapolate'им от последнего.
    */
   extrapolate(now: number): void {
     if (this.mode !== 'network') return;
+    const renderAtMs = now - this.getInterpolationDelayMs(now);
     for (const die of this.remoteDice) {
       if (!die.mesh.visible) continue;
-      const dtMs = now - die.lastUpdateMs;
-      if (dtMs <= 0 || dtMs > MAX_EXTRAPOLATION_MS) {
-        die.mesh.position.copy(die.p);
-        die.mesh.quaternion.copy(die.q);
+      if (die.sampleCount === 0) continue;
+
+      const first = this.getRemoteSample(die, 0);
+      const last = this.getRemoteSample(die, die.sampleCount - 1);
+      if (!first || !last) continue;
+
+      if (renderAtMs <= first.atMs) {
+        die.mesh.position.copy(first.p);
+        die.mesh.quaternion.copy(first.q);
         continue;
       }
-      const dt = dtMs / 1000;
-      die.mesh.position.set(
-        die.p.x + die.v.x * dt,
-        die.p.y + die.v.y * dt,
-        die.p.z + die.v.z * dt,
-      );
-      const angle = die.w.length() * dt;
-      if (angle > 1e-6) {
-        const axisX = die.w.x / die.w.length();
-        const axisY = die.w.y / die.w.length();
-        const axisZ = die.w.z / die.w.length();
-        const s = Math.sin(angle / 2);
-        const c = Math.cos(angle / 2);
-        const deltaQ = new THREE.Quaternion(axisX * s, axisY * s, axisZ * s, c);
-        die.mesh.quaternion.multiplyQuaternions(deltaQ, die.q);
+
+      let prev = first;
+      let next: RemoteSample | null = null;
+      for (let i = 1; i < die.sampleCount; i++) {
+        const sample = this.getRemoteSample(die, i);
+        if (!sample) break;
+        if (sample.atMs >= renderAtMs) {
+          next = sample;
+          break;
+        }
+        prev = sample;
+      }
+
+      if (next) {
+        const spanMs = Math.max(1, next.atMs - prev.atMs);
+        const alpha = Math.min(1, Math.max(0, (renderAtMs - prev.atMs) / spanMs));
+        die.mesh.position.lerpVectors(prev.p, next.p, alpha);
+        die.mesh.quaternion.copy(prev.q).slerp(next.q, alpha);
       } else {
-        die.mesh.quaternion.copy(die.q);
+        this.renderExtrapolated(die, last, renderAtMs);
       }
     }
+  }
+
+  private createRemoteSamples(): RemoteSample[] {
+    return Array.from({ length: REMOTE_SAMPLE_CAPACITY }, () => ({
+      atMs: 0,
+      p: new THREE.Vector3(),
+      q: new THREE.Quaternion(),
+      v: new THREE.Vector3(),
+      w: new THREE.Vector3(),
+    }));
+  }
+
+  private getInterpolationDelayMs(now: number): number {
+    if (this.interpolationRampStartMs <= 0) return INTERPOLATION_DELAY_MS;
+    const elapsed = now - this.interpolationRampStartMs;
+    if (elapsed >= INTERPOLATION_DELAY_RAMP_MS) return INTERPOLATION_DELAY_MS;
+    return INTERPOLATION_DELAY_MS * Math.max(0, elapsed / INTERPOLATION_DELAY_RAMP_MS);
+  }
+
+  private clearRemoteSamples(die: RemoteDie): void {
+    die.sampleCursor = 0;
+    die.sampleCount = 0;
+  }
+
+  private pushRemoteSample(die: RemoteDie, atMs: number): void {
+    const sample = die.samples[die.sampleCursor]!;
+    sample.atMs = atMs;
+    sample.p.copy(die.p);
+    sample.q.copy(die.q);
+    sample.v.copy(die.v);
+    sample.w.copy(die.w);
+    die.sampleCursor = (die.sampleCursor + 1) % REMOTE_SAMPLE_CAPACITY;
+    die.sampleCount = Math.min(REMOTE_SAMPLE_CAPACITY, die.sampleCount + 1);
+  }
+
+  private getRemoteSample(die: RemoteDie, index: number): RemoteSample | null {
+    if (index < 0 || index >= die.sampleCount) return null;
+    const oldest = (die.sampleCursor - die.sampleCount + REMOTE_SAMPLE_CAPACITY) % REMOTE_SAMPLE_CAPACITY;
+    return die.samples[(oldest + index) % REMOTE_SAMPLE_CAPACITY] ?? null;
+  }
+
+  private renderExtrapolated(die: RemoteDie, sample: RemoteSample, renderAtMs: number): void {
+    const dtMs = renderAtMs - sample.atMs;
+    if (dtMs <= 0 || dtMs > MAX_EXTRAPOLATION_MS) {
+      die.mesh.position.copy(sample.p);
+      die.mesh.quaternion.copy(sample.q);
+      return;
+    }
+
+    const dt = dtMs / 1000;
+    die.mesh.position.set(
+      sample.p.x + sample.v.x * dt,
+      sample.p.y + sample.v.y * dt,
+      sample.p.z + sample.v.z * dt,
+    );
+
+    const wLenSq = sample.w.lengthSq();
+    if (wLenSq <= 1e-12) {
+      die.mesh.quaternion.copy(sample.q);
+      return;
+    }
+
+    const wLen = Math.sqrt(wLenSq);
+    const halfAngle = (wLen * dt) / 2;
+    const s = Math.sin(halfAngle) / wLen;
+    this.tmpDeltaQ.set(sample.w.x * s, sample.w.y * s, sample.w.z * s, Math.cos(halfAngle));
+    die.mesh.quaternion.multiplyQuaternions(this.tmpDeltaQ, sample.q);
   }
 }

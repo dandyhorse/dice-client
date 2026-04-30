@@ -39,7 +39,7 @@ class SelectionService {
 
 ### Индексы
 
-Возвращаются индексы в `dice.remoteDice[]` массиве (= индексы в `MATCH_DICE_SNAPSHOT`). Сервер ожидает индексы в `lastRolledFaces` (массив активных костей); т.к. `activeIndices = [0..remainingDice-1]` — первые N в `physics.dice` — порядок совпадает 1:1. Bench-кости **не попадают** в выбор по построению (невидимы), значит индексы остаются непрерывными.
+Возвращаются индексы в `dice.remoteDice[]` массиве (= snapshot-id кости в `MATCH_DICE_SNAPSHOT`). `rolledFaces` приходит в порядке активных видимых костей, поэтому `SelectionService` держит маппинг `rolledFaces position ↔ snapshot-id`: подсказки `scoreRoll()` переводятся в snapshot-id для подсветки, а выбранные snapshot-id переводятся обратно в позиции `rolledFaces` для локальной проверки. Сервер принимает те же snapshot-id и маппит их через текущий `activeIndices`.
 
 ### Подсветка
 

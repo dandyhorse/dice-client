@@ -26,11 +26,10 @@ interface DieHighlight {
  * с hold/release ShakeInputService (который сам выключен в SELECTING, но
  * слушать одно и то же событие — лишний риск). Левая кнопка только.
  *
- * Индексы — позиции в `remoteDice[]` снапшота. Это совпадает с тем, что
- * сервер ожидает в `MATCH_SELECT_DICE { indices }` (см. match-rules.md):
- * `activeIndices = [0..remainingDice-1]`, первые N в `physics.dice` — то же
- * порядок, что и в snapshot'е (bench кости фильтруются по y < -100 в
- * applySnapshot — они невидимы и raycast их пропускает).
+ * Индексы выбора — snapshot-id кости (`remoteDice[]` index). `rolledFaces`
+ * приходит в порядке активных видимых костей, поэтому scoring-позиции
+ * переводятся в snapshot-id перед подсветкой, а выбранные snapshot-id — обратно
+ * в позиции `rolledFaces` для локальной проверки.
  *
  * Подсветка — emissive на материалах граней. Каждая кость имеет 6
  * MeshStandardMaterial (по числу faces); меняем emissive на всех 6.
@@ -45,6 +44,7 @@ export class SelectionService {
   private readonly orderedSelection: number[] = [];
   private readonly selectable = new Set<number>();
   private readonly highlights = new Map<number, DieHighlight>();
+  private readonly rollIndexBySnapshotIndex = new Map<number, number>();
   private rolledFaces: number[] = [];
   private enabled = false;
 
@@ -83,15 +83,21 @@ export class SelectionService {
   setScoringOptions(rolledFaces: number[], options: ScoringOption[]): void {
     this.clearScoringOptions(false);
     this.rolledFaces = [...rolledFaces];
+    const active = this.dice.getActiveRemoteMeshes();
+    for (let rollIndex = 0; rollIndex < this.rolledFaces.length; rollIndex++) {
+      const snapshotIndex = active[rollIndex]?.index ?? rollIndex;
+      this.rollIndexBySnapshotIndex.set(snapshotIndex, rollIndex);
+    }
 
     for (const option of options) {
       const kind = this.kindForOption(option);
       const priority = this.priorityForKind(kind);
-      for (const index of option.dieIndices) {
-        this.selectable.add(index);
-        const current = this.highlights.get(index);
+      for (const rollIndex of option.dieIndices) {
+        const snapshotIndex = active[rollIndex]?.index ?? rollIndex;
+        this.selectable.add(snapshotIndex);
+        const current = this.highlights.get(snapshotIndex);
         if (!current || priority > current.priority) {
-          this.highlights.set(index, { kind, priority });
+          this.highlights.set(snapshotIndex, { kind, priority });
         }
       }
     }
@@ -105,6 +111,7 @@ export class SelectionService {
     this.orderedSelection.length = 0;
     this.selectable.clear();
     this.highlights.clear();
+    this.rollIndexBySnapshotIndex.clear();
     this.rolledFaces = [];
     this.clearAllHighlights();
     if (emit) this.emitSelectionChanged();
@@ -194,7 +201,9 @@ export class SelectionService {
 
   private emitSelectionChanged(): void {
     const indices = [...this.orderedSelection];
-    const valid = indices.length > 0 && validateSelection(this.rolledFaces, indices).valid === true;
+    const rollIndices = indices.map((index) => this.rollIndexBySnapshotIndex.get(index) ?? -1);
+    const valid =
+      indices.length > 0 && validateSelection(this.rolledFaces, rollIndices).valid === true;
     this.events.emit('selection-changed', indices, valid);
   }
 

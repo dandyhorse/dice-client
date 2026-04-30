@@ -55,9 +55,10 @@ WebSocket URL строится как:
 ## Что делает GameEngine с приходящими снапшотами
 
 Game engine в network-mode не запускает локальный cannon-step. Он:
-- На `dice-spawn` / `dice-snapshot` → `DiceService.applySnapshot(snap.dice, now)` пишет state кости в внутренний буфер.
-- На `dice-rest` → то же, но v/w принудительно зануляются (в бинарном формате они опущены, маппятся в `[0,0,0]` перед передачей в `applySnapshot`).
-- Каждый кадр RAF → `DiceService.extrapolate(now)` двигает меш по последним известным `v` и `w`. Если сервер молчит >`MAX_EXTRAPOLATION_MS = 250` — кости застывают на последней позе.
+- На `dice-spawn` / `dice-snapshot` → `DiceService.applySnapshot(snap.dice, now)` пишет state кости в короткий ring buffer.
+- На `dice-rest` → v/w принудительно зануляются, `applySnapshot(..., { immediate: true })` сбрасывает буфер и фиксирует авторитативную позу.
+- Каждый кадр RAF → `DiceService.extrapolate(now)` рендерит `now - INTERPOLATION_DELAY_MS` через interpolation между двумя snapshot'ами. После первого visible snapshot нового броска delay плавно нарастает от 0 до 50ms за 120ms, чтобы release не ощущался как пауза. Если следующий snapshot опаздывает, используется короткий extrapolation fallback; если gap >`MAX_EXTRAPOLATION_MS = 250`, кости застывают на последней позе.
+- Bench/held кости не рендерятся и очищают interpolation buffer, чтобы не интерполироваться из/в `y=-1000`.
 - На `match-state` / `match-roll-result` / `match-turn-result` → передаёт в `HudUiService` для отрисовки turn-UI и переключает enabled у `ShakeInputService` / `SelectionService`. См. `turn-ui.md`.
 - В `ROOM_MODE.TEST` HUD/SelectionService не создаются; input включён для любого online player в active test-room, пока не идёт rolling.
 

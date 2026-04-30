@@ -36,13 +36,37 @@ export interface GameEngineOptions {
   network?: NetworkService;
 }
 
+interface PerfStats {
+  el: HTMLDivElement;
+  lastUiMs: number;
+  frames: number;
+  frameMs: number;
+  simMs: number;
+  renderMs: number;
+  lastSnapshotMs: number;
+  snapshotGapMs: number;
+  snapshotGaps: number;
+  maxSnapshotGapMs: number;
+}
+
+const PERF_UPDATE_INTERVAL_MS = 500;
+const PERF_DEBUG_ENABLED = (): boolean => {
+  const params = new URLSearchParams(window.location.search);
+  if (params.has('perf')) return true;
+  try {
+    return window.localStorage.getItem('dice:perf') === '1';
+  } catch {
+    return false;
+  }
+};
+
 /**
  * Архитектура:
  *  - local mode: полная cannon-es симуляция на клиенте (старый рабочий путь)
  *  - network mode: НИКАКОЙ локальной физики. Клиент — чистое зеркало серверного state.
  *    Сервер шлёт dice-snapshot (p, q, v, w) с частотой SNAPSHOT_HZ, клиент
- *    между снапшотами экстраполирует по velocity/angular velocity. Оба клиента
- *    рендерят одну и ту же серверную симуляцию → видят ровно одно и то же.
+ *    рендерит короткий interpolation buffer, а extrapolation использует только
+ *    как fallback при сетевом gap. Оба клиента видят один серверный бросок.
  */
 export class GameEngine {
   readonly scene: THREE.Scene;
@@ -63,6 +87,7 @@ export class GameEngine {
 
   private lastTime = 0;
   private rafId: number | null = null;
+  private perf: PerfStats | null = null;
 
   constructor(options: GameEngineOptions = {}) {
     this.mode = options.mode ?? 'local';
@@ -86,8 +111,11 @@ export class GameEngine {
       this.createPlayArea(false);
     }
 
-    this.dice = new DiceService(this.scene, this.physicsWorld, this.diceMaterial, this.mode);
+    this.dice = new DiceService(this.scene, this.physicsWorld, this.diceMaterial, this.mode, {
+      shadowsEnabled: this.areShadowsEnabled(),
+    });
     this.dice.spawn();
+    this.perf = this.createPerfStats();
 
     this.input = new ShakeInputService(this.renderer.domElement, this.camera);
     this.input.events.on('hold-start', () => {
@@ -108,19 +136,25 @@ export class GameEngine {
     if (this.mode === 'network' && this.network) {
       const net = this.network;
       net.events.on('dice-spawn', (snap: SnapshotPayload) => {
+        this.recordSnapshot(performance.now());
         this.dice.applySnapshot(snap.dice, performance.now());
       });
       net.events.on('dice-snapshot', (snap: SnapshotPayload) => {
-        this.dice.applySnapshot(snap.dice, performance.now());
+        const now = performance.now();
+        this.recordSnapshot(now);
+        this.dice.applySnapshot(snap.dice, now);
       });
       net.events.on('dice-rest', (rest: RestPayload) => {
+        const now = performance.now();
+        this.recordSnapshot(now);
         // Rest — финальный снапшот без v/w (в бинарном формате они опущены — всегда нули).
         // Применяем той же логикой, кости замрут в авторитативной позе.
         // faceValue пока не используем в UI.
         const ZERO: [number, number, number] = [0, 0, 0];
         this.dice.applySnapshot(
           rest.dice.map((d) => ({ p: d.p, q: d.q, v: ZERO, w: ZERO })),
-          performance.now(),
+          now,
+          { immediate: true },
         );
       });
 
@@ -261,29 +295,37 @@ export class GameEngine {
     this.input.destroy();
     this.selection?.destroy();
     this.hud?.destroy();
+    this.perf?.el.remove();
     this.renderer.domElement.remove();
     this.renderer.dispose();
+  }
+
+  private areShadowsEnabled(): boolean {
+    return this.mode === 'local';
   }
 
   private createScene(): THREE.Scene {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x1a1a22);
 
+    const shadows = this.areShadowsEnabled();
     const ambient = new THREE.AmbientLight(0xffffff, 0.35);
     const directional = new THREE.DirectionalLight(0xffffff, 0.8);
     directional.position.set(0.001, 18, 0.001);
-    directional.castShadow = true;
-    directional.shadow.mapSize.width = 2048;
-    directional.shadow.mapSize.height = 2048;
-    directional.shadow.bias = -0.0005;
+    directional.castShadow = shadows;
+    if (shadows) {
+      directional.shadow.mapSize.width = 1024;
+      directional.shadow.mapSize.height = 1024;
+      directional.shadow.bias = -0.0005;
 
-    const shadowSize = 20;
-    directional.shadow.camera.left = -shadowSize;
-    directional.shadow.camera.right = shadowSize;
-    directional.shadow.camera.top = shadowSize;
-    directional.shadow.camera.bottom = -shadowSize;
-    directional.shadow.camera.near = 0.5;
-    directional.shadow.camera.far = 60;
+      const shadowSize = 20;
+      directional.shadow.camera.left = -shadowSize;
+      directional.shadow.camera.right = shadowSize;
+      directional.shadow.camera.top = shadowSize;
+      directional.shadow.camera.bottom = -shadowSize;
+      directional.shadow.camera.near = 0.5;
+      directional.shadow.camera.far = 60;
+    }
 
     const ceilingLight = new THREE.PointLight(0xfff1d0, 1.4, 14, 1.2);
     ceilingLight.position.set(0, WALL_HEIGHT - 0.3, 0);
@@ -309,13 +351,13 @@ export class GameEngine {
 
   private createRenderer(): THREE.WebGLRenderer {
     const renderer = new THREE.WebGLRenderer({
-      antialias: true,
+      antialias: this.mode === 'local',
       powerPreference: 'high-performance',
     });
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFShadowMap;
+    renderer.setPixelRatio(1);
+    renderer.shadowMap.enabled = this.areShadowsEnabled();
+    if (renderer.shadowMap.enabled) renderer.shadowMap.type = THREE.PCFShadowMap;
     return renderer;
   }
 
@@ -371,7 +413,7 @@ export class GameEngine {
     });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.set(0, -TABLE_THICKNESS / 2, 0);
-    mesh.receiveShadow = true;
+    mesh.receiveShadow = this.areShadowsEnabled();
     this.scene.add(mesh);
 
     if (withBody && this.physicsWorld && this.tableMaterial) {
@@ -423,8 +465,8 @@ export class GameEngine {
         wallMaterial,
       );
       mesh.position.set(...w.pos);
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      mesh.castShadow = this.areShadowsEnabled();
+      mesh.receiveShadow = this.areShadowsEnabled();
       this.scene.add(mesh);
     }
   }
@@ -453,7 +495,8 @@ export class GameEngine {
   };
 
   private gameLoop = (): void => {
-    const currentTime = performance.now();
+    const frameStartMs = performance.now();
+    const currentTime = frameStartMs;
     let deltaTime = (currentTime - this.lastTime) / 1000;
     this.lastTime = currentTime;
 
@@ -461,17 +504,97 @@ export class GameEngine {
       deltaTime = 1 / 60;
     }
 
+    const simStartMs = performance.now();
     this.input.update(currentTime);
 
     if (this.mode === 'local' && this.physicsWorld) {
       this.physicsWorld.step(1 / 60, deltaTime, 3);
       this.dice.syncMeshes();
     } else {
-      // network: чистая экстраполяция от последнего серверного state.
+      // network: interpolation buffer + короткий extrapolation fallback.
       this.dice.extrapolate(currentTime);
     }
+    const simMs = performance.now() - simStartMs;
 
+    const renderStartMs = performance.now();
     this.renderer.render(this.scene, this.camera);
+    const renderMs = performance.now() - renderStartMs;
+    this.updatePerfStats(performance.now(), performance.now() - frameStartMs, simMs, renderMs);
     this.rafId = requestAnimationFrame(this.gameLoop);
   };
+
+  private createPerfStats(): PerfStats | null {
+    if (!PERF_DEBUG_ENABLED()) return null;
+    const el = document.createElement('div');
+    el.style.cssText = [
+      'position:fixed',
+      'left:8px',
+      'bottom:8px',
+      'z-index:50',
+      'padding:6px 8px',
+      'border-radius:6px',
+      'background:rgba(0,0,0,.72)',
+      'color:#dfffe0',
+      'font:12px/1.35 monospace',
+      'white-space:pre',
+      'pointer-events:none',
+    ].join(';');
+    el.textContent = 'perf...';
+    document.body.appendChild(el);
+    return {
+      el,
+      lastUiMs: performance.now(),
+      frames: 0,
+      frameMs: 0,
+      simMs: 0,
+      renderMs: 0,
+      lastSnapshotMs: 0,
+      snapshotGapMs: 0,
+      snapshotGaps: 0,
+      maxSnapshotGapMs: 0,
+    };
+  }
+
+  private recordSnapshot(now: number): void {
+    const perf = this.perf;
+    if (!perf) return;
+    if (perf.lastSnapshotMs > 0) {
+      const gap = now - perf.lastSnapshotMs;
+      perf.snapshotGapMs += gap;
+      perf.snapshotGaps += 1;
+      perf.maxSnapshotGapMs = Math.max(perf.maxSnapshotGapMs, gap);
+    }
+    perf.lastSnapshotMs = now;
+  }
+
+  private updatePerfStats(now: number, frameMs: number, simMs: number, renderMs: number): void {
+    const perf = this.perf;
+    if (!perf) return;
+    perf.frames += 1;
+    perf.frameMs += frameMs;
+    perf.simMs += simMs;
+    perf.renderMs += renderMs;
+
+    const elapsedMs = now - perf.lastUiMs;
+    if (elapsedMs < PERF_UPDATE_INTERVAL_MS) return;
+
+    const frames = Math.max(1, perf.frames);
+    const fps = (perf.frames * 1000) / elapsedMs;
+    const avgSnapshotGap = perf.snapshotGaps > 0 ? perf.snapshotGapMs / perf.snapshotGaps : 0;
+    perf.el.textContent = [
+      `fps ${fps.toFixed(0)}  frame ${(perf.frameMs / frames).toFixed(1)}ms`,
+      `sim ${(perf.simMs / frames).toFixed(2)}ms  render ${(perf.renderMs / frames).toFixed(2)}ms`,
+      `calls ${this.renderer.info.render.calls}  tris ${this.renderer.info.render.triangles}`,
+      `snap gap ${avgSnapshotGap.toFixed(1)}ms  max ${perf.maxSnapshotGapMs.toFixed(1)}ms`,
+    ].join('\n');
+
+    perf.lastUiMs = now;
+    perf.frames = 0;
+    perf.frameMs = 0;
+    perf.simMs = 0;
+    perf.renderMs = 0;
+    perf.snapshotGapMs = 0;
+    perf.snapshotGaps = 0;
+    perf.maxSnapshotGapMs = 0;
+  }
 }

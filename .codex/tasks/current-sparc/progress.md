@@ -12,6 +12,11 @@
 - [x] `GameEngine` supports test rooms without turn HUD/selection: any player in a test room can throw while the room is active and not rolling.
 - [x] Added bottom-right `Назад` button in lobby room screen, network game, and local game.
 - [x] Added cleanup path for leaving game: `GameEngine.destroy()`, `ShakeInputService.destroy()`, `SelectionService.destroy()`, and WS disconnect via `NetworkService.disconnect()`.
+- [x] Network dice rendering optimized: `DiceService` now buffers server snapshots and interpolates at `now - INTERPOLATION_DELAY_MS`, using extrapolation only as a short fallback.
+- [x] Release-start latency reduced: interpolation delay now ramps from 0 to 50ms over 120ms after the first visible snapshot of a new roll.
+- [x] Network render cost reduced for FPS: pixel ratio capped at 1, antialias disabled in network mode, and dynamic shadows disabled in network mode.
+- [x] Dice face textures are shared across dice; face materials remain per-die so emissive selection highlights do not leak between dice.
+- [x] Optional perf overlay added via `?perf` or `localStorage.setItem('dice:perf', '1')`, showing FPS/frame/render/snapshot gap stats.
 
 ## Verification
 - [x] `npm run build` in `dice-client` passed after test-room changes.
@@ -19,6 +24,7 @@
 - [x] Built frontend bundle contains `Тестовая комната` and `Назад`.
 - [x] `pm2 list` showed `dice-client` online after `dist` rebuild and watch restart.
 - [x] Local nginx check for `https://farklepit.online/` returned `200`.
+- [x] `npm run build` in `dice-client` passed after online physics/render optimization.
 
 ## Notes
 - Public routing target is nginx on `80/443`; client preview remains internal on `127.0.0.1:5174`.
