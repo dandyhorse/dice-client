@@ -74,6 +74,7 @@ const LIGHT_FORWARD_Z = -5.2;
 const SHADOW_MAP_SIZE = 4096;
 const SHADOW_CAMERA_HALF_WIDTH = 9.5;
 const SHADOW_CAMERA_HALF_DEPTH = 6.5;
+const PS1_RENDER_SCALE = 0.48;
 const PERF_DEBUG_ENABLED = (): boolean => {
   const params = new URLSearchParams(window.location.search);
   if (params.has('perf')) return true;
@@ -489,8 +490,8 @@ export class GameEngine {
     scene.background = new THREE.Color(0x1a1a22);
 
     const shadows = this.areShadowsEnabled();
-    const ambient = new THREE.AmbientLight(0xffffff, 0.35);
-    const directional = new THREE.DirectionalLight(0xffffff, 0.8);
+    const ambient = new THREE.AmbientLight(0xf0f2ff, 0.46);
+    const directional = new THREE.DirectionalLight(0xfff5da, 0.72);
     directional.position.set(0.001, DIRECTIONAL_LIGHT_Y, LIGHT_FORWARD_Z);
     directional.castShadow = shadows;
     if (shadows) {
@@ -532,14 +533,23 @@ export class GameEngine {
 
   private createRenderer(): THREE.WebGLRenderer {
     const renderer = new THREE.WebGLRenderer({
-      antialias: this.mode === 'local',
+      antialias: false,
       powerPreference: 'high-performance',
     });
-    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.domElement.style.width = '100vw';
+    renderer.domElement.style.height = '100vh';
+    renderer.domElement.style.imageRendering = 'pixelated';
     renderer.setPixelRatio(1);
+    this.setRendererPixelSize(renderer);
     renderer.shadowMap.enabled = this.areShadowsEnabled();
     if (renderer.shadowMap.enabled) renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     return renderer;
+  }
+
+  private setRendererPixelSize(renderer: THREE.WebGLRenderer): void {
+    const width = Math.max(320, Math.floor(window.innerWidth * PS1_RENDER_SCALE));
+    const height = Math.max(180, Math.floor(window.innerHeight * PS1_RENDER_SCALE));
+    renderer.setSize(width, height, false);
   }
 
   private createPhysicsWorld(): CANNON.World {
@@ -592,9 +602,10 @@ export class GameEngine {
       map: this.createTableTexture(TABLE_COLOR_MAP_URL, THREE.SRGBColorSpace),
       normalMap: this.createTableTexture(TABLE_NORMAL_MAP_URL),
       roughnessMap: this.createTableTexture(TABLE_ROUGHNESS_MAP_URL),
-      roughness: 0.95,
+      roughness: 1.0,
       metalness: 0.0,
-      normalScale: new THREE.Vector2(0.65, 0.65),
+      normalScale: new THREE.Vector2(0.35, 0.35),
+      flatShading: true,
     });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.set(0, -TABLE_THICKNESS / 2, 0);
@@ -621,7 +632,10 @@ export class GameEngine {
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     texture.repeat.set(1, 1);
-    texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.generateMipmaps = false;
+    texture.anisotropy = 1;
     if (colorSpace) texture.colorSpace = colorSpace;
     this.tableTextures.push(texture);
     return texture;
@@ -687,7 +701,7 @@ export class GameEngine {
     this.camera.position.y = this.computeCameraY();
     this.camera.lookAt(...CAMERA_TARGET);
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.setRendererPixelSize(this.renderer);
     this.updateVisualTableSize();
   };
 

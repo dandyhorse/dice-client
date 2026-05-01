@@ -65,8 +65,8 @@ const PIP_LAYOUT: Record<number, [number, number][]> = {
   6: [[0.25, 0.25], [0.75, 0.25], [0.25, 0.5], [0.75, 0.5], [0.25, 0.75], [0.75, 0.75]],
 };
 
-const TEXTURE_SIZE = 256;
-const PIP_RADIUS_FRACTION = 0.085;
+const TEXTURE_SIZE = 128;
+const PIP_RADIUS_FRACTION = 0.09;
 const FACE_BG = '#f5f5f0';
 const FACE_PIP = '#1a1a1a';
 const DICE_TEXTURE_BASE_URL = '/assets/dice/plastered-stone-wall-1k/';
@@ -74,6 +74,9 @@ const DICE_COLOR_MAP_URL = `${DICE_TEXTURE_BASE_URL}plastered_stone_wall_diff_1k
 const DICE_NORMAL_MAP_URL = `${DICE_TEXTURE_BASE_URL}plastered_stone_wall_nor_gl_1k.png`;
 const DICE_ROUGHNESS_MAP_URL = `${DICE_TEXTURE_BASE_URL}plastered_stone_wall_rough_1k.png`;
 const DICE_BASE_BRIGHTNESS = 1.45;
+const VISUAL_EDGE_SOFTNESS = 0.035;
+const VISUAL_EDGE_START = 0.68;
+const VISUAL_WOBBLE = 0.012;
 
 interface FaceTextureEntry {
   value: number;
@@ -133,6 +136,9 @@ const createPipTexture = (value: number): FaceTextureEntry => {
   const ctx = canvas.getContext('2d')!;
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.NearestFilter;
+  tex.generateMipmaps = false;
   tex.anisotropy = 4;
   const entry = { value, canvas, ctx, texture: tex };
   drawFaceTexture(entry);
@@ -152,8 +158,12 @@ const getDiceSurfaceMaps = (): DiceSurfaceMaps => {
   const loader = new THREE.TextureLoader();
   const normalMap = loader.load(DICE_NORMAL_MAP_URL);
   const roughnessMap = loader.load(DICE_ROUGHNESS_MAP_URL);
-  normalMap.anisotropy = 4;
-  roughnessMap.anisotropy = 4;
+  for (const texture of [normalMap, roughnessMap]) {
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.generateMipmaps = false;
+    texture.anisotropy = 1;
+  }
   cachedDiceSurfaceMaps = { normalMap, roughnessMap };
   return cachedDiceSurfaceMaps;
 };
@@ -166,11 +176,52 @@ const createFaceMaterials = (): THREE.MeshStandardMaterial[] => {
         map: texture,
         normalMap: surfaceMaps.normalMap,
         roughnessMap: surfaceMaps.roughnessMap,
-        roughness: 0.9,
+        roughness: 1.0,
         metalness: 0.0,
-        normalScale: new THREE.Vector2(0.18, 0.18),
+        normalScale: new THREE.Vector2(0.08, 0.08),
+        flatShading: true,
       }),
   );
+};
+
+const deterministicNoise = (x: number, y: number, z: number): number => {
+  const n = Math.sin(x * 157.31 + y * 311.17 + z * 613.73) * 43758.5453;
+  return n - Math.floor(n);
+};
+
+const createDiceVisualGeometry = (size: number): THREE.BoxGeometry => {
+  const geometry = new THREE.BoxGeometry(size, size, size, 4, 4, 4);
+  const position = geometry.attributes.position as THREE.BufferAttribute;
+  const half = size / 2;
+  const softness = size * VISUAL_EDGE_SOFTNESS;
+  const wobble = size * VISUAL_WOBBLE;
+
+  for (let i = 0; i < position.count; i++) {
+    const x = position.getX(i);
+    const y = position.getY(i);
+    const z = position.getZ(i);
+    const ax = Math.abs(x) / half;
+    const ay = Math.abs(y) / half;
+    const az = Math.abs(z) / half;
+    const ex = Math.max(0, (ax - VISUAL_EDGE_START) / (1 - VISUAL_EDGE_START));
+    const ey = Math.max(0, (ay - VISUAL_EDGE_START) / (1 - VISUAL_EDGE_START));
+    const ez = Math.max(0, (az - VISUAL_EDGE_START) / (1 - VISUAL_EDGE_START));
+    const nx = Math.sign(x);
+    const ny = Math.sign(y);
+    const nz = Math.sign(z);
+    const n = deterministicNoise(x, y, z) - 0.5;
+
+    position.setXYZ(
+      i,
+      x - nx * softness * (ey + ez) * 0.5 + nx * n * wobble * ey * ez,
+      y - ny * softness * (ex + ez) * 0.5 + ny * n * wobble * ex * ez,
+      z - nz * softness * (ex + ey) * 0.5 + nz * n * wobble * ex * ey,
+    );
+  }
+
+  position.needsUpdate = true;
+  geometry.computeVertexNormals();
+  return geometry;
 };
 
 const PARKED_Y = -1000;
@@ -223,7 +274,7 @@ export class DiceService {
 
   spawn(): void {
     const size = DICE_HALF_SIZE * 2;
-    const geometry = new THREE.BoxGeometry(size, size, size);
+    const geometry = createDiceVisualGeometry(size);
 
     for (let i = 0; i < DICE_COUNT; i++) {
       const materials = createFaceMaterials();
