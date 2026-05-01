@@ -31,6 +31,7 @@ import { t } from '../../../ui/i18n';
 import type {
   MatchRollResultPayload,
   MatchStatePayload,
+  MatchTurnResultPayload,
   RestPayload,
   RoomState,
   SnapshotPayload,
@@ -244,24 +245,30 @@ export class GameEngine {
           }
         });
 
-        // BUST оверлей + scoring-подсказка для игрока: HUD сохранит rolledFaces
-        // и при фазе SELECTING покажет какие комбинации scoring (правила Farkle
-        // непрозрачны — single 2/3/4/6 не scoring и т.п., без подсказки игрок
-        // тыкает Continue с невалидным выбором и получает ack-error каждый раз).
+        // Casual показывает scoring-подсказки; ranked только блокирует
+        // невалидные клики через SelectionService без текстовых комбинаций/подсветки.
         net.events.on('match-roll-result', (r: MatchRollResultPayload) => {
           if (r.bust) {
             this.selection?.clearScoringOptions();
-            this.hud?.showError('BUST');
+            if (!this.isRankedRoom()) this.hud?.showError('BUST');
           } else {
             const canSelectRoll =
               this.currentMatchState?.currentPlayer === ownUserId && this.isOwnPlayer(ownUserId);
             if (canSelectRoll) {
-              this.selection?.setScoringOptions(r.rolledFaces, scoreRoll(r.rolledFaces));
+              this.selection?.setScoringOptions(
+                r.rolledFaces,
+                scoreRoll(r.rolledFaces),
+                !this.isRankedRoom(),
+              );
             } else {
               this.selection?.clearScoringOptions();
             }
-            this.hud?.setRollResult(r.rolledFaces);
+            this.hud?.setRollResult(this.isRankedRoom() ? [] : r.rolledFaces);
           }
+        });
+
+        net.events.on('match-turn-result', (r: MatchTurnResultPayload) => {
+          if (this.isRankedRoom() && r.bust) this.hud?.showError('BUST');
         });
 
         this.selection?.events.on(
@@ -435,6 +442,10 @@ export class GameEngine {
   private isOwnPlayer(ownUserId: string): boolean {
     const member = this.currentRoomState?.members.find((m) => m.userId === ownUserId);
     return member?.role === ROOM_ROLE.PLAYER;
+  }
+
+  private isRankedRoom(): boolean {
+    return this.currentRoomState?.mode === ROOM_MODE.RANKED;
   }
 
   private canUseTestInput(ownUserId: string): boolean {

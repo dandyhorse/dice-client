@@ -27,6 +27,15 @@ export interface AuthIdentity {
   authenticated: boolean;
 }
 
+export interface LeaderboardEntry {
+  userId: string;
+  username: string;
+  displayName: string;
+  wins: number;
+  losses: number;
+  rating: number;
+}
+
 const authUrl = (path: string): string => `${SERVER_URL}${path}`;
 
 const storedNumber = (key: string): number => {
@@ -115,6 +124,16 @@ export const logoutAccount = async (): Promise<void> => {
   } catch {
     // Local logout should not be blocked by a stale token or offline server.
   }
+};
+
+export const getLeaderboard = async (limit = 20): Promise<LeaderboardEntry[]> => {
+  const res = await fetch(authUrl(`/stats/leaderboard?limit=${encodeURIComponent(String(limit))}`));
+  const payload = (await res.json().catch(() => ({}))) as {
+    leaders?: LeaderboardEntry[];
+    message?: string;
+  };
+  if (!res.ok) throw new Error(payload.message || `leaderboard request failed: ${res.status}`);
+  return payload.leaders ?? [];
 };
 
 export const getAuthIdentity = async (): Promise<AuthIdentity | null> => {

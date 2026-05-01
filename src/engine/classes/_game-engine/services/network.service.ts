@@ -9,12 +9,14 @@ import {
   packRelease,
   packRoomCreate,
   packRoomJoin,
+  packRoomListRequest,
   packRoomStart,
   unpackAckError,
   unpackAckOk,
   unpackMatchRollResult,
   unpackMatchState,
   unpackMatchTurnResult,
+  unpackRoomList,
   unpackRest,
   unpackRoomState,
   unpackSnapshot,
@@ -30,6 +32,7 @@ import type {
   MatchTurnResultPayload,
   RoomMode,
   RoomOptionsPayload,
+  RoomListItemPayload,
   RestPayload,
   RoomStatePayload,
 } from '../../../../network/protocol/types';
@@ -47,6 +50,7 @@ export type {
   RoomMode,
   RoomOptionsPayload,
   RoomStatus,
+  RoomListItemPayload,
 } from '../../../../network/protocol/types';
 export {
   DEFAULT_ROOM_OPTIONS,
@@ -58,6 +62,7 @@ export {
 export type DieStateFull = DieStateBin;
 export type RestDieState = DieRestStateBin;
 export type RoomState = RoomStatePayload;
+export type RoomListItem = RoomListItemPayload;
 
 const RECONNECT_INITIAL_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
@@ -136,17 +141,25 @@ export class NetworkService {
   createRoom = (
     mode: RoomMode = ROOM_MODE.MATCH,
     options?: Partial<RoomOptionsPayload>,
+    gameName?: string,
   ): Promise<RoomState> => {
-    return this.sendCommand((requestId) => packRoomCreate({ requestId, mode, options })).then(
-      (body) => {
-        if (!body) throw new Error('empty ROOM_CREATE response');
-        const state = unpackRoomState(body);
-        this.currentRoomId = state.id;
-        this.currentRoomCode = state.code;
-        this.currentRoomState = state;
-        return state;
-      },
-    );
+    return this.sendCommand((requestId) =>
+      packRoomCreate({ requestId, mode, options, gameName }),
+    ).then((body) => {
+      if (!body) throw new Error('empty ROOM_CREATE response');
+      const state = unpackRoomState(body);
+      this.currentRoomId = state.id;
+      this.currentRoomCode = state.code;
+      this.currentRoomState = state;
+      return state;
+    });
+  };
+
+  listRooms = (): Promise<RoomListItem[]> => {
+    return this.sendCommand((requestId) => packRoomListRequest({ requestId })).then((body) => {
+      if (!body) throw new Error('empty ROOM_LIST response');
+      return unpackRoomList(body).rooms;
+    });
   };
 
   joinRoom = (code: string): Promise<RoomState> => {

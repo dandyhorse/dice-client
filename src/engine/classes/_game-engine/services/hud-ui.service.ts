@@ -3,7 +3,12 @@ import { scoreRoll } from '../../../../domain/scorer';
 import { onLanguageChange, t } from '../../../../ui/i18n';
 import { FONT_FAMILY, FONT_SIZE, UI_SIZE } from '../../../../ui/theme';
 
-import { DEFAULT_ROOM_OPTIONS, MATCH_PHASE, ROOM_ROLE } from '../../../../network/protocol/types';
+import {
+  DEFAULT_ROOM_OPTIONS,
+  MATCH_PHASE,
+  ROOM_MODE,
+  ROOM_ROLE,
+} from '../../../../network/protocol/types';
 import type { MatchPhase, MatchStatePayload, RoomStatePayload } from '../../../../network/protocol/types';
 
 const PANEL_BG = 'rgba(0,0,0,0.6)';
@@ -63,6 +68,7 @@ export class HudUiService {
   private selectionValid = false;
   private selectedPoints = 0;
   private errorTimer: number | null = null;
+  private statusTimer: number | null = null;
   /** Что выпало в последнем броске (из MATCH_ROLL_RESULT). Чистится при смене фазы с SELECTING. */
   private lastRolledFaces: number[] = [];
 
@@ -182,11 +188,13 @@ export class HudUiService {
       this.selectedPoints = 0;
     }
     this.state = state;
+    this.updateStatusTimer();
     this.render();
   }
 
   setRoomState(state: RoomStatePayload): void {
     this.roomState = state;
+    this.updateStatusTimer();
     this.render();
   }
 
@@ -219,7 +227,9 @@ export class HudUiService {
 
   destroy(): void {
     if (this.errorTimer !== null) clearTimeout(this.errorTimer);
+    if (this.statusTimer !== null) clearInterval(this.statusTimer);
     this.errorTimer = null;
+    this.statusTimer = null;
     this.unsubscribeLanguage();
     this.root.remove();
     this.actionsPanel.remove();
@@ -251,7 +261,12 @@ export class HudUiService {
     ];
 
     const isMyTurn = s.currentPlayer === this.ownUserId;
-    if (isMyTurn && s.phase === MATCH_PHASE.SELECTING && this.lastRolledFaces.length > 0) {
+    if (
+      isMyTurn &&
+      s.phase === MATCH_PHASE.SELECTING &&
+      this.lastRolledFaces.length > 0 &&
+      !this.isRanked()
+    ) {
       lines.push('');
       lines.push(`${t('rolled')}: ${this.lastRolledFaces.join(', ')}`);
       const opts = scoreRoll(this.lastRolledFaces);
@@ -264,14 +279,15 @@ export class HudUiService {
           lines.push(`• ${o.label} (поз. ${positions}) → ${o.points}`);
         }
       }
-      if (this.selectedCount > 0) {
-        lines.push('');
-        lines.push(
-          `${t('selected')}: ${this.selectedCount}${
-            this.selectionValid ? '' : ` (${t('incompleteSet')})`
-          }`,
-        );
-      }
+    }
+
+    if (isMyTurn && s.phase === MATCH_PHASE.SELECTING && this.selectedCount > 0) {
+      lines.push('');
+      lines.push(
+        `${t('selected')}: ${this.selectedCount}${
+          this.selectionValid ? '' : ` (${t('incompleteSet')})`
+        }`,
+      );
     }
 
     this.leftPanel.textContent = lines.join('\n');
@@ -385,8 +401,38 @@ export class HudUiService {
       default:
         text = '';
     }
+    const timer = this.formatTurnTimer();
+    if (timer) text = text ? `${text} · ${timer}` : timer;
     this.statusPanel.textContent = text;
     this.statusPanel.style.display = text ? 'block' : 'none';
+  }
+
+  private isRanked(): boolean {
+    return this.roomState?.mode === ROOM_MODE.RANKED;
+  }
+
+  private formatTurnTimer(): string {
+    const deadline = this.state?.turnDeadlineAt ?? 0;
+    if (deadline <= 0 || this.state?.phase !== MATCH_PHASE.SELECTING) return '';
+    const seconds = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+    return `${seconds}s`;
+  }
+
+  private updateStatusTimer(): void {
+    const hasTimer =
+      (this.state?.turnDeadlineAt ?? 0) > Date.now() &&
+      this.state?.phase === MATCH_PHASE.SELECTING;
+    if (hasTimer && this.statusTimer === null) {
+      this.statusTimer = window.setInterval(() => {
+        this.updateStatusTimer();
+        this.renderStatus();
+      }, 250);
+      return;
+    }
+    if (!hasTimer && this.statusTimer !== null) {
+      clearInterval(this.statusTimer);
+      this.statusTimer = null;
+    }
   }
 
   private makePanel(pos: Partial<CSSStyleDeclaration>): HTMLDivElement {

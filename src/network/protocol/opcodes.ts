@@ -8,6 +8,7 @@ export const OP = {
   ROOM_JOIN: 0x11,
   ROOM_LEAVE: 0x12,
   ROOM_START: 0x13,
+  ROOM_LIST: 0x14,
   MATCH_RELEASE: 0x30, // fire-and-forget, без requestId
   MATCH_SELECT_DICE: 0x31, // turn-based: отложить scoring-кости, перебросить остальные
   MATCH_BANK: 0x32, // turn-based: отложить scoring-кости и закрыть ход

@@ -1,6 +1,7 @@
 import './style.css';
 import {
   getAuthIdentity,
+  getLeaderboard,
   getStoredUser,
   loginAccount,
   logoutAccount,
@@ -15,6 +16,7 @@ import {
   ROOM_STATUS,
   type RoomMode,
   type RoomOptionsPayload,
+  type RoomListItem,
   type RoomState,
 } from './engine/classes/_game-engine/services/network.service';
 import {
@@ -40,6 +42,8 @@ const AUTH_MODAL_ID = 'auth-modal';
 const BACK_BUTTON_ID = 'back-button';
 const ROOM_BADGE_ID = 'room-badge';
 const LANG_CONTROLS_ID = 'lang-controls';
+const ROOM_LIST_MODAL_ID = 'room-list-modal';
+const LEADERBOARD_ID = 'leaderboard-panel';
 const MOBILE_DEVICE_RE = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
 
 // `crypto.randomUUID` в браузере доступен только в secure context (HTTPS/localhost).
@@ -145,7 +149,28 @@ const startNetwork = async (
   code?: string,
   roomMode: RoomMode = ROOM_MODE.MATCH,
   roomOptions?: Partial<RoomOptionsPayload>,
+  gameName?: string,
 ): Promise<void> => {
+  const network = await connectNetwork(displayNameInput);
+  activeNetwork = network;
+  let state: RoomState;
+  try {
+    state =
+      mode === 'create'
+        ? await network.createRoom(roomMode, roomOptions, gameName)
+        : await network.joinRoom(code!);
+  } catch (err) {
+    if (activeNetwork === network) activeNetwork = null;
+    network.disconnect();
+    throw err;
+  }
+  clearLobby();
+  clearAuthControls();
+  clearAuthModal();
+  handleRoomState(network, state);
+};
+
+const connectNetwork = async (displayNameInput: string): Promise<NetworkService> => {
   const network = new NetworkService();
   const authIdentity = await getAuthIdentity();
   const displayName = authIdentity ? authIdentity.displayName : saveDisplayName(displayNameInput);
@@ -159,22 +184,7 @@ const startNetwork = async (
     handleRoomState(network, state);
   });
   await network.connect(identity.userId, identity.displayName, identity.accessToken);
-  activeNetwork = network;
-  let state: RoomState;
-  try {
-    state =
-      mode === 'create'
-        ? await network.createRoom(roomMode, roomOptions)
-        : await network.joinRoom(code!);
-  } catch (err) {
-    if (activeNetwork === network) activeNetwork = null;
-    network.disconnect();
-    throw err;
-  }
-  clearLobby();
-  clearAuthControls();
-  clearAuthModal();
-  handleRoomState(network, state);
+  return network;
 };
 
 const clearLobby = (): void => {
@@ -194,6 +204,11 @@ const clearAuthControls = (): void => {
 
 const clearAuthModal = (): void => {
   const existing = document.getElementById(AUTH_MODAL_ID);
+  if (existing) existing.remove();
+};
+
+const clearRoomListModal = (): void => {
+  const existing = document.getElementById(ROOM_LIST_MODAL_ID);
   if (existing) existing.remove();
 };
 
@@ -222,6 +237,7 @@ const returnToLobby = (): void => {
   clearRoomBadge();
   clearBackButton();
   clearAuthModal();
+  clearRoomListModal();
   renderLobby();
 };
 
@@ -313,7 +329,7 @@ const renderLanguageControls = (): void => {
   document.body.appendChild(wrap);
 };
 
-const showRoomCode = (code: string, status: string): void => {
+const showRoomCode = (code: string, status: string, gameName?: string): void => {
   let badge = document.getElementById(ROOM_BADGE_ID) as HTMLDivElement | null;
   if (!badge) {
     badge = document.createElement('div');
@@ -321,7 +337,7 @@ const showRoomCode = (code: string, status: string): void => {
     document.body.appendChild(badge);
   }
   badge.id = ROOM_BADGE_ID;
-  badge.textContent = `${t('room')}: ${code} · ${status}`;
+  badge.textContent = `${gameName || t('room')}: ${code} · ${status}`;
   Object.assign(badge.style, {
     position: 'fixed',
     top: '12px',
@@ -345,7 +361,11 @@ const handleRoomState = (network: NetworkService, state: RoomState): void => {
 
   clearLobby();
   clearRoomScreen();
-  showRoomCode(state.code, state.mode === ROOM_MODE.TEST ? t('test') : statusLabel(state.status));
+  showRoomCode(
+    state.code,
+    state.mode === ROOM_MODE.TEST ? t('test') : statusLabel(state.status),
+    state.gameName,
+  );
   renderBackButton();
   renderLanguageControls();
   if (!activeGame) {
@@ -388,7 +408,7 @@ const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
   } satisfies Partial<CSSStyleDeclaration>);
 
   const title = document.createElement('div');
-  title.textContent = `${t('room')} ${state.code}`;
+  title.textContent = `${state.gameName || t('room')} · ${state.code}`;
   Object.assign(title.style, {
     fontSize: FONT_SIZE.roomTitle,
     fontWeight: '700',
@@ -406,7 +426,7 @@ const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
   panel.appendChild(status);
 
   const options = document.createElement('div');
-  options.textContent = roomOptionsLabel(state.options);
+  options.textContent = `${roomModeLabel(state.mode)} · ${roomOptionsLabel(state.options)}`;
   Object.assign(options.style, {
     padding: '8px',
     background: 'rgba(255,255,255,0.06)',
@@ -511,6 +531,18 @@ const statusLabel = (status: RoomState['status']): string => {
       return t('finished');
     default:
       return t('unknown');
+  }
+};
+
+const roomModeLabel = (mode: RoomMode): string => {
+  switch (mode) {
+    case ROOM_MODE.RANKED:
+      return t('ranked');
+    case ROOM_MODE.TEST:
+      return t('testRoom');
+    case ROOM_MODE.MATCH:
+    default:
+      return t('match');
   }
 };
 
@@ -794,12 +826,267 @@ const appendLobbyError = (card: HTMLElement): HTMLDivElement => {
   return error;
 };
 
+const renderLeaderboard = (): void => {
+  const lobby = document.getElementById('lobby');
+  if (!lobby) return;
+  const panel = document.createElement('aside');
+  panel.id = LEADERBOARD_ID;
+  Object.assign(panel.style, {
+    position: 'fixed',
+    top: '50%',
+    right: 'calc(50% + 220px)',
+    transform: 'translateY(-50%)',
+    width: '260px',
+    maxWidth: 'calc(50vw - 240px)',
+    padding: scaledPx(14),
+    boxSizing: 'border-box',
+    background: 'rgba(28,28,36,0.92)',
+    border: '1px solid rgba(255,255,255,0.08)',
+    borderRadius: '8px',
+    color: '#eee',
+    fontFamily: FONT_FAMILY.ui,
+    fontSize: FONT_SIZE.card,
+    boxShadow: '0 12px 32px rgba(0,0,0,0.35)',
+    lineHeight: '1.35',
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  const title = document.createElement('div');
+  title.textContent = t('leaderboard');
+  Object.assign(title.style, {
+    marginBottom: scaledPx(10),
+    fontWeight: '700',
+  } satisfies Partial<CSSStyleDeclaration>);
+  panel.appendChild(title);
+
+  const body = document.createElement('div');
+  body.textContent = t('connecting');
+  Object.assign(body.style, {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: scaledPx(6),
+  } satisfies Partial<CSSStyleDeclaration>);
+  panel.appendChild(body);
+  lobby.appendChild(panel);
+
+  getLeaderboard(10)
+    .then((leaders) => {
+      if (!document.getElementById(LEADERBOARD_ID)) return;
+      body.replaceChildren();
+      if (leaders.length === 0) {
+        body.textContent = '—';
+        return;
+      }
+      for (const [index, row] of leaders.entries()) {
+        const line = document.createElement('div');
+        line.textContent = `${index + 1}. ${row.displayName || row.username}: ${row.rating} · ${
+          row.wins
+        }/${row.losses}`;
+        Object.assign(line.style, {
+          padding: '4px 0',
+          borderBottom: '1px solid rgba(255,255,255,0.06)',
+          color: index === 0 ? '#facc15' : '#eee',
+        } satisfies Partial<CSSStyleDeclaration>);
+        body.appendChild(line);
+      }
+    })
+    .catch(() => {
+      if (document.getElementById(LEADERBOARD_ID)) body.textContent = '—';
+    });
+};
+
+const renderRoomListModal = (displayNameInput: string): void => {
+  clearRoomListModal();
+
+  const overlay = document.createElement('div');
+  overlay.id = ROOM_LIST_MODAL_ID;
+  Object.assign(overlay.style, {
+    position: 'fixed',
+    inset: '0',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'rgba(0,0,0,0.62)',
+    zIndex: '42',
+    fontFamily: FONT_FAMILY.ui,
+    color: '#eee',
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  const panel = document.createElement('div');
+  Object.assign(panel.style, {
+    width: 'min(760px, calc(100vw - 32px))',
+    maxHeight: 'min(680px, calc(100vh - 32px))',
+    overflow: 'auto',
+    padding: scaledPx(18),
+    background: '#1c1c24',
+    borderRadius: '8px',
+    boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: scaledPx(12),
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  const header = document.createElement('div');
+  Object.assign(header.style, {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: scaledPx(12),
+  } satisfies Partial<CSSStyleDeclaration>);
+  const title = document.createElement('h2');
+  title.textContent = t('lobbies');
+  Object.assign(title.style, {
+    margin: '0',
+    fontFamily: FONT_FAMILY.title,
+    fontSize: FONT_SIZE.title,
+  } satisfies Partial<CSSStyleDeclaration>);
+  header.appendChild(title);
+
+  const closeBtn = button(t('close'), () => {
+    tempNetwork?.disconnect();
+    clearRoomListModal();
+  });
+  closeBtn.style.background = 'transparent';
+  closeBtn.style.border = '1px solid #555';
+  header.appendChild(closeBtn);
+  panel.appendChild(header);
+
+  const content = document.createElement('div');
+  content.textContent = t('connecting');
+  panel.appendChild(content);
+
+  overlay.appendChild(panel);
+  overlay.addEventListener('click', (event) => {
+    if (event.target !== overlay) return;
+    tempNetwork?.disconnect();
+    clearRoomListModal();
+  });
+  panel.addEventListener('click', (event) => event.stopPropagation());
+  document.body.appendChild(overlay);
+
+  let tempNetwork: NetworkService | null = null;
+  const renderRows = (network: NetworkService, rooms: RoomListItem[]): void => {
+    content.replaceChildren();
+    if (rooms.length === 0) {
+      content.textContent = t('noRooms');
+      return;
+    }
+
+    const table = document.createElement('table');
+    Object.assign(table.style, {
+      width: '100%',
+      borderCollapse: 'collapse',
+      fontSize: FONT_SIZE.card,
+    } satisfies Partial<CSSStyleDeclaration>);
+
+    const head = document.createElement('tr');
+    for (const label of [
+      t('gameName'),
+      t('mode'),
+      t('status'),
+      t('players'),
+      t('owner'),
+      t('action'),
+    ]) {
+      const th = document.createElement('th');
+      th.textContent = label;
+      Object.assign(th.style, {
+        textAlign: 'left',
+        padding: '8px',
+        borderBottom: '1px solid #444',
+        color: '#b8b8c8',
+      } satisfies Partial<CSSStyleDeclaration>);
+      head.appendChild(th);
+    }
+    table.appendChild(head);
+
+    for (const room of rooms) {
+      const tr = document.createElement('tr');
+      const cells = [
+        room.gameName,
+        roomModeLabel(room.mode),
+        statusLabel(room.status),
+        `${room.playerCount} / ${room.spectatorCount}`,
+        room.ownerDisplayName,
+      ];
+      for (const value of cells) {
+        const td = document.createElement('td');
+        td.textContent = value;
+        Object.assign(td.style, {
+          padding: '8px',
+          borderBottom: '1px solid rgba(255,255,255,0.08)',
+          verticalAlign: 'middle',
+        } satisfies Partial<CSSStyleDeclaration>);
+        tr.appendChild(td);
+      }
+
+      const actionCell = document.createElement('td');
+      Object.assign(actionCell.style, {
+        padding: '8px',
+        borderBottom: '1px solid rgba(255,255,255,0.08)',
+      } satisfies Partial<CSSStyleDeclaration>);
+      const joinBtn = button(room.canJoinAsPlayer ? t('join') : t('spectate'), () => {
+        joinBtn.disabled = true;
+        network
+          .joinRoom(room.code)
+          .then((state) => {
+            activeNetwork = network;
+            tempNetwork = null;
+            clearRoomListModal();
+            clearLobby();
+            clearAuthControls();
+            clearAuthModal();
+            handleRoomState(network, state);
+          })
+          .catch((error: Error) => {
+            joinBtn.disabled = false;
+            content.appendChild(errorLine(error.message));
+          });
+      });
+      actionCell.appendChild(joinBtn);
+      tr.appendChild(actionCell);
+      table.appendChild(tr);
+    }
+    content.appendChild(table);
+  };
+
+  connectNetwork(displayNameInput)
+    .then((network) => {
+      if (!document.getElementById(ROOM_LIST_MODAL_ID)) {
+        network.disconnect();
+        return Promise.resolve();
+      }
+      tempNetwork = network;
+      return network.listRooms().then((rooms) => {
+        if (!document.getElementById(ROOM_LIST_MODAL_ID)) {
+          network.disconnect();
+          return;
+        }
+        renderRows(network, rooms);
+      });
+    })
+    .catch((error: Error) => {
+      content.replaceChildren(errorLine(error.message));
+    });
+};
+
+const errorLine = (message: string): HTMLDivElement => {
+  const error = document.createElement('div');
+  error.textContent = message;
+  Object.assign(error.style, {
+    color: '#f66',
+    fontSize: FONT_SIZE.error,
+    minHeight: scaledPx(16),
+  } satisfies Partial<CSSStyleDeclaration>);
+  return error;
+};
+
 const renderLobby = (): void => {
   currentLobbyView = 'home';
   renderAuthControls();
   renderLanguageControls();
   const card = createLobbyFrame(360);
   appendBrand(card);
+  renderLeaderboard();
 
   const soloBtn = button(t('soloGame'), renderSoloCreate);
   soloBtn.style.fontSize = FONT_SIZE.menuButton;
@@ -857,8 +1144,15 @@ const renderMultiplayerCreate = (): void => {
 
   const displayNameValue = (): string => user?.username ?? nameInput?.value ?? '';
 
+  const gameNameInput = textInput(t('gameName'));
+  gameNameInput.maxLength = 40;
+  const baseName = displayNameValue().trim() || 'Player';
+  gameNameInput.value = `${baseName} game`;
+  card.appendChild(gameNameInput);
+
   const roomModeSelect = selectInput([
     ['match', t('match')],
+    ['ranked', t('ranked')],
     ['test', t('testRoom')],
   ]);
   card.appendChild(labeledControl(t('mode'), roomModeSelect));
@@ -887,14 +1181,39 @@ const renderMultiplayerCreate = (): void => {
   });
 
   const roomModeValue = (): RoomMode =>
-    roomModeSelect.value === 'test' ? ROOM_MODE.TEST : ROOM_MODE.MATCH;
+    roomModeSelect.value === 'test'
+      ? ROOM_MODE.TEST
+      : roomModeSelect.value === 'ranked'
+        ? ROOM_MODE.RANKED
+        : ROOM_MODE.MATCH;
 
   const createBtn = button(t('createGame'), () => {
-    startNetwork('create', displayNameValue(), undefined, roomModeValue(), roomOptionsValue()).catch(
-      showError,
-    );
+    const mode = roomModeValue();
+    if (mode === ROOM_MODE.RANKED && !getStoredUser()) {
+      showError(new Error(t('authRequiredRanked')));
+      return;
+    }
+    const gameName = gameNameInput.value.trim();
+    if (!gameName) {
+      showError(new Error(t('gameNameRequired')));
+      return;
+    }
+    startNetwork(
+      'create',
+      displayNameValue(),
+      undefined,
+      mode,
+      roomOptionsValue(),
+      gameName,
+    ).catch(showError);
   });
   card.appendChild(createBtn);
+
+  const listBtn = button(t('browseLobbies'), () => {
+    renderRoomListModal(displayNameValue());
+  });
+  listBtn.style.background = '#52525b';
+  card.appendChild(listBtn);
 
   const codeInput = document.createElement('input');
   codeInput.placeholder = t('roomCode');

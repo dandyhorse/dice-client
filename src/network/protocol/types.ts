@@ -53,6 +53,7 @@ export type RoomStatus = (typeof ROOM_STATUS)[keyof typeof ROOM_STATUS];
 export const ROOM_MODE = {
   MATCH: 0,
   TEST: 1,
+  RANKED: 2,
 } as const;
 
 export type RoomMode = (typeof ROOM_MODE)[keyof typeof ROOM_MODE];
@@ -114,6 +115,7 @@ export interface RoomMember {
 export interface RoomStatePayload {
   id: string;
   code: string;
+  gameName: string;
   ownerId: string;
   status: RoomStatus;
   mode: RoomMode;
@@ -124,7 +126,30 @@ export interface RoomStatePayload {
 export interface RoomCreateCmd {
   requestId: number;
   mode?: RoomMode;
+  gameName?: string;
   options?: Partial<RoomOptionsPayload>;
+}
+
+export interface RoomListCmd {
+  requestId: number;
+}
+
+export interface RoomListItemPayload {
+  id: string;
+  code: string;
+  gameName: string;
+  ownerId: string;
+  ownerDisplayName: string;
+  status: RoomStatus;
+  mode: RoomMode;
+  playerCount: number;
+  spectatorCount: number;
+  canJoinAsPlayer: boolean;
+  canSpectate: boolean;
+}
+
+export interface RoomListPayload {
+  rooms: RoomListItemPayload[];
 }
 
 export interface RoomJoinCmd {
@@ -210,6 +235,8 @@ export interface MatchStatePayload {
   totals: MatchTotal[];
   /** userId победителя; пустая строка если ещё нет. */
   winner: string;
+  /** Unix timestamp ms for ranked SELECTING timeout; 0 when no timer is active. */
+  turnDeadlineAt: number;
 }
 
 /** S→C broadcast: что выпало после очередного броска. */

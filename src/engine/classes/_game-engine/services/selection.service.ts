@@ -84,7 +84,7 @@ export class SelectionService {
     this.emitSelectionChanged();
   }
 
-  setScoringOptions(rolledFaces: number[], options: ScoringOption[]): void {
+  setScoringOptions(rolledFaces: number[], options: ScoringOption[], showHighlights = true): void {
     this.clearScoringOptions(false);
     this.rolledFaces = [...rolledFaces];
     const active = this.dice.getActiveDiceMeshes();
@@ -100,7 +100,7 @@ export class SelectionService {
         const snapshotIndex = active[rollIndex]?.index ?? rollIndex;
         this.selectable.add(snapshotIndex);
         const current = this.highlights.get(snapshotIndex);
-        if (!current || priority > current.priority) {
+        if (showHighlights && (!current || priority > current.priority)) {
           this.highlights.set(snapshotIndex, { kind, priority });
         }
       }

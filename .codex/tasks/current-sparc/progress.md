@@ -28,6 +28,9 @@
 - [x] Table/gameplay visual pass completed: invisible physical walls, fullscreen visual tabletop, wood texture/normal/roughness assets, shifted high-resolution shadows, and stone-textured dice faces with retained pips.
 - [x] Throw release positions are clamped to a safe table zone before local/network release so dice cannot be spawned outside the physical arena or inside the wall.
 - [x] Client-side local dice physics tuned to match server: heavier dice mass (`DICE_MASS = 0.6`) and calmer dice-to-dice contact (`friction 0.35`, `restitution 0.12`) while preserving previous flight damping (`0.1/0.1`).
+- [x] Multiplayer social v1 UI added: named game creation, ranked mode selection, lobby/game browser modal, spectator join from active games, and homepage leaderboard panel.
+- [x] Ranked client UX hides scoring-combination hints and dice highlights while keeping invalid dice clicks blocked and showing turn/banked score information.
+- [x] Client protocol mirror now includes `ROOM_MODE.RANKED`, `gameName`, room-list payloads, and ranked turn deadline state.
 
 ## Verification
 - [x] `npm run build` in `dice-client` passed after test-room changes.
@@ -38,6 +41,7 @@
 - [x] `npm run build` in `dice-client` passed after online physics/render optimization.
 - [x] `npm run build` in `dice-client` passed after solo/multiplayer split, i18n/fonts, centralized theme sizing, and compact logout button changes.
 - [x] `npm run build` in `dice-client` passed after table/dice texture, safe throw bounds, shadow quality, and dice physics tuning.
+- [x] `npm run build` in `dice-client` passed after multiplayer social v1/ranked UI changes.
 
 ## Notes
 - Public routing target is nginx on `80/443`; client preview remains internal on `127.0.0.1:5174`.
@@ -47,3 +51,4 @@
 - Hard refresh may be needed after rebuild because the Vite asset hash changes.
 - Dev server and pm2 were intentionally not touched during the latest UI iterations; only production builds were run.
 - Latest pushed client commit: `abd32d2 Update dice table visuals and physics`.
+- Dev server and pm2 were intentionally not touched during social v1 work; only production build was run.

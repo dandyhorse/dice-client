@@ -26,6 +26,9 @@ import type {
   RoomCreateCmd,
   RoomJoinCmd,
   RoomLeaveCmd,
+  RoomListCmd,
+  RoomListItemPayload,
+  RoomListPayload,
   RoomMember,
   RoomOptionsPayload,
   RoomStartCmd,
@@ -228,21 +231,28 @@ export const unpackRelease = (buf: Uint8Array): ReleasePayload => {
 // ──────────────────────────────────────────────────────────────
 
 export const packRoomCreate = (cmd: RoomCreateCmd): Uint8Array => {
-  const buf = new Uint8Array(6 + ROOM_OPTIONS_BYTES);
+  const nameBytes = enc.encode(cmd.gameName ?? '');
+  const buf = new Uint8Array(6 + ROOM_OPTIONS_BYTES + 2 + nameBytes.length);
   const view = viewOf(buf);
   view.setUint8(0, OP.ROOM_CREATE);
   view.setUint32(1, cmd.requestId >>> 0);
   view.setUint8(5, (cmd.mode ?? 0) & 0xff);
-  writeRoomOptions(view, 6, cmd.options);
+  const off = writeRoomOptions(view, 6, cmd.options);
+  writeStr16(view, buf, off, nameBytes);
   return buf;
 };
 
 export const unpackRoomCreate = (buf: Uint8Array): RoomCreateCmd => {
   const view = viewOf(buf);
+  const options =
+    buf.length >= 6 + ROOM_OPTIONS_BYTES ? readRoomOptions(view, 6) : DEFAULT_ROOM_OPTIONS;
+  const nameOffset = 6 + (buf.length >= 6 + ROOM_OPTIONS_BYTES ? ROOM_OPTIONS_BYTES : 0);
+  const gameName = nameOffset + 2 <= buf.length ? readStr16(view, buf, nameOffset).value : '';
   return {
     requestId: view.getUint32(1),
     mode: buf.length > 5 ? (view.getUint8(5) as RoomCreateCmd['mode']) : 0,
-    options: buf.length >= 6 + ROOM_OPTIONS_BYTES ? readRoomOptions(view, 6) : DEFAULT_ROOM_OPTIONS,
+    options,
+    gameName,
   };
 };
 
@@ -297,6 +307,137 @@ export const unpackRoomStart = (buf: Uint8Array): RoomStartCmd => {
   return { requestId, roomId: r.value };
 };
 
+export const packRoomListRequest = (cmd: RoomListCmd): Uint8Array => {
+  const buf = new Uint8Array(5);
+  const view = viewOf(buf);
+  view.setUint8(0, OP.ROOM_LIST);
+  view.setUint32(1, cmd.requestId >>> 0);
+  return buf;
+};
+
+export const unpackRoomListRequest = (buf: Uint8Array): RoomListCmd => {
+  const view = viewOf(buf);
+  return { requestId: view.getUint32(1) };
+};
+
+// ──────────────────────────────────────────────────────────────
+// ROOM_LIST (S→C ack body)
+// ──────────────────────────────────────────────────────────────
+
+export const packRoomList = (payload: RoomListPayload): Uint8Array => {
+  const rooms: Array<{
+    item: RoomListItemPayload;
+    id: Uint8Array;
+    code: Uint8Array;
+    gameName: Uint8Array;
+    ownerId: Uint8Array;
+    ownerDisplayName: Uint8Array;
+  }> = payload.rooms.map((item) => ({
+    item,
+    id: enc.encode(item.id),
+    code: enc.encode(item.code),
+    gameName: enc.encode(item.gameName),
+    ownerId: enc.encode(item.ownerId),
+    ownerDisplayName: enc.encode(item.ownerDisplayName),
+  }));
+  if (rooms.length > 0xff) throw new Error(`room list too long: ${rooms.length} > 255`);
+
+  let size = 1 + 1;
+  for (const room of rooms) {
+    size +=
+      2 +
+      room.id.length +
+      2 +
+      room.code.length +
+      2 +
+      room.gameName.length +
+      2 +
+      room.ownerId.length +
+      2 +
+      room.ownerDisplayName.length +
+      1 +
+      1 +
+      2 +
+      2 +
+      1 +
+      1;
+  }
+
+  const buf = new Uint8Array(size);
+  const view = viewOf(buf);
+  let off = 0;
+  view.setUint8(off, OP.ROOM_LIST);
+  off += 1;
+  view.setUint8(off, rooms.length & 0xff);
+  off += 1;
+  for (const room of rooms) {
+    off = writeStr16(view, buf, off, room.id);
+    off = writeStr16(view, buf, off, room.code);
+    off = writeStr16(view, buf, off, room.gameName);
+    off = writeStr16(view, buf, off, room.ownerId);
+    off = writeStr16(view, buf, off, room.ownerDisplayName);
+    view.setUint8(off, room.item.status & 0xff);
+    off += 1;
+    view.setUint8(off, room.item.mode & 0xff);
+    off += 1;
+    view.setUint16(off, room.item.playerCount & 0xffff);
+    off += 2;
+    view.setUint16(off, room.item.spectatorCount & 0xffff);
+    off += 2;
+    view.setUint8(off, room.item.canJoinAsPlayer ? 1 : 0);
+    off += 1;
+    view.setUint8(off, room.item.canSpectate ? 1 : 0);
+    off += 1;
+  }
+  return buf;
+};
+
+export const unpackRoomList = (buf: Uint8Array): RoomListPayload => {
+  const view = viewOf(buf);
+  let off = 1;
+  const count = view.getUint8(off);
+  off += 1;
+  const rooms: RoomListItemPayload[] = new Array(count);
+  for (let i = 0; i < count; i++) {
+    const id = readStr16(view, buf, off);
+    off = id.next;
+    const code = readStr16(view, buf, off);
+    off = code.next;
+    const gameName = readStr16(view, buf, off);
+    off = gameName.next;
+    const ownerId = readStr16(view, buf, off);
+    off = ownerId.next;
+    const ownerDisplayName = readStr16(view, buf, off);
+    off = ownerDisplayName.next;
+    const status = view.getUint8(off) as RoomListItemPayload['status'];
+    off += 1;
+    const mode = view.getUint8(off) as RoomListItemPayload['mode'];
+    off += 1;
+    const playerCount = view.getUint16(off);
+    off += 2;
+    const spectatorCount = view.getUint16(off);
+    off += 2;
+    const canJoinAsPlayer = view.getUint8(off) !== 0;
+    off += 1;
+    const canSpectate = view.getUint8(off) !== 0;
+    off += 1;
+    rooms[i] = {
+      id: id.value,
+      code: code.value,
+      gameName: gameName.value,
+      ownerId: ownerId.value,
+      ownerDisplayName: ownerDisplayName.value,
+      status,
+      mode,
+      playerCount,
+      spectatorCount,
+      canJoinAsPlayer,
+      canSpectate,
+    };
+  }
+  return { rooms };
+};
+
 // ──────────────────────────────────────────────────────────────
 // ROOM_STATE (S→C broadcast)
 // ──────────────────────────────────────────────────────────────
@@ -304,6 +445,7 @@ export const unpackRoomStart = (buf: Uint8Array): RoomStartCmd => {
 export const packRoomState = (state: RoomStatePayload): Uint8Array => {
   const idBytes = enc.encode(state.id);
   const codeBytes = enc.encode(state.code);
+  const nameBytes = enc.encode(state.gameName);
   const ownerBytes = enc.encode(state.ownerId);
   const memberBytes: {
     userId: Uint8Array;
@@ -323,7 +465,7 @@ export const packRoomState = (state: RoomStatePayload): Uint8Array => {
   for (const m of memberBytes) {
     size += 2 + m.userId.length + 2 + m.socketId.length + 2 + m.displayName.length + 1 + 1;
   }
-  size += ROOM_OPTIONS_BYTES;
+  size += ROOM_OPTIONS_BYTES + 2 + nameBytes.length;
 
   const buf = new Uint8Array(size);
   const view = viewOf(buf);
@@ -348,7 +490,8 @@ export const packRoomState = (state: RoomStatePayload): Uint8Array => {
     view.setUint8(off, m.online ? 1 : 0);
     off += 1;
   }
-  writeRoomOptions(view, off, state.options);
+  off = writeRoomOptions(view, off, state.options);
+  writeStr16(view, buf, off, nameBytes);
   return buf;
 };
 
@@ -389,9 +532,12 @@ export const unpackRoomState = (buf: Uint8Array): RoomStatePayload => {
   }
   const options =
     off + ROOM_OPTIONS_BYTES <= buf.length ? readRoomOptions(view, off) : DEFAULT_ROOM_OPTIONS;
+  off += off + ROOM_OPTIONS_BYTES <= buf.length ? ROOM_OPTIONS_BYTES : 0;
+  const gameName = off + 2 <= buf.length ? readStr16(view, buf, off).value : codeR.value;
   return {
     id: idR.value,
     code: codeR.value,
+    gameName,
     ownerId: ownerR.value,
     status: status as RoomStatePayload['status'],
     mode: mode as RoomStatePayload['mode'],
@@ -586,6 +732,7 @@ export const unpackMatchTurnResult = (buf: Uint8Array): MatchTurnResultPayload =
 //   u8  totalsCount
 //   totalsCount × { str16 userId, u32 total }
 //   str16 winner         (пустая строка = ещё нет)
+//   f64 turnDeadlineAt   (unix ms, 0 если таймера нет)
 // ──────────────────────────────────────────────────────────────
 
 export const packMatchState = (state: MatchStatePayload): Uint8Array => {
@@ -617,7 +764,7 @@ export const packMatchState = (state: MatchStatePayload): Uint8Array => {
     1;
   for (const userId of onlinePlayerBytes) size += 2 + userId.length;
   for (const t of totalsBytes) size += 2 + t.userId.length + 4;
-  size += 2 + winnerBytes.length;
+  size += 2 + winnerBytes.length + 8;
 
   const buf = new Uint8Array(size);
   const view = viewOf(buf);
@@ -652,7 +799,8 @@ export const packMatchState = (state: MatchStatePayload): Uint8Array => {
     view.setUint32(off, t.total >>> 0);
     off += 4;
   }
-  writeStr16(view, buf, off, winnerBytes);
+  off = writeStr16(view, buf, off, winnerBytes);
+  view.setFloat64(off, state.turnDeadlineAt || 0);
   return buf;
 };
 
@@ -695,6 +843,8 @@ export const unpackMatchState = (buf: Uint8Array): MatchStatePayload => {
     totals[i] = { userId: u.value, total };
   }
   const winnerR = readStr16(view, buf, off);
+  off = winnerR.next;
+  const turnDeadlineAt = off + 8 <= buf.length ? view.getFloat64(off) : 0;
   return {
     phase,
     currentPlayer: currentR.value,
@@ -706,5 +856,6 @@ export const unpackMatchState = (buf: Uint8Array): MatchStatePayload => {
     bench,
     totals,
     winner: winnerR.value,
+    turnDeadlineAt,
   };
 };
