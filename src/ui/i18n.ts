@@ -1,0 +1,208 @@
+export type Language = 'en' | 'ru';
+
+type TokenMap = Record<string, string>;
+
+const LANGUAGE_KEY = 'dice.language';
+
+const tokens = {
+  en: {
+    mobileSoon: 'Mobile version is coming soon!',
+    back: 'Back',
+    room: 'Room',
+    test: 'test',
+    waiting: 'waiting',
+    active: 'active',
+    paused: 'paused',
+    finished: 'finished',
+    unknown: 'unknown',
+    roomOwner: 'Room owner',
+    waitingForStart: 'Waiting for start',
+    players: 'Players',
+    spectators: 'Spectators',
+    startGame: 'Start game',
+    online: 'online',
+    offline: 'offline',
+    youSuffix: 'you',
+    noValue: 'none',
+    target: 'Target',
+    minBank: 'Min Bank',
+    hotDice: 'Hot Dice',
+    enabled: 'on',
+    authRegister: 'Register',
+    authLogin: 'Login',
+    authLogout: 'Log out',
+    authCreate: 'Create',
+    authCancel: 'Cancel',
+    displayName: 'Display name',
+    username: 'Username',
+    password: 'Password',
+    soloGame: 'Solo Game',
+    multiplayer: 'Multiplayer',
+    mode: 'Mode',
+    createGame: 'Create game',
+    match: 'Match',
+    testRoom: 'Test room',
+    targetScore: 'Target score',
+    bankRule: 'Bank rule',
+    roomCode: 'Room code',
+    joinByCode: 'Join by code',
+    connecting: 'Connecting...',
+    turnOwner: 'Turn',
+    turnPoints: 'Turn points',
+    bench: 'Bench',
+    rolled: 'Rolled',
+    scoringNone: 'Scoring: -',
+    availableScoring: 'Available:',
+    selected: 'Selected',
+    incompleteSet: 'incomplete set',
+    spectatorMode: 'You are spectating',
+    yourTurnRoll: 'Your turn. Roll the dice',
+    waitingFor: 'Waiting for',
+    rolling: 'Rolling...',
+    selectingDice: 'selecting dice',
+    won: 'Won',
+    readyToRoll: 'Ready to roll',
+    chooseScoringDice: 'Choose scoring dice',
+    total: 'Total',
+    turn: 'Turn',
+    turnScore: 'Turn score',
+    activeDice: 'Active dice',
+    banks: 'Banks',
+    busts: 'Busts',
+    bestBank: 'Best bank',
+    scoring: 'Scoring',
+    history: 'History',
+    bank: 'bank',
+    burned: 'burned',
+    targetReached: 'Target reached',
+    runFailed: 'Run failed',
+    finalScore: 'Final score',
+    resetRun: 'Reset run',
+    continue: 'Continue',
+    pause: 'Pause',
+  },
+  ru: {
+    mobileSoon: 'Мобильная версия скоро',
+    back: 'Назад',
+    room: 'Комната',
+    test: 'тест',
+    waiting: 'ожидание',
+    active: 'активна',
+    paused: 'пауза',
+    finished: 'завершена',
+    unknown: 'неизвестно',
+    roomOwner: 'Автор комнаты',
+    waitingForStart: 'Ожидание старта',
+    players: 'Игроки',
+    spectators: 'Зрители',
+    startGame: 'Начать игру',
+    online: 'online',
+    offline: 'offline',
+    youSuffix: 'ты',
+    noValue: 'нет',
+    target: 'Цель',
+    minBank: 'Мин. банк',
+    hotDice: 'Hot Dice',
+    enabled: 'вкл',
+    authRegister: 'Регистрация',
+    authLogin: 'Вход',
+    authLogout: 'Выйти',
+    authCreate: 'Создать',
+    authCancel: 'Отмена',
+    displayName: 'Имя игрока',
+    username: 'Username',
+    password: 'Password',
+    soloGame: 'Одиночная игра',
+    multiplayer: 'Мультиплеер',
+    mode: 'Режим',
+    createGame: 'Создать игру',
+    match: 'Матч',
+    testRoom: 'Тестовая комната',
+    targetScore: 'Целевой счёт',
+    bankRule: 'Правило банка',
+    roomCode: 'Код комнаты',
+    joinByCode: 'Войти по коду',
+    connecting: 'Подключение...',
+    turnOwner: 'Чей ход',
+    turnPoints: 'Накоплено в ходу',
+    bench: 'Bench',
+    rolled: 'Выпало',
+    scoringNone: 'Scoring: -',
+    availableScoring: 'Можно взять:',
+    selected: 'Выбрано',
+    incompleteSet: 'набор неполный',
+    spectatorMode: 'Ты зритель',
+    yourTurnRoll: 'Твой ход. Бросай кости',
+    waitingFor: 'Ждём',
+    rolling: 'Бросаем...',
+    selectingDice: 'выбирает кости',
+    won: 'Победил',
+    readyToRoll: 'Готово к броску',
+    chooseScoringDice: 'Выбери scoring dice',
+    total: 'Всего',
+    turn: 'Ход',
+    turnScore: 'Очки хода',
+    activeDice: 'Активные кости',
+    banks: 'Банки',
+    busts: 'Bust',
+    bestBank: 'Лучший банк',
+    scoring: 'Scoring',
+    history: 'История',
+    bank: 'банк',
+    burned: 'сгорело',
+    targetReached: 'Цель достигнута',
+    runFailed: 'Забег провален',
+    finalScore: 'Финальный счёт',
+    resetRun: 'Сбросить run',
+    continue: 'Continue',
+    pause: 'Пауза',
+  },
+} satisfies Record<Language, TokenMap>;
+
+const soloModes = {
+  en: {
+    practice: ['Practice', 'Free training without win or loss.'],
+    'score-attack-short': ['Score Attack Short', 'Maximum score in 5 turns.'],
+    'score-attack-classic': ['Score Attack Classic', 'Maximum score in 10 turns.'],
+    'score-attack-long': ['Score Attack Long', 'Maximum score in 20 turns.'],
+    'target-easy': ['Easy Target', 'Reach 3000 in 10 turns.'],
+    'target-classic': ['Classic Target', 'Reach 4000 in 8 turns.'],
+    'target-hard': ['Hard Target', 'Reach 6000 in 10 turns.'],
+    'target-long': ['Long Target', 'Reach 10000 in 15 turns.'],
+  },
+  ru: {
+    practice: ['Практика', 'Свободная тренировка без победы и поражения.'],
+    'score-attack-short': ['Score Attack Short', 'Максимум очков за 5 ходов.'],
+    'score-attack-classic': ['Score Attack Classic', 'Максимум очков за 10 ходов.'],
+    'score-attack-long': ['Score Attack Long', 'Максимум очков за 20 ходов.'],
+    'target-easy': ['Easy Target', 'Набрать 3000 за 10 ходов.'],
+    'target-classic': ['Classic Target', 'Набрать 4000 за 8 ходов.'],
+    'target-hard': ['Hard Target', 'Набрать 6000 за 10 ходов.'],
+    'target-long': ['Long Target', 'Набрать 10000 за 15 ходов.'],
+  },
+} satisfies Record<Language, Record<string, [string, string]>>;
+
+const listeners = new Set<() => void>();
+
+export const getLanguage = (): Language => {
+  const saved = localStorage.getItem(LANGUAGE_KEY);
+  return saved === 'en' || saved === 'ru' ? saved : 'ru';
+};
+
+export const setLanguage = (language: Language): void => {
+  localStorage.setItem(LANGUAGE_KEY, language);
+  for (const listener of listeners) listener();
+};
+
+export const onLanguageChange = (listener: () => void): (() => void) => {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+};
+
+export const t = (key: keyof (typeof tokens)['en']): string => tokens[getLanguage()][key];
+
+export const soloModeTitle = (id: string, fallback = id): string =>
+  (soloModes[getLanguage()] as Record<string, [string, string]>)[id]?.[0] ?? fallback;
+
+export const soloModeDescription = (id: string, fallback = ''): string =>
+  (soloModes[getLanguage()] as Record<string, [string, string]>)[id]?.[1] ?? fallback;

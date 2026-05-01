@@ -29,6 +29,7 @@ import type {
   MatchStatePayload,
   MatchTurnResultPayload,
   RoomMode,
+  RoomOptionsPayload,
   RestPayload,
   RoomStatePayload,
 } from '../../../../network/protocol/types';
@@ -44,9 +45,16 @@ export type {
   MatchTurnResultPayload,
   RoomRole,
   RoomMode,
+  RoomOptionsPayload,
   RoomStatus,
 } from '../../../../network/protocol/types';
-export { MATCH_PHASE, ROOM_MODE, ROOM_ROLE, ROOM_STATUS } from '../../../../network/protocol/types';
+export {
+  DEFAULT_ROOM_OPTIONS,
+  MATCH_PHASE,
+  ROOM_MODE,
+  ROOM_ROLE,
+  ROOM_STATUS,
+} from '../../../../network/protocol/types';
 export type DieStateFull = DieStateBin;
 export type RestDieState = DieRestStateBin;
 export type RoomState = RoomStatePayload;
@@ -125,15 +133,20 @@ export class NetworkService {
   getRoomId = (): string | null => this.currentRoomId;
   getRoomState = (): RoomStatePayload | null => this.currentRoomState;
 
-  createRoom = (mode: RoomMode = ROOM_MODE.MATCH): Promise<RoomState> => {
-    return this.sendCommand((requestId) => packRoomCreate({ requestId, mode })).then((body) => {
-      if (!body) throw new Error('empty ROOM_CREATE response');
-      const state = unpackRoomState(body);
-      this.currentRoomId = state.id;
-      this.currentRoomCode = state.code;
-      this.currentRoomState = state;
-      return state;
-    });
+  createRoom = (
+    mode: RoomMode = ROOM_MODE.MATCH,
+    options?: Partial<RoomOptionsPayload>,
+  ): Promise<RoomState> => {
+    return this.sendCommand((requestId) => packRoomCreate({ requestId, mode, options })).then(
+      (body) => {
+        if (!body) throw new Error('empty ROOM_CREATE response');
+        const state = unpackRoomState(body);
+        this.currentRoomId = state.id;
+        this.currentRoomCode = state.code;
+        this.currentRoomState = state;
+        return state;
+      },
+    );
   };
 
   joinRoom = (code: string): Promise<RoomState> => {

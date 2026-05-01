@@ -41,6 +41,14 @@ interface RemoteSample {
 // Противоположные грани в сумме 7 (стандартная d6). Эта таблица — единственная
 // точка истины визуального ↔ серверного соответствия; менять синхронно с сервером.
 const FACE_VALUES_BY_MATERIAL_INDEX = [1, 6, 2, 5, 3, 4] as const;
+const FACE_AXES: { axis: CANNON.Vec3; face: number }[] = [
+  { axis: new CANNON.Vec3(1, 0, 0), face: 1 },
+  { axis: new CANNON.Vec3(-1, 0, 0), face: 6 },
+  { axis: new CANNON.Vec3(0, 1, 0), face: 2 },
+  { axis: new CANNON.Vec3(0, -1, 0), face: 5 },
+  { axis: new CANNON.Vec3(0, 0, 1), face: 3 },
+  { axis: new CANNON.Vec3(0, 0, -1), face: 4 },
+];
 
 const PIP_LAYOUT: Record<number, [number, number][]> = {
   // координаты в долях [0..1], (x, y) от верх-лево
@@ -121,6 +129,7 @@ export class DiceService {
   // В local mode — массив LocalDie (cannon body + mesh).
   // В network mode — массив RemoteDie (только mesh + state от сервера).
   private localDice: LocalDie[] = [];
+  private localActiveIndices: number[] = [];
   private remoteDice: RemoteDie[] = [];
 
   constructor(
@@ -192,13 +201,17 @@ export class DiceService {
         });
       }
     }
+    if (this.mode === 'local') this.localActiveIndices = this.allLocalIndices();
   }
 
   pickup(): void {
     if (this.isHeld) return;
     this.isHeld = true;
     if (this.mode === 'local') {
-      for (const die of this.localDice) {
+      const active = new Set(this.localActiveIndices);
+      for (let i = 0; i < this.localDice.length; i++) {
+        if (!active.has(i)) continue;
+        const die = this.localDice[i]!;
         die.mesh.visible = false;
         die.body.type = CANNON.Body.KINEMATIC;
         die.body.velocity.setZero();
@@ -229,12 +242,20 @@ export class DiceService {
     // не сможет вернуть visible=true и кости останутся скрытыми после броска.
     this.isHeld = false;
     if (this.mode !== 'local') return; // network: ждём первый snapshot, кости появятся там
-    for (const die of this.localDice) {
+    const active = this.localActiveIndices.length > 0 ? this.localActiveIndices : this.allLocalIndices();
+    const activeSet = new Set(active);
+    for (let i = 0; i < this.localDice.length; i++) {
+      if (activeSet.has(i)) continue;
+      this.parkLocalDie(this.localDice[i]!);
+    }
+    const center = (active.length - 1) / 2;
+    for (let slot = 0; slot < active.length; slot++) {
+      const die = this.localDice[active[slot]!]!;
       die.mesh.visible = true;
       die.body.type = CANNON.Body.DYNAMIC;
       die.body.position.set(
-        position.x + die.spawnOffset.x,
-        position.y + die.spawnOffset.y,
+        position.x + (slot - center) * DICE_SPACING,
+        position.y,
         position.z + die.spawnOffset.z,
       );
       die.body.quaternion.setFromAxisAngle(
@@ -270,6 +291,67 @@ export class DiceService {
         die.body.quaternion.w,
       );
     }
+  }
+
+  getActiveDiceMeshes(): { mesh: THREE.Mesh; index: number }[] {
+    if (this.mode === 'network') return this.getActiveRemoteMeshes();
+    const out: { mesh: THREE.Mesh; index: number }[] = [];
+    for (const index of this.localActiveIndices) {
+      const die = this.localDice[index];
+      if (!die?.mesh.visible) continue;
+      out.push({ mesh: die.mesh, index });
+    }
+    return out;
+  }
+
+  getDiceMeshes(): { mesh: THREE.Mesh; index: number }[] {
+    if (this.mode === 'network') return this.getRemoteMeshes();
+    return this.localDice.map((die, index) => ({ mesh: die.mesh, index }));
+  }
+
+  getLocalActiveIndices(): number[] {
+    return [...this.localActiveIndices];
+  }
+
+  setLocalActiveIndices(indices: number[]): void {
+    if (this.mode !== 'local') return;
+    const active = new Set<number>();
+    for (const index of indices) {
+      if (Number.isInteger(index) && index >= 0 && index < this.localDice.length) {
+        active.add(index);
+      }
+    }
+    this.localActiveIndices = active.size > 0 ? [...active].sort((a, b) => a - b) : this.allLocalIndices();
+    const activeSet = new Set(this.localActiveIndices);
+    for (let i = 0; i < this.localDice.length; i++) {
+      const die = this.localDice[i]!;
+      if (!activeSet.has(i)) {
+        this.parkLocalDie(die);
+      } else if (!die.mesh.visible || die.body.position.y < -100) {
+        this.resetLocalDieToSpawn(i, die);
+      }
+    }
+  }
+
+  resetLocalForNewTurn(): void {
+    if (this.mode !== 'local') return;
+    this.localActiveIndices = this.allLocalIndices();
+    for (let i = 0; i < this.localDice.length; i++) {
+      this.resetLocalDieToSpawn(i, this.localDice[i]!);
+    }
+  }
+
+  areLocalActiveDiceAtRest(): boolean {
+    if (this.mode !== 'local') return false;
+    return this.localActiveIndices.every((index) => {
+      const die = this.localDice[index];
+      return die !== undefined && die.body.sleepState === CANNON.Body.SLEEPING;
+    });
+  }
+
+  getLocalActiveFaces(): number[] {
+    if (this.mode !== 'local') return [];
+    return this.localActiveIndices.map((index) => this.readFaceValue(this.localDice[index]!.body));
   }
 
   /**
@@ -453,5 +535,50 @@ export class DiceService {
     const s = Math.sin(halfAngle) / wLen;
     this.tmpDeltaQ.set(sample.w.x * s, sample.w.y * s, sample.w.z * s, Math.cos(halfAngle));
     die.mesh.quaternion.multiplyQuaternions(this.tmpDeltaQ, sample.q);
+  }
+
+  private allLocalIndices(): number[] {
+    return Array.from({ length: this.localDice.length }, (_, i) => i);
+  }
+
+  private parkLocalDie(die: LocalDie): void {
+    die.mesh.visible = false;
+    die.body.type = CANNON.Body.KINEMATIC;
+    die.body.velocity.setZero();
+    die.body.angularVelocity.setZero();
+    die.body.force.setZero();
+    die.body.torque.setZero();
+    die.body.position.set(0, PARKED_Y, 0);
+    die.body.sleep();
+  }
+
+  private resetLocalDieToSpawn(index: number, die: LocalDie): void {
+    const offsetX = (index - (this.localDice.length - 1) / 2) * DICE_SPACING;
+    die.mesh.visible = true;
+    die.body.type = CANNON.Body.DYNAMIC;
+    die.body.velocity.setZero();
+    die.body.angularVelocity.setZero();
+    die.body.force.setZero();
+    die.body.torque.setZero();
+    die.body.position.set(offsetX, DICE_HALF_SIZE + 0.05, 0);
+    die.body.quaternion.set(0, 0, 0, 1);
+    die.body.wakeUp();
+    die.mesh.position.set(die.body.position.x, die.body.position.y, die.body.position.z);
+    die.mesh.quaternion.set(0, 0, 0, 1);
+  }
+
+  private readFaceValue(body: CANNON.Body): number {
+    const up = new CANNON.Vec3(0, 1, 0);
+    let bestDot = -Infinity;
+    let bestFace = 1;
+    for (const { axis, face } of FACE_AXES) {
+      const rotated = body.quaternion.vmult(axis);
+      const dot = rotated.dot(up);
+      if (dot > bestDot) {
+        bestDot = dot;
+        bestFace = face;
+      }
+    }
+    return bestFace;
   }
 }

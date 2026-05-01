@@ -17,7 +17,17 @@ import {
 import { DiceService } from './services/dice.service';
 import { HudUiService } from './services/hud-ui.service';
 import { NetworkService } from './services/network.service';
-import { scoreRoll } from '../../../domain/scorer';
+import { isBust, scoreRoll, validateSelection } from '../../../domain/scorer';
+import {
+  DEFAULT_SOLO_MODE,
+  createSoloRun,
+  isSoloRunEnded,
+  recordSoloBank,
+  recordSoloBust,
+  recordSoloContinue,
+} from '../../../domain/solo-run';
+import { SoloUiService } from './services/solo-ui.service';
+import { t } from '../../../ui/i18n';
 import type {
   MatchRollResultPayload,
   MatchStatePayload,
@@ -25,6 +35,7 @@ import type {
   RoomState,
   SnapshotPayload,
 } from './services/network.service';
+import type { SoloModeConfig, SoloRunState } from '../../../domain/solo-run';
 import { MATCH_PHASE, ROOM_MODE, ROOM_ROLE, ROOM_STATUS } from './services/network.service';
 import { SelectionService } from './services/selection.service';
 import { ShakeInputService } from './services/shake-input.service';
@@ -34,6 +45,7 @@ export type GameMode = 'local' | 'network';
 export interface GameEngineOptions {
   mode?: GameMode;
   network?: NetworkService;
+  soloConfig?: SoloModeConfig;
 }
 
 interface PerfStats {
@@ -82,8 +94,13 @@ export class GameEngine {
   private readonly network: NetworkService | null;
   private readonly selection: SelectionService | null;
   private readonly hud: HudUiService | null;
+  private readonly soloConfig: SoloModeConfig | null;
+  private readonly soloHud: SoloUiService | null;
   private currentRoomState: RoomState | null = null;
   private currentMatchState: MatchStatePayload | null = null;
+  private soloState: SoloRunState | null = null;
+  private localRolling = false;
+  private localLastRolledFaces: number[] = [];
 
   private lastTime = 0;
   private rafId: number | null = null;
@@ -92,6 +109,7 @@ export class GameEngine {
   constructor(options: GameEngineOptions = {}) {
     this.mode = options.mode ?? 'local';
     this.network = options.network ?? null;
+    this.soloConfig = this.mode === 'local' ? (options.soloConfig ?? DEFAULT_SOLO_MODE) : null;
 
     this.scene = this.createScene();
     this.camera = this.createCamera();
@@ -130,10 +148,18 @@ export class GameEngine {
         // Чистый state-sync: отправляем инпут серверу, локально ничего не крутим.
         // Сервер вернёт стрим снапшотов, с первым — кости появятся и полетят.
         this.network.sendRelease(velocity, position);
+      } else if (this.mode === 'local' && this.soloState && !isSoloRunEnded(this.soloState)) {
+        this.localRolling = true;
+        this.localLastRolledFaces = [];
+        this.selection?.disable();
+        this.input.setEnabled(false);
+        this.soloHud?.clearRollResult();
+        this.soloHud?.setStatus(t('rolling'));
       }
     });
 
     if (this.mode === 'network' && this.network) {
+      this.soloHud = null;
       const net = this.network;
       net.events.on('dice-spawn', (snap: SnapshotPayload) => {
         this.recordSnapshot(performance.now());
@@ -225,9 +251,12 @@ export class GameEngine {
           }
         });
 
-        this.selection?.events.on('selection-changed', (indices: number[], valid: boolean) => {
-          this.hud?.setSelectionState(indices.length, valid);
-        });
+        this.selection?.events.on(
+          'selection-changed',
+          (indices: number[], valid: boolean, points: number) => {
+            this.hud?.setSelectionState(indices.length, valid, points);
+          },
+        );
 
         this.hud?.events.on('continue-clicked', () => {
           const sel = this.selection;
@@ -256,12 +285,138 @@ export class GameEngine {
         // обработчике выше, когда придёт состояние "WAITING + own turn".
         this.input.setEnabled(false);
       }
+    } else if (this.mode === 'local' && this.soloConfig) {
+      this.hud = null;
+      this.selection = new SelectionService(this.renderer.domElement, this.camera, this.dice);
+      this.selection.disable();
+      this.soloState = createSoloRun(this.soloConfig);
+      this.soloHud = new SoloUiService(this.soloConfig, this.soloState);
+      this.input.setEnabled(true);
+
+      this.selection.events.on(
+        'selection-changed',
+        (indices: number[], valid: boolean, points: number) => {
+          this.soloHud?.setSelectionState(indices.length, valid, points);
+        },
+      );
+      this.soloHud.events.on('continue-clicked', this.handleSoloContinue);
+      this.soloHud.events.on('bank-clicked', this.handleSoloBank);
+      this.soloHud.events.on('reset-clicked', this.resetSoloRun);
+      this.soloHud.setStatus(t('readyToRoll'));
     } else {
       this.selection = null;
       this.hud = null;
+      this.soloHud = null;
     }
 
     window.addEventListener('resize', this.onResize);
+  }
+
+  private finishSoloRoll(): void {
+    const state = this.soloState;
+    const config = this.soloConfig;
+    if (!state || !config || isSoloRunEnded(state)) return;
+    this.localRolling = false;
+    const rolledFaces = this.dice.getLocalActiveFaces();
+    this.localLastRolledFaces = rolledFaces;
+
+    if (isBust(rolledFaces)) {
+      this.soloState = recordSoloBust(state, config);
+      this.dice.resetLocalForNewTurn();
+      this.selection?.disable();
+      this.soloHud?.setState(this.soloState);
+      this.soloHud?.clearRollResult();
+      this.soloHud?.showError('BUST');
+      this.setSoloWaitingState();
+      return;
+    }
+
+    this.selection?.setScoringOptions(rolledFaces, scoreRoll(rolledFaces));
+    this.selection?.enable();
+    this.soloHud?.setRollResult(rolledFaces);
+    this.soloHud?.setStatus(t('chooseScoringDice'));
+  }
+
+  private handleSoloContinue = (): void => {
+    const state = this.soloState;
+    const config = this.soloConfig;
+    const selection = this.selection;
+    if (!state || !config || !selection || isSoloRunEnded(state)) return;
+    const validation = validateSelection(this.localLastRolledFaces, selection.getSelectedRollIndices());
+    if (validation.valid !== true) {
+      this.soloHud?.showError(validation.reason);
+      return;
+    }
+
+    const selected = new Set(selection.getSelectedIndices());
+    const remaining = this.dice.getLocalActiveIndices().filter((index) => !selected.has(index));
+    this.soloState = recordSoloContinue(
+      state,
+      config,
+      validation.points,
+      selection.getSelectedIndices().length,
+    );
+
+    if (remaining.length === 0) {
+      this.dice.resetLocalForNewTurn();
+    } else {
+      this.dice.setLocalActiveIndices(remaining);
+    }
+    this.localLastRolledFaces = [];
+    selection.disable();
+    this.soloHud?.setState(this.soloState);
+    this.soloHud?.clearRollResult();
+    this.setSoloWaitingState();
+  };
+
+  private handleSoloBank = (): void => {
+    const state = this.soloState;
+    const config = this.soloConfig;
+    const selection = this.selection;
+    if (!state || !config || !selection || isSoloRunEnded(state)) return;
+    const validation = validateSelection(this.localLastRolledFaces, selection.getSelectedRollIndices());
+    if (validation.valid !== true) {
+      this.soloHud?.showError(validation.reason);
+      return;
+    }
+
+    this.soloState = recordSoloBank(
+      state,
+      config,
+      validation.points,
+      selection.getSelectedIndices().length,
+    );
+    this.dice.resetLocalForNewTurn();
+    this.localLastRolledFaces = [];
+    selection.disable();
+    this.soloHud?.setState(this.soloState);
+    this.soloHud?.clearRollResult();
+    this.setSoloWaitingState();
+  };
+
+  private resetSoloRun = (): void => {
+    const config = this.soloConfig;
+    if (!config) return;
+    this.localRolling = false;
+    this.localLastRolledFaces = [];
+    this.soloState = createSoloRun(config);
+    this.dice.resetLocalForNewTurn();
+    this.selection?.disable();
+    this.soloHud?.setState(this.soloState);
+    this.soloHud?.clearRollResult();
+    this.setSoloWaitingState();
+  };
+
+  private setSoloWaitingState(): void {
+    const state = this.soloState;
+    if (!state) return;
+    const active = !isSoloRunEnded(state);
+    this.input.setEnabled(active);
+    if (active) {
+      this.soloHud?.setStatus(t('readyToRoll'));
+    } else {
+      this.soloHud?.setStatus('');
+    }
   }
 
   private isOwnPlayer(ownUserId: string): boolean {
@@ -295,6 +450,7 @@ export class GameEngine {
     this.input.destroy();
     this.selection?.destroy();
     this.hud?.destroy();
+    this.soloHud?.destroy();
     this.perf?.el.remove();
     this.renderer.domElement.remove();
     this.renderer.dispose();
@@ -510,6 +666,9 @@ export class GameEngine {
     if (this.mode === 'local' && this.physicsWorld) {
       this.physicsWorld.step(1 / 60, deltaTime, 3);
       this.dice.syncMeshes();
+      if (this.localRolling && this.dice.areLocalActiveDiceAtRest()) {
+        this.finishSoloRoll();
+      }
     } else {
       // network: interpolation buffer + короткий extrapolation fallback.
       this.dice.extrapolate(currentTime);

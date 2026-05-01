@@ -7,6 +7,7 @@
 // Layout каждого пакета — см. dice-server/.claude/specs/network-physics.md.
 
 import { OP } from './opcodes';
+import { DEFAULT_ROOM_OPTIONS, ROOM_SCORING_RULESET, normalizeRoomOptions } from './types';
 
 import type {
   AckErrorPayload,
@@ -26,6 +27,7 @@ import type {
   RoomJoinCmd,
   RoomLeaveCmd,
   RoomMember,
+  RoomOptionsPayload,
   RoomStartCmd,
   RoomStatePayload,
   SnapshotPayload,
@@ -36,6 +38,8 @@ const dec = new TextDecoder();
 
 const SNAPSHOT_PER_DIE = 13 * 4; // 13 floats × 4 bytes
 const REST_PER_DIE = 7 * 4 + 1; // 7 floats × 4 + u8 face
+const ROOM_OPTIONS_BYTES = 6;
+const ROOM_RULESET_BASE_D6 = 0;
 
 const viewOf = (buf: Uint8Array): DataView =>
   new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
@@ -54,6 +58,32 @@ const readStr16 = (
   const len = view.getUint16(off);
   const value = dec.decode(buf.subarray(off + 2, off + 2 + len));
   return { value, next: off + 2 + len };
+};
+
+const writeRoomOptions = (
+  view: DataView,
+  off: number,
+  options: Partial<RoomOptionsPayload> | undefined,
+): number => {
+  const normalized = normalizeRoomOptions(options);
+  view.setUint16(off, normalized.targetScore);
+  view.setUint16(off + 2, normalized.minBank);
+  view.setUint8(off + 4, normalized.allowHotDice ? 1 : 0);
+  view.setUint8(off + 5, ROOM_RULESET_BASE_D6);
+  return off + ROOM_OPTIONS_BYTES;
+};
+
+const readRoomOptions = (view: DataView, off: number): RoomOptionsPayload => {
+  const ruleset = view.getUint8(off + 5);
+  return normalizeRoomOptions({
+    targetScore: view.getUint16(off) as RoomOptionsPayload['targetScore'],
+    minBank: view.getUint16(off + 2) as RoomOptionsPayload['minBank'],
+    allowHotDice: view.getUint8(off + 4) !== 0,
+    scoringRuleset:
+      ruleset === ROOM_RULESET_BASE_D6
+        ? ROOM_SCORING_RULESET.BASE_D6
+        : DEFAULT_ROOM_OPTIONS.scoringRuleset,
+  });
 };
 
 // ──────────────────────────────────────────────────────────────
@@ -198,11 +228,12 @@ export const unpackRelease = (buf: Uint8Array): ReleasePayload => {
 // ──────────────────────────────────────────────────────────────
 
 export const packRoomCreate = (cmd: RoomCreateCmd): Uint8Array => {
-  const buf = new Uint8Array(6);
+  const buf = new Uint8Array(6 + ROOM_OPTIONS_BYTES);
   const view = viewOf(buf);
   view.setUint8(0, OP.ROOM_CREATE);
   view.setUint32(1, cmd.requestId >>> 0);
   view.setUint8(5, (cmd.mode ?? 0) & 0xff);
+  writeRoomOptions(view, 6, cmd.options);
   return buf;
 };
 
@@ -211,6 +242,7 @@ export const unpackRoomCreate = (buf: Uint8Array): RoomCreateCmd => {
   return {
     requestId: view.getUint32(1),
     mode: buf.length > 5 ? (view.getUint8(5) as RoomCreateCmd['mode']) : 0,
+    options: buf.length >= 6 + ROOM_OPTIONS_BYTES ? readRoomOptions(view, 6) : DEFAULT_ROOM_OPTIONS,
   };
 };
 
@@ -291,6 +323,7 @@ export const packRoomState = (state: RoomStatePayload): Uint8Array => {
   for (const m of memberBytes) {
     size += 2 + m.userId.length + 2 + m.socketId.length + 2 + m.displayName.length + 1 + 1;
   }
+  size += ROOM_OPTIONS_BYTES;
 
   const buf = new Uint8Array(size);
   const view = viewOf(buf);
@@ -315,6 +348,7 @@ export const packRoomState = (state: RoomStatePayload): Uint8Array => {
     view.setUint8(off, m.online ? 1 : 0);
     off += 1;
   }
+  writeRoomOptions(view, off, state.options);
   return buf;
 };
 
@@ -353,12 +387,15 @@ export const unpackRoomState = (buf: Uint8Array): RoomStatePayload => {
       online,
     };
   }
+  const options =
+    off + ROOM_OPTIONS_BYTES <= buf.length ? readRoomOptions(view, off) : DEFAULT_ROOM_OPTIONS;
   return {
     id: idR.value,
     code: codeR.value,
     ownerId: ownerR.value,
     status: status as RoomStatePayload['status'],
     mode: mode as RoomStatePayload['mode'],
+    options,
     members,
   };
 };

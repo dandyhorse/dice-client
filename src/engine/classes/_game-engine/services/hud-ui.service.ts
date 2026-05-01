@@ -1,14 +1,13 @@
-import { TARGET_SCORE } from '../../../config';
 import { EventEmitter } from '../../event-emitter.class';
 import { scoreRoll } from '../../../../domain/scorer';
+import { onLanguageChange, t } from '../../../../ui/i18n';
+import { FONT_FAMILY, FONT_SIZE, UI_SIZE } from '../../../../ui/theme';
 
-import { MATCH_PHASE, ROOM_ROLE } from '../../../../network/protocol/types';
+import { DEFAULT_ROOM_OPTIONS, MATCH_PHASE, ROOM_ROLE } from '../../../../network/protocol/types';
 import type { MatchPhase, MatchStatePayload, RoomStatePayload } from '../../../../network/protocol/types';
 
 const PANEL_BG = 'rgba(0,0,0,0.6)';
 const PANEL_FG = '#eee';
-const PANEL_FONT = 'system-ui, sans-serif';
-const PANEL_FONT_SIZE = '14px';
 const PANEL_RADIUS = '6px';
 const PANEL_PAD = '10px 12px';
 
@@ -20,12 +19,12 @@ const ERROR_DURATION_MS = 2500;
 
 const formatPlayer = (userId: string, ownUserId: string): string => {
   if (!userId) return '-';
-  if (userId === ownUserId) return 'Ты';
+  if (userId === ownUserId) return t('youSuffix');
   return shortId(userId);
 };
 
 const formatMember = (displayName: string, userId: string, ownUserId: string): string => {
-  if (userId === ownUserId) return `${displayName || 'Ты'} (ты)`;
+  if (userId === ownUserId) return `${displayName || t('youSuffix')} (${t('youSuffix')})`;
   return displayName || shortId(userId);
 };
 
@@ -56,11 +55,13 @@ export class HudUiService {
   private readonly errorPanel: HTMLDivElement;
   private readonly continueBtn: HTMLButtonElement;
   private readonly bankBtn: HTMLButtonElement;
+  private readonly unsubscribeLanguage: () => void;
 
   private state: MatchStatePayload | null = null;
   private roomState: RoomStatePayload | null = null;
   private selectedCount = 0;
   private selectionValid = false;
+  private selectedPoints = 0;
   private errorTimer: number | null = null;
   /** Что выпало в последнем броске (из MATCH_ROLL_RESULT). Чистится при смене фазы с SELECTING. */
   private lastRolledFaces: number[] = [];
@@ -76,7 +77,7 @@ export class HudUiService {
       inset: '0',
       pointerEvents: 'none',
       zIndex: '15',
-      fontFamily: PANEL_FONT,
+      fontFamily: FONT_FAMILY.ui,
     } satisfies Partial<CSSStyleDeclaration>);
 
     // top:60px — чтобы не наезжать на room badge (см. main.ts:showRoomCode,
@@ -88,7 +89,7 @@ export class HudUiService {
       whiteSpace: 'pre-line',
     } satisfies Partial<CSSStyleDeclaration>);
 
-    this.rightPanel = this.makePanel({ top: '12px', right: '12px' });
+    this.rightPanel = this.makePanel({ top: '60px', right: '12px' });
     this.rightPanel.id = 'hud-right';
     Object.assign(this.rightPanel.style, {
       minWidth: '180px',
@@ -108,11 +109,11 @@ export class HudUiService {
       pointerEvents: 'auto',
     } satisfies Partial<CSSStyleDeclaration>);
 
-    this.continueBtn = this.makeButton('Continue', () => {
+    this.continueBtn = this.makeButton(t('continue'), () => {
       if (this.continueBtn.disabled) return;
       this.events.emit('continue-clicked');
     });
-    this.bankBtn = this.makeButton('Bank', () => {
+    this.bankBtn = this.makeButton(t('bank'), () => {
       if (this.bankBtn.disabled) return;
       this.events.emit('bank-clicked');
     });
@@ -129,8 +130,8 @@ export class HudUiService {
       padding: PANEL_PAD,
       background: PANEL_BG,
       color: PANEL_FG,
-      fontFamily: PANEL_FONT,
-      fontSize: PANEL_FONT_SIZE,
+      fontFamily: FONT_FAMILY.ui,
+      fontSize: FONT_SIZE.hud,
       borderRadius: PANEL_RADIUS,
       pointerEvents: 'none',
       maxWidth: '70vw',
@@ -147,8 +148,8 @@ export class HudUiService {
       padding: '14px 28px',
       background: 'rgba(180,40,40,0.85)',
       color: '#fff',
-      fontFamily: PANEL_FONT,
-      fontSize: '24px',
+      fontFamily: FONT_FAMILY.ui,
+      fontSize: FONT_SIZE.overlay,
       fontWeight: 'bold',
       borderRadius: PANEL_RADIUS,
       pointerEvents: 'none',
@@ -163,6 +164,11 @@ export class HudUiService {
     document.body.appendChild(this.statusPanel);
     document.body.appendChild(this.errorPanel);
 
+    this.unsubscribeLanguage = onLanguageChange(() => {
+      this.continueBtn.textContent = t('continue');
+      this.bankBtn.textContent = t('bank');
+      this.render();
+    });
     this.render();
   }
 
@@ -173,6 +179,7 @@ export class HudUiService {
       this.lastRolledFaces = [];
       this.selectedCount = 0;
       this.selectionValid = false;
+      this.selectedPoints = 0;
     }
     this.state = state;
     this.render();
@@ -192,9 +199,10 @@ export class HudUiService {
     this.render();
   }
 
-  setSelectionState(n: number, valid: boolean): void {
+  setSelectionState(n: number, valid: boolean, points = 0): void {
     this.selectedCount = n;
     this.selectionValid = valid;
+    this.selectedPoints = points;
     this.renderActions();
     this.renderLeft();
   }
@@ -212,6 +220,7 @@ export class HudUiService {
   destroy(): void {
     if (this.errorTimer !== null) clearTimeout(this.errorTimer);
     this.errorTimer = null;
+    this.unsubscribeLanguage();
     this.root.remove();
     this.actionsPanel.remove();
     this.statusPanel.remove();
@@ -228,26 +237,28 @@ export class HudUiService {
   private renderLeft(): void {
     const s = this.state;
     if (!s) {
-      this.leftPanel.textContent = 'Подключение...';
+      this.leftPanel.textContent = t('connecting');
       return;
     }
     const turnLabel = formatPlayer(s.currentPlayer, this.ownUserId);
     const benchLabel = s.bench.length > 0 ? s.bench.join(', ') : '-';
+    const minBank = this.roomState?.options.minBank ?? DEFAULT_ROOM_OPTIONS.minBank;
     const lines = [
-      `Чей ход: ${turnLabel}`,
-      `Накоплено в ходу: ${s.turnPoints}`,
-      `Bench: ${benchLabel}`,
+      `${t('turnOwner')}: ${turnLabel}`,
+      `${t('turnPoints')}: ${s.turnPoints}`,
+      `${t('bench')}: ${benchLabel}`,
+      minBank > 0 ? `${t('minBank')}: ${minBank}` : `${t('minBank')}: -`,
     ];
 
     const isMyTurn = s.currentPlayer === this.ownUserId;
     if (isMyTurn && s.phase === MATCH_PHASE.SELECTING && this.lastRolledFaces.length > 0) {
       lines.push('');
-      lines.push(`Выпало: ${this.lastRolledFaces.join(', ')}`);
+      lines.push(`${t('rolled')}: ${this.lastRolledFaces.join(', ')}`);
       const opts = scoreRoll(this.lastRolledFaces);
       if (opts.length === 0) {
-        lines.push('Scoring: —');
+        lines.push(t('scoringNone'));
       } else {
-        lines.push('Можно взять:');
+        lines.push(t('availableScoring'));
         for (const o of opts) {
           const positions = o.dieIndices.map((i) => i + 1).join(',');
           lines.push(`• ${o.label} (поз. ${positions}) → ${o.points}`);
@@ -256,7 +267,9 @@ export class HudUiService {
       if (this.selectedCount > 0) {
         lines.push('');
         lines.push(
-          `Выбрано: ${this.selectedCount}${this.selectionValid ? '' : ' (набор неполный)'}`,
+          `${t('selected')}: ${this.selectedCount}${
+            this.selectionValid ? '' : ` (${t('incompleteSet')})`
+          }`,
         );
       }
     }
@@ -267,6 +280,7 @@ export class HudUiService {
   private renderRight(): void {
     const s = this.state;
     const room = this.roomState;
+    const targetScore = room?.options.targetScore ?? DEFAULT_ROOM_OPTIONS.targetScore;
     if (!room) {
       if (!s || s.totals.length === 0) {
         this.rightPanel.textContent = '—';
@@ -274,14 +288,14 @@ export class HudUiService {
       }
       const lines = s.totals.map((t) => {
         const label = formatPlayer(t.userId, this.ownUserId);
-        return `${label}: ${t.total} / ${TARGET_SCORE}`;
+        return `${label}: ${t.total} / ${targetScore}`;
       });
       this.rightPanel.textContent = lines.join('\n');
       return;
     }
 
     const totalByUser = new Map((s?.totals ?? []).map((t) => [t.userId, t.total]));
-    const lines: string[] = ['Игроки'];
+    const lines: string[] = [t('players')];
     const players = room.members.filter((m) => m.role === ROOM_ROLE.PLAYER);
     if (players.length === 0) {
       lines.push('—');
@@ -289,21 +303,21 @@ export class HudUiService {
       for (const m of players) {
         const label = formatMember(m.displayName, m.userId, this.ownUserId);
         const total = totalByUser.get(m.userId) ?? 0;
-        const turn = s?.currentPlayer === m.userId ? ' · ход' : '';
-        const online = m.online ? 'online' : 'offline';
-        lines.push(`${label}: ${total} / ${TARGET_SCORE} · ${online}${turn}`);
+        const turn = s?.currentPlayer === m.userId ? ` · ${t('turn')}` : '';
+        const online = m.online ? t('online') : t('offline');
+        lines.push(`${label}: ${total} / ${targetScore} · ${online}${turn}`);
       }
     }
 
     const spectators = room.members.filter((m) => m.role === ROOM_ROLE.SPECTATOR);
     lines.push('');
-    lines.push('Зрители');
+    lines.push(t('spectators'));
     if (spectators.length === 0) {
       lines.push('—');
     } else {
       for (const m of spectators) {
         const label = formatMember(m.displayName, m.userId, this.ownUserId);
-        lines.push(`${label} · ${m.online ? 'online' : 'offline'}`);
+        lines.push(`${label} · ${m.online ? t('online') : t('offline')}`);
       }
     }
 
@@ -325,8 +339,11 @@ export class HudUiService {
       s.currentPlayer === this.ownUserId;
     this.actionsPanel.style.display = showButtons ? 'flex' : 'none';
     const canSubmit = showButtons && this.selectedCount > 0 && this.selectionValid;
+    const minBank = this.roomState?.options.minBank ?? DEFAULT_ROOM_OPTIONS.minBank;
+    const canBank =
+      canSubmit && s !== null && s.turnPoints + this.selectedPoints >= minBank;
     this.setButtonEnabled(this.continueBtn, canSubmit);
-    this.setButtonEnabled(this.bankBtn, canSubmit);
+    this.setButtonEnabled(this.bankBtn, canBank);
   }
 
   private renderStatus(): void {
@@ -337,13 +354,13 @@ export class HudUiService {
       return;
     }
     if (s.paused) {
-      this.statusPanel.textContent = s.pauseReason ? `Пауза: ${s.pauseReason}` : 'Пауза';
+      this.statusPanel.textContent = s.pauseReason ? `${t('pause')}: ${s.pauseReason}` : t('pause');
       this.statusPanel.style.display = 'block';
       return;
     }
     const isSpectator = this.getOwnRole() === ROOM_ROLE.SPECTATOR;
     if (isSpectator) {
-      this.statusPanel.textContent = 'Ты зритель';
+      this.statusPanel.textContent = t('spectatorMode');
       this.statusPanel.style.display = 'block';
       return;
     }
@@ -352,17 +369,17 @@ export class HudUiService {
     let text = '';
     switch (s.phase as MatchPhase) {
       case MATCH_PHASE.WAITING:
-        text = isMyTurn ? 'Твой ход. Бросай кости (зажми и отпусти)' : `Ждём ${opponent}`;
+        text = isMyTurn ? t('yourTurnRoll') : `${t('waitingFor')} ${opponent}`;
         break;
       case MATCH_PHASE.ROLLING:
-        text = 'Бросаем...';
+        text = t('rolling');
         break;
       case MATCH_PHASE.SELECTING:
-        text = isMyTurn ? '' : `Ходит ${opponent}, выбирает кости`;
+        text = isMyTurn ? '' : `${t('turnOwner')}: ${opponent}, ${t('selectingDice')}`;
         break;
       case MATCH_PHASE.FINISHED: {
         const winner = s.winner ? formatPlayer(s.winner, this.ownUserId) : '-';
-        text = `Победил ${winner}!`;
+        text = `${t('won')}: ${winner}`;
         break;
       }
       default:
@@ -379,8 +396,8 @@ export class HudUiService {
       padding: PANEL_PAD,
       background: PANEL_BG,
       color: PANEL_FG,
-      fontFamily: PANEL_FONT,
-      fontSize: PANEL_FONT_SIZE,
+      fontFamily: FONT_FAMILY.ui,
+      fontSize: FONT_SIZE.hud,
       borderRadius: PANEL_RADIUS,
       pointerEvents: 'none',
       lineHeight: '1.5',
@@ -398,8 +415,16 @@ export class HudUiService {
       color: BTN_FG,
       border: 'none',
       borderRadius: PANEL_RADIUS,
-      fontFamily: PANEL_FONT,
-      fontSize: PANEL_FONT_SIZE,
+      fontFamily: FONT_FAMILY.ui,
+      fontSize: FONT_SIZE.hud,
+      width: UI_SIZE.hudButtonWidth,
+      height: UI_SIZE.hudButtonHeight,
+      boxSizing: 'border-box',
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      lineHeight: '1',
+      whiteSpace: 'nowrap',
       cursor: 'pointer',
       pointerEvents: 'auto',
     } satisfies Partial<CSSStyleDeclaration>);

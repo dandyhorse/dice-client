@@ -73,6 +73,10 @@ export class SelectionService {
     return [...this.orderedSelection];
   }
 
+  getSelectedRollIndices(): number[] {
+    return this.orderedSelection.map((index) => this.rollIndexBySnapshotIndex.get(index) ?? -1);
+  }
+
   clear(): void {
     this.selected.clear();
     this.orderedSelection.length = 0;
@@ -83,7 +87,7 @@ export class SelectionService {
   setScoringOptions(rolledFaces: number[], options: ScoringOption[]): void {
     this.clearScoringOptions(false);
     this.rolledFaces = [...rolledFaces];
-    const active = this.dice.getActiveRemoteMeshes();
+    const active = this.dice.getActiveDiceMeshes();
     for (let rollIndex = 0; rollIndex < this.rolledFaces.length; rollIndex++) {
       const snapshotIndex = active[rollIndex]?.index ?? rollIndex;
       this.rollIndexBySnapshotIndex.set(snapshotIndex, rollIndex);
@@ -132,7 +136,7 @@ export class SelectionService {
     this.ndc.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     this.raycaster.setFromCamera(this.ndc, this.camera);
 
-    const active = this.dice.getActiveRemoteMeshes();
+    const active = this.dice.getActiveDiceMeshes();
     if (active.length === 0) return;
 
     const meshes = active.map((a) => a.mesh);
@@ -161,13 +165,13 @@ export class SelectionService {
   }
 
   private applyAllHighlights(): void {
-    for (const entry of this.dice.getRemoteMeshes()) {
+    for (const entry of this.dice.getDiceMeshes()) {
       this.applyHighlight(entry.index, entry.mesh);
     }
   }
 
   private clearAllHighlights(): void {
-    for (const entry of this.dice.getRemoteMeshes()) {
+    for (const entry of this.dice.getDiceMeshes()) {
       this.applyMaterialHighlight(entry.mesh, NO_HIGHLIGHT.color, NO_HIGHLIGHT.intensity);
     }
   }
@@ -201,10 +205,12 @@ export class SelectionService {
 
   private emitSelectionChanged(): void {
     const indices = [...this.orderedSelection];
-    const rollIndices = indices.map((index) => this.rollIndexBySnapshotIndex.get(index) ?? -1);
-    const valid =
-      indices.length > 0 && validateSelection(this.rolledFaces, rollIndices).valid === true;
-    this.events.emit('selection-changed', indices, valid);
+    const rollIndices = this.getSelectedRollIndices();
+    const validation =
+      indices.length > 0 ? validateSelection(this.rolledFaces, rollIndices) : null;
+    const valid = validation?.valid === true;
+    const points = validation?.valid === true ? validation.points : 0;
+    this.events.emit('selection-changed', indices, valid, points);
   }
 
   private kindForOption(option: ScoringOption): HighlightKind {
