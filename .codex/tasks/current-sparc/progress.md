@@ -25,6 +25,9 @@
 - [x] UI scale/fonts centralized in `src/ui/theme.ts`; lobby, auth controls, room screens, multiplayer HUD, and solo HUD use shared font/size tokens instead of per-file hardcoded font sizes.
 - [x] Auth player label restyled: top-left username uses the title/logo font, no leading `@`, and logout is a compact `×` icon button with tooltip/ARIA label.
 - [x] Stable UI control sizing added: auth buttons, language buttons, menu buttons, form controls, and HUD buttons no longer resize based on label length.
+- [x] Table/gameplay visual pass completed: invisible physical walls, fullscreen visual tabletop, wood texture/normal/roughness assets, shifted high-resolution shadows, and stone-textured dice faces with retained pips.
+- [x] Throw release positions are clamped to a safe table zone before local/network release so dice cannot be spawned outside the physical arena or inside the wall.
+- [x] Client-side local dice physics tuned to match server: heavier dice mass (`DICE_MASS = 0.6`) and calmer dice-to-dice contact (`friction 0.35`, `restitution 0.12`) while preserving previous flight damping (`0.1/0.1`).
 
 ## Verification
 - [x] `npm run build` in `dice-client` passed after test-room changes.
@@ -34,6 +37,7 @@
 - [x] Local nginx check for `https://farklepit.online/` returned `200`.
 - [x] `npm run build` in `dice-client` passed after online physics/render optimization.
 - [x] `npm run build` in `dice-client` passed after solo/multiplayer split, i18n/fonts, centralized theme sizing, and compact logout button changes.
+- [x] `npm run build` in `dice-client` passed after table/dice texture, safe throw bounds, shadow quality, and dice physics tuning.
 
 ## Notes
 - Public routing target is nginx on `80/443`; client preview remains internal on `127.0.0.1:5174`.
@@ -42,3 +46,4 @@
 - Protocol files remain synced with server except the first marker comment.
 - Hard refresh may be needed after rebuild because the Vite asset hash changes.
 - Dev server and pm2 were intentionally not touched during the latest UI iterations; only production builds were run.
+- Latest pushed client commit: `abd32d2 Update dice table visuals and physics`.
