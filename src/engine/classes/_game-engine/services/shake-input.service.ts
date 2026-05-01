@@ -1,18 +1,26 @@
 import * as THREE from 'three';
 import { EventEmitter } from '../../event-emitter.class';
 import {
+  DICE_HALF_SIZE,
   HOLD_HEIGHT,
+  TABLE_DEPTH,
+  TABLE_WIDTH,
   THROW_DOWNWARD_BIAS,
   THROW_LINEAR_SCALE,
   THROW_MAX_SPEED,
   THROW_MIN_SPEED,
+  THROW_POSITION_PADDING,
   VELOCITY_BUFFER_MS,
+  WALL_INSET,
 } from '../../../config';
 
 interface Sample {
   pos: THREE.Vector3;
   time: number;
 }
+
+const clamp = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, value));
 
 export class ShakeInputService {
   readonly events = new EventEmitter();
@@ -155,6 +163,21 @@ export class ShakeInputService {
     const hit = this.raycaster.ray.intersectPlane(this.holdPlane, this.tmpHit);
     if (!hit) return false;
     this.currentPos.copy(hit);
+    this.clampCurrentPosToThrowZone();
     return true;
+  }
+
+  private clampCurrentPosToThrowZone(): void {
+    const limitX = Math.max(
+      0,
+      TABLE_WIDTH / 2 - WALL_INSET - DICE_HALF_SIZE - THROW_POSITION_PADDING,
+    );
+    const limitZ = Math.max(
+      0,
+      TABLE_DEPTH / 2 - WALL_INSET - DICE_HALF_SIZE - THROW_POSITION_PADDING,
+    );
+    this.currentPos.x = clamp(this.currentPos.x, -limitX, limitX);
+    this.currentPos.y = HOLD_HEIGHT;
+    this.currentPos.z = clamp(this.currentPos.z, -limitZ, limitZ);
   }
 }

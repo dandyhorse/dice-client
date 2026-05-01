@@ -5,8 +5,13 @@ import {
   DICE_HALF_SIZE,
   DICE_MASS,
   DICE_SPACING,
+  HOLD_HEIGHT,
   INTERPOLATION_DELAY_MS,
+  TABLE_DEPTH,
+  TABLE_WIDTH,
   THROW_ANGULAR_RANDOM,
+  THROW_POSITION_PADDING,
+  WALL_INSET,
 } from '../../../config';
 import type { DieStateFull } from './network.service';
 
@@ -64,14 +69,38 @@ const TEXTURE_SIZE = 256;
 const PIP_RADIUS_FRACTION = 0.085;
 const FACE_BG = '#f5f5f0';
 const FACE_PIP = '#1a1a1a';
+const DICE_TEXTURE_BASE_URL = '/assets/dice/plastered-stone-wall-1k/';
+const DICE_COLOR_MAP_URL = `${DICE_TEXTURE_BASE_URL}plastered_stone_wall_diff_1k.jpg`;
+const DICE_NORMAL_MAP_URL = `${DICE_TEXTURE_BASE_URL}plastered_stone_wall_nor_gl_1k.png`;
+const DICE_ROUGHNESS_MAP_URL = `${DICE_TEXTURE_BASE_URL}plastered_stone_wall_rough_1k.png`;
+const DICE_BASE_BRIGHTNESS = 1.45;
 
-const createPipTexture = (value: number): THREE.CanvasTexture => {
-  const canvas = document.createElement('canvas');
-  canvas.width = TEXTURE_SIZE;
-  canvas.height = TEXTURE_SIZE;
-  const ctx = canvas.getContext('2d')!;
+interface FaceTextureEntry {
+  value: number;
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D;
+  texture: THREE.CanvasTexture;
+}
+
+interface DiceSurfaceMaps {
+  normalMap: THREE.Texture;
+  roughnessMap: THREE.Texture;
+}
+
+let diceBaseImage: HTMLImageElement | null = null;
+let diceBaseImageLoading = false;
+let cachedFaceTextureEntries: FaceTextureEntry[] | null = null;
+let cachedDiceSurfaceMaps: DiceSurfaceMaps | null = null;
+
+const drawFaceTexture = (entry: FaceTextureEntry): void => {
+  const { ctx, value } = entry;
   ctx.fillStyle = FACE_BG;
   ctx.fillRect(0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
+  if (diceBaseImage) {
+    ctx.filter = `brightness(${DICE_BASE_BRIGHTNESS})`;
+    ctx.drawImage(diceBaseImage, 0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
+    ctx.filter = 'none';
+  }
   ctx.fillStyle = FACE_PIP;
   const r = TEXTURE_SIZE * PIP_RADIUS_FRACTION;
   for (const [fx, fy] of PIP_LAYOUT[value] ?? []) {
@@ -79,27 +108,70 @@ const createPipTexture = (value: number): THREE.CanvasTexture => {
     ctx.arc(fx * TEXTURE_SIZE, fy * TEXTURE_SIZE, r, 0, Math.PI * 2);
     ctx.fill();
   }
+  entry.texture.needsUpdate = true;
+};
+
+const ensureDiceBaseImageLoaded = (): void => {
+  if (diceBaseImage || diceBaseImageLoading) return;
+  diceBaseImageLoading = true;
+  const image = new Image();
+  image.onload = () => {
+    diceBaseImage = image;
+    diceBaseImageLoading = false;
+    for (const entry of cachedFaceTextureEntries ?? []) drawFaceTexture(entry);
+  };
+  image.onerror = () => {
+    diceBaseImageLoading = false;
+  };
+  image.src = DICE_COLOR_MAP_URL;
+};
+
+const createPipTexture = (value: number): FaceTextureEntry => {
+  const canvas = document.createElement('canvas');
+  canvas.width = TEXTURE_SIZE;
+  canvas.height = TEXTURE_SIZE;
+  const ctx = canvas.getContext('2d')!;
   const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = 4;
-  return tex;
+  const entry = { value, canvas, ctx, texture: tex };
+  drawFaceTexture(entry);
+  ensureDiceBaseImageLoaded();
+  return entry;
 };
 
-let cachedFaceTextures: THREE.CanvasTexture[] | null = null;
 const getFaceTextures = (): THREE.CanvasTexture[] => {
-  if (cachedFaceTextures) return cachedFaceTextures;
-  cachedFaceTextures = FACE_VALUES_BY_MATERIAL_INDEX.map((v) => createPipTexture(v));
-  return cachedFaceTextures;
+  if (!cachedFaceTextureEntries) {
+    cachedFaceTextureEntries = FACE_VALUES_BY_MATERIAL_INDEX.map((v) => createPipTexture(v));
+  }
+  return cachedFaceTextureEntries.map((entry) => entry.texture);
 };
 
-const createFaceMaterials = (): THREE.MeshStandardMaterial[] =>
-  getFaceTextures().map(
+const getDiceSurfaceMaps = (): DiceSurfaceMaps => {
+  if (cachedDiceSurfaceMaps) return cachedDiceSurfaceMaps;
+  const loader = new THREE.TextureLoader();
+  const normalMap = loader.load(DICE_NORMAL_MAP_URL);
+  const roughnessMap = loader.load(DICE_ROUGHNESS_MAP_URL);
+  normalMap.anisotropy = 4;
+  roughnessMap.anisotropy = 4;
+  cachedDiceSurfaceMaps = { normalMap, roughnessMap };
+  return cachedDiceSurfaceMaps;
+};
+
+const createFaceMaterials = (): THREE.MeshStandardMaterial[] => {
+  const surfaceMaps = getDiceSurfaceMaps();
+  return getFaceTextures().map(
     (texture) =>
       new THREE.MeshStandardMaterial({
         map: texture,
-        roughness: 0.4,
-        metalness: 0.05,
+        normalMap: surfaceMaps.normalMap,
+        roughnessMap: surfaceMaps.roughnessMap,
+        roughness: 0.9,
+        metalness: 0.0,
+        normalScale: new THREE.Vector2(0.18, 0.18),
       }),
   );
+};
 
 const PARKED_Y = -1000;
 const REMOTE_SAMPLE_CAPACITY = 8;
@@ -115,6 +187,9 @@ export type DiceMode = 'local' | 'network';
 export interface DiceServiceOptions {
   shadowsEnabled?: boolean;
 }
+
+const clamp = (value: number, min: number, max: number): number =>
+  Math.min(max, Math.max(min, value));
 
 export class DiceService {
   private scene: THREE.Scene;
@@ -249,14 +324,15 @@ export class DiceService {
       this.parkLocalDie(this.localDice[i]!);
     }
     const center = (active.length - 1) / 2;
+    const releasePosition = this.clampReleasePosition(position, active.length);
     for (let slot = 0; slot < active.length; slot++) {
       const die = this.localDice[active[slot]!]!;
       die.mesh.visible = true;
       die.body.type = CANNON.Body.DYNAMIC;
       die.body.position.set(
-        position.x + (slot - center) * DICE_SPACING,
-        position.y,
-        position.z + die.spawnOffset.z,
+        releasePosition.x + (slot - center) * DICE_SPACING,
+        releasePosition.y,
+        releasePosition.z + die.spawnOffset.z,
       );
       die.body.quaternion.setFromAxisAngle(
         new CANNON.Vec3(Math.random(), Math.random(), Math.random()).unit(),
@@ -277,6 +353,23 @@ export class DiceService {
         die.body.quaternion.w,
       );
     }
+  }
+
+  private clampReleasePosition(position: THREE.Vector3, diceCount: number): THREE.Vector3 {
+    const maxOffsetX = ((diceCount - 1) / 2) * DICE_SPACING;
+    const limitX = Math.max(
+      0,
+      TABLE_WIDTH / 2 - WALL_INSET - maxOffsetX - DICE_HALF_SIZE - THROW_POSITION_PADDING,
+    );
+    const limitZ = Math.max(
+      0,
+      TABLE_DEPTH / 2 - WALL_INSET - DICE_HALF_SIZE - THROW_POSITION_PADDING,
+    );
+    return new THREE.Vector3(
+      clamp(Number.isFinite(position.x) ? position.x : 0, -limitX, limitX),
+      HOLD_HEIGHT,
+      clamp(Number.isFinite(position.z) ? position.z : 0, -limitZ, limitZ),
+    );
   }
 
   syncMeshes(): void {

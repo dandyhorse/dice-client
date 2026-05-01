@@ -8,20 +8,20 @@
 
 - `scene: THREE.Scene` — сцена, фон `0x1a1a22`
 - `camera: THREE.PerspectiveCamera` — fov `CAMERA_FOV` (45), near 0.1, far 200, **top-down**. X/Z из `CAMERA_X/Z`, **Y вычисляется** под текущий aspect (см. Camera fit). `up = (0, 0, -1)` чтобы избежать gimbal lock.
-- `renderer: THREE.WebGLRenderer` — `pixelRatio = 1`; в network-mode antialias/shadows выключены ради FPS, в local-mode остаётся `PCFShadowMap`
+- `renderer: THREE.WebGLRenderer` — `pixelRatio = 1`; в network-mode antialias/shadows выключены ради FPS, в local-mode остаётся `PCFSoftShadowMap`
 - `physicsWorld: CANNON.World` — `SAPBroadphase`, GS solver 10 итераций, `allowSleep = true`
 - `diceMaterial`, `tableMaterial: CANNON.Material` — для контактных пар
 
 ### Инициализация (constructor)
 
-1. `createScene()` — фон + ambient + directional + point light; shadow map включается только в local-mode
+1. `createScene()` — фон + ambient + directional + point light; свет слегка смещён к дальнему краю стола, shadow map включается только в local-mode
 2. `createCamera()` — `up = CAMERA_UP` → `position = (CAMERA_X, computeCameraY(aspect), CAMERA_Z)` → `lookAt(CAMERA_TARGET)` (порядок важен: `up` до `lookAt`)
 3. `createRenderer()` — настройка теней и PR
 4. `createPhysicsWorld()` — gravity `(0, WORLD_GRAVITY, 0)`, broadphase, sleep
 5. `setupContactMaterials()`:
    - dice ↔ table: `friction 0.45, restitution 0.35, contactEquationStiffness 1e8, contactEquationRelaxation 3`
-   - dice ↔ dice: `friction 0.25, restitution 0.25`
-6. `createPlayArea()` — **один раз** создаёт стол `TABLE_WIDTH × TABLE_DEPTH`, 4 видимые стены (с `WALL_INSET` от кромки) и невидимый потолок на высоте `WALL_HEIGHT`
+   - dice ↔ dice: `friction 0.35, restitution 0.12`
+6. `createPlayArea()` — **один раз** создаёт стол `TABLE_WIDTH × TABLE_DEPTH`, 4 невидимые физические стены (с `WALL_INSET` от кромки) и невидимый потолок на высоте `WALL_HEIGHT`
 7. `new DiceService(...).spawn()` — спавн костей
 8. `new ShakeInputService(...)` — подписка на `hold-start` → `dice.pickup()` и `release` → `dice.release(velocity, position)`. `hold-move` сервис эмитит, но движок его не слушает.
 9. `addEventListener('resize', onResize)` — пересчёт aspect и Y камеры
@@ -57,8 +57,8 @@ ShakeInputService.events:
 
 **Принципиально**: стол, стены и потолок имеют **фиксированные размеры в world units** и создаются один раз в `createPlayArea()`. Это требование мультиплеера: физическая площадка одинакова у всех игроков независимо от разрешения экрана.
 
-- Стол: `TABLE_WIDTH × TABLE_DEPTH` (по умолчанию 16×9), толщина `TABLE_THICKNESS`. Mesh цвета `0x2c5530`, `mass = 0`.
-- Стены: 4 видимые `CANNON.Body + THREE.Mesh` по периметру **внутренней** области `(TABLE_WIDTH - 2·WALL_INSET) × (TABLE_DEPTH - 2·WALL_INSET)`. Mesh цвета `0x5c4a3a` (тёплое дерево). Shadow flags включаются только в local-mode. Высота `WALL_HEIGHT`, толщина `WALL_THICKNESS`. `WALL_INSET` нужен чтобы стены попадали в frustum top-down камеры (при contain-fit без inset стены ровно на границе FOV) и оставлял зелёную "рамку" между стеной и кромкой стола.
+- Стол: физический body `TABLE_WIDTH × TABLE_DEPTH` (по умолчанию 16×9), толщина `TABLE_THICKNESS`, `mass = 0`. Визуальный mesh использует активный 2K wood color/normal/roughness набор из `public/assets/table/wood-cabinet-worn-long-2k/`; 1K вариант подготовлен рядом для быстрой замены. Mesh масштабируется под viewport с запасом, чтобы дерево закрывало весь экран; физический размер арены от этого не меняется.
+- Стены: 4 невидимых `CANNON.Body` по периметру **внутренней** области `(TABLE_WIDTH - 2·WALL_INSET) × (TABLE_DEPTH - 2·WALL_INSET)`. Высота `WALL_HEIGHT`, толщина `WALL_THICKNESS`. `WALL_INSET = WALL_THICKNESS`, чтобы внешняя грань стены совпадала с кромкой стола.
 - Потолок: невидимый `CANNON.Body` (без mesh) поверх стен на высоте `WALL_HEIGHT`, размером с внутреннюю область. Закрывает арену сверху, чтобы кости не вылетали при сильном броске. Mesh не нужен — top-down камера смотрит ровно сквозь, видимый потолок перекрыл бы вид.
 
 ## Camera fit (contain)
@@ -87,11 +87,11 @@ camera.y  = max(hForDepth, hForWidth)   // contain — берём большую
 | `TABLE_DEPTH` | 9 | Глубина стола в world-units (по Z), 16:9 |
 | `TABLE_THICKNESS` | 0.4 | Толщина стола |
 | `WALL_HEIGHT` | 4 | Высота стен (и потолка) |
-| `WALL_THICKNESS` | 1.0 | Толщина стен и потолка (страховка от tunneling) |
-| `WALL_INSET` | 1.0 | Сдвиг внутренней грани стены от кромки стола; равен WALL_THICKNESS — внешняя грань ровно на кромке |
+| `WALL_THICKNESS` | 0.5 | Толщина стен и потолка (страховка от tunneling) |
+| `WALL_INSET` | 0.5 | Сдвиг внутренней грани стены от кромки стола; равен WALL_THICKNESS — внешняя грань ровно на кромке |
 | `DICE_COUNT` | 6 | Сколько костей спавнить |
 | `DICE_HALF_SIZE` | 0.22 | Полуразмер ребра кости (куб 0.44×0.44×0.44) |
-| `DICE_MASS` | 0.3 | Масса кости |
+| `DICE_MASS` | 0.6 | Масса кости |
 | `DICE_SPACING` | 0.6 | Разнос костей по X при release |
 | `HOLD_HEIGHT` | 2.5 | Y-уровень hold-плоскости (куда проецируется мышь) |
 | `HOLD_JITTER_SCALE` | 0.04 | (legacy, не используется в новом флоу pickup/release) |
@@ -99,6 +99,7 @@ camera.y  = max(hForDepth, hForWidth)   // contain — берём большую
 | `THROW_LINEAR_SCALE` | 0.8 | Масштаб линейной скорости броска (мышь → мир) |
 | `THROW_DOWNWARD_BIAS` | -1.8 | Принудительная Y-составляющая вниз при release |
 | `THROW_MIN_SPEED` | 0.4 | Минимальная скорость, иначе добавляется forward камеры |
+| `THROW_POSITION_PADDING` | 0.2 | Запас от внутренней грани стены при clamp release-позиции |
 | `THROW_MAX_SPEED` | 12 | Жёсткий потолок |velocity| перед emit — гарантия отсутствия tunneling сквозь стены |
 | `THROW_ANGULAR_RANDOM` | 5 | Диапазон случайной угловой скорости при release |
 | `CAMERA_FOV` | 45 | Vertical FOV перспективной камеры |
@@ -109,15 +110,15 @@ camera.y  = max(hForDepth, hForWidth)   // contain — берём большую
 ## Освещение
 
 - Ambient `0xffffff @ 0.35` — общий фоновый
-- Directional `0xffffff @ 0.8` из `(0.001, 18, 0.001)` — **строго сверху (90°)**. В local-mode отбрасывает тени; в network-mode тени выключены ради FPS. Микро-смещение по X/Z, чтобы shadow camera lookAt не совпал с up-вектором (иначе degenerate).
-- PointLight `0xfff1d0 @ 1.4`, `distance = 14`, `decay = 1.2` — лампа под потолком в `(0, WALL_HEIGHT - 0.3, 0)`. Тёплый свет в центр арены, не кастует тени (избегаем кубемап-shadow от точки)
-- Shadow camera (directional, local-mode only): map 1024×1024, квадрат `±20` (покрывает 16×9 стол с запасом), near 0.5, far 60, bias -0.0005
+- Directional `0xffffff @ 0.8` из `(0.001, 9.5, -5.2)` — заметно смещён к дальнему краю стола и ниже, чтобы тени от кубиков были длиннее. В local-mode отбрасывает тени; в network-mode тени выключены ради FPS.
+- PointLight `0xfff1d0 @ 1.4`, `distance = 14`, `decay = 1.2` — лампа под потолком в `(0, WALL_HEIGHT - 1.1, -5.2)`. Тёплый свет в сторону дальнего края арены, не кастует тени (избегаем кубемап-shadow от точки)
+- Shadow camera (directional, local-mode only): map 4096×4096, область `left/right ±9.5`, `top/bottom ±6.5` вокруг физического стола, near 0.5, far 60, bias -0.0005, normalBias 0.02, radius 2
 
 ## Renderer
 
 - `antialias: true` в local-mode, `false` в network-mode
 - `powerPreference: 'high-performance'`
-- `shadowMap.enabled = false` в network-mode; в local-mode `PCFShadowMap`
+- `shadowMap.enabled = false` в network-mode; в local-mode `PCFSoftShadowMap`
 - `pixelRatio = 1` — приоритет smooth/FPS вместо ретина-рендера
 
 ## Perf diagnostics

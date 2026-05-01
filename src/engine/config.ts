@@ -6,18 +6,18 @@ export const TABLE_WIDTH = 16;
 export const TABLE_DEPTH = 9;
 export const TABLE_THICKNESS = 0.4;
 
-// Стены вдоль кромки стола, чтобы кости не улетали. Видимые (брус по периметру).
+// Стены вдоль кромки стола, чтобы кости не улетали. Физические, но невидимые.
 // WALL_INSET = WALL_THICKNESS — внешняя грань стены ровно на кромке стола, внутренняя
-// сдвинута на толщину к центру (одновременно даёт видимость в FOV top-down камеры).
+// сдвинута на толщину к центру.
 // CEILING закрывает арену сверху (невидимый), чтобы кости не вылетали при сильном броске.
-// Толстые стены (1.0) — страховка от tunneling в дополнение к THROW_MAX_SPEED.
+// Стены 0.5 в дополнение к THROW_MAX_SPEED остаются толще максимального substep-displacement.
 export const WALL_HEIGHT = 4;
-export const WALL_THICKNESS = 1.0;
-export const WALL_INSET = 1.0;
+export const WALL_THICKNESS = 0.5;
+export const WALL_INSET = 0.5;
 
 export const DICE_COUNT = 6;
 export const DICE_HALF_SIZE = 0.22;
-export const DICE_MASS = 0.3;
+export const DICE_MASS = 0.6;
 export const DICE_SPACING = 0.6;
 
 // Turn-based: целевой счёт для победы (KCD1 = 4000). Сервер судит — клиенту
@@ -31,9 +31,11 @@ export const VELOCITY_BUFFER_MS = 90;
 export const THROW_LINEAR_SCALE = 0.8;
 export const THROW_DOWNWARD_BIAS = -1.8;
 export const THROW_MIN_SPEED = 0.4;
+// Дополнительный отступ от внутренней грани невидимой стены для release-position.
+export const THROW_POSITION_PADDING = 0.2;
 // Жёсткий потолок скорости броска. Без него быстрая мышь даёт displacement
 // больше WALL_THICKNESS за substep — кость туннелирует сквозь стену.
-// 12 u/s * (1/60/3 substep) = 0.067 — намного меньше WALL_THICKNESS=1.0.
+// 12 u/s * (1/60/3 substep) = 0.067 — намного меньше WALL_THICKNESS=0.5.
 export const THROW_MAX_SPEED = 12;
 export const THROW_ANGULAR_RANDOM = 5;
 

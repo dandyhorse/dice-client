@@ -62,6 +62,17 @@ interface PerfStats {
 }
 
 const PERF_UPDATE_INTERVAL_MS = 500;
+const TABLE_TEXTURE_BASE_URL = '/assets/table/wood-cabinet-worn-long-2k/';
+const TABLE_COLOR_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_long_diff_2k.jpg`;
+const TABLE_NORMAL_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_long_nor_gl_2k.png`;
+const TABLE_ROUGHNESS_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_long_rough_2k.png`;
+const TABLE_VISUAL_OVERSCAN = 1.04;
+const DIRECTIONAL_LIGHT_Y = 9.5;
+const CEILING_LIGHT_Y_OFFSET = 1.1;
+const LIGHT_FORWARD_Z = -5.2;
+const SHADOW_MAP_SIZE = 4096;
+const SHADOW_CAMERA_HALF_WIDTH = 9.5;
+const SHADOW_CAMERA_HALF_DEPTH = 6.5;
 const PERF_DEBUG_ENABLED = (): boolean => {
   const params = new URLSearchParams(window.location.search);
   if (params.has('perf')) return true;
@@ -101,6 +112,8 @@ export class GameEngine {
   private soloState: SoloRunState | null = null;
   private localRolling = false;
   private localLastRolledFaces: number[] = [];
+  private tableVisualMesh: THREE.Mesh | null = null;
+  private readonly tableTextures: THREE.Texture[] = [];
 
   private lastTime = 0;
   private rafId: number | null = null;
@@ -467,24 +480,25 @@ export class GameEngine {
     const shadows = this.areShadowsEnabled();
     const ambient = new THREE.AmbientLight(0xffffff, 0.35);
     const directional = new THREE.DirectionalLight(0xffffff, 0.8);
-    directional.position.set(0.001, 18, 0.001);
+    directional.position.set(0.001, DIRECTIONAL_LIGHT_Y, LIGHT_FORWARD_Z);
     directional.castShadow = shadows;
     if (shadows) {
-      directional.shadow.mapSize.width = 1024;
-      directional.shadow.mapSize.height = 1024;
+      directional.shadow.mapSize.width = SHADOW_MAP_SIZE;
+      directional.shadow.mapSize.height = SHADOW_MAP_SIZE;
       directional.shadow.bias = -0.0005;
+      directional.shadow.normalBias = 0.02;
+      directional.shadow.radius = 2;
 
-      const shadowSize = 20;
-      directional.shadow.camera.left = -shadowSize;
-      directional.shadow.camera.right = shadowSize;
-      directional.shadow.camera.top = shadowSize;
-      directional.shadow.camera.bottom = -shadowSize;
+      directional.shadow.camera.left = -SHADOW_CAMERA_HALF_WIDTH;
+      directional.shadow.camera.right = SHADOW_CAMERA_HALF_WIDTH;
+      directional.shadow.camera.top = SHADOW_CAMERA_HALF_DEPTH;
+      directional.shadow.camera.bottom = -SHADOW_CAMERA_HALF_DEPTH;
       directional.shadow.camera.near = 0.5;
       directional.shadow.camera.far = 60;
     }
 
     const ceilingLight = new THREE.PointLight(0xfff1d0, 1.4, 14, 1.2);
-    ceilingLight.position.set(0, WALL_HEIGHT - 0.3, 0);
+    ceilingLight.position.set(0, WALL_HEIGHT - CEILING_LIGHT_Y_OFFSET, LIGHT_FORWARD_Z);
 
     scene.add(ambient);
     scene.add(directional);
@@ -513,7 +527,7 @@ export class GameEngine {
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setPixelRatio(1);
     renderer.shadowMap.enabled = this.areShadowsEnabled();
-    if (renderer.shadowMap.enabled) renderer.shadowMap.type = THREE.PCFShadowMap;
+    if (renderer.shadowMap.enabled) renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     return renderer;
   }
 
@@ -541,8 +555,8 @@ export class GameEngine {
 
     this.physicsWorld.addContactMaterial(
       new CANNON.ContactMaterial(this.diceMaterial, this.diceMaterial, {
-        friction: 0.25,
-        restitution: 0.25,
+        friction: 0.35,
+        restitution: 0.12,
       }),
     );
   }
@@ -561,16 +575,22 @@ export class GameEngine {
   }
 
   private createTable(withBody: boolean): void {
-    const geometry = new THREE.BoxGeometry(TABLE_WIDTH, TABLE_THICKNESS, TABLE_DEPTH);
+    const geometry = new THREE.BoxGeometry(1, TABLE_THICKNESS, 1);
     const material = new THREE.MeshStandardMaterial({
-      color: 0x2c5530,
+      color: 0xffffff,
+      map: this.createTableTexture(TABLE_COLOR_MAP_URL, THREE.SRGBColorSpace),
+      normalMap: this.createTableTexture(TABLE_NORMAL_MAP_URL),
+      roughnessMap: this.createTableTexture(TABLE_ROUGHNESS_MAP_URL),
       roughness: 0.95,
       metalness: 0.0,
+      normalScale: new THREE.Vector2(0.65, 0.65),
     });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.set(0, -TABLE_THICKNESS / 2, 0);
     mesh.receiveShadow = this.areShadowsEnabled();
     this.scene.add(mesh);
+    this.tableVisualMesh = mesh;
+    this.updateVisualTableSize();
 
     if (withBody && this.physicsWorld && this.tableMaterial) {
       const body = new CANNON.Body({
@@ -585,18 +605,36 @@ export class GameEngine {
     }
   }
 
+  private createTableTexture(url: string, colorSpace?: THREE.ColorSpace): THREE.Texture {
+    const texture = new THREE.TextureLoader().load(url);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(1, 1);
+    texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    if (colorSpace) texture.colorSpace = colorSpace;
+    this.tableTextures.push(texture);
+    return texture;
+  }
+
+  private updateVisualTableSize(): void {
+    if (!this.tableVisualMesh) return;
+    const tanHalf = Math.tan((CAMERA_FOV * Math.PI) / 360);
+    const viewDepth = this.camera.position.y * 2 * tanHalf;
+    const viewWidth = viewDepth * this.camera.aspect;
+    const visualWidth = Math.max(TABLE_WIDTH, viewWidth) * TABLE_VISUAL_OVERSCAN;
+    const visualDepth = Math.max(TABLE_DEPTH, viewDepth) * TABLE_VISUAL_OVERSCAN;
+    this.tableVisualMesh.scale.set(visualWidth, 1, visualDepth);
+    for (const texture of this.tableTextures) {
+      texture.repeat.set(visualWidth / TABLE_WIDTH, visualDepth / TABLE_DEPTH);
+    }
+  }
+
   private createWalls(withBody: boolean): void {
     const playHalfW = TABLE_WIDTH / 2 - WALL_INSET;
     const playHalfD = TABLE_DEPTH / 2 - WALL_INSET;
     const halfH = WALL_HEIGHT / 2;
     const halfT = WALL_THICKNESS / 2;
     const wallY = halfH;
-
-    const wallMaterial = new THREE.MeshStandardMaterial({
-      color: 0x5c4a3a,
-      roughness: 0.7,
-      metalness: 0.05,
-    });
 
     const walls: { halfExtents: [number, number, number]; pos: [number, number, number] }[] = [
       { halfExtents: [playHalfW + halfT, halfH, halfT], pos: [0, wallY, -playHalfD - halfT] },
@@ -605,25 +643,16 @@ export class GameEngine {
       { halfExtents: [halfT, halfH, playHalfD + halfT], pos: [-playHalfW - halfT, wallY, 0] },
     ];
 
-    for (const w of walls) {
-      if (withBody && this.physicsWorld && this.tableMaterial) {
-        const body = new CANNON.Body({
-          mass: 0,
-          shape: new CANNON.Box(new CANNON.Vec3(...w.halfExtents)),
-          material: this.tableMaterial,
-          position: new CANNON.Vec3(...w.pos),
-        });
-        this.physicsWorld.addBody(body);
-      }
+    if (!withBody || !this.physicsWorld || !this.tableMaterial) return;
 
-      const mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(w.halfExtents[0] * 2, w.halfExtents[1] * 2, w.halfExtents[2] * 2),
-        wallMaterial,
-      );
-      mesh.position.set(...w.pos);
-      mesh.castShadow = this.areShadowsEnabled();
-      mesh.receiveShadow = this.areShadowsEnabled();
-      this.scene.add(mesh);
+    for (const w of walls) {
+      const body = new CANNON.Body({
+        mass: 0,
+        shape: new CANNON.Box(new CANNON.Vec3(...w.halfExtents)),
+        material: this.tableMaterial,
+        position: new CANNON.Vec3(...w.pos),
+      });
+      this.physicsWorld.addBody(body);
     }
   }
 
@@ -648,6 +677,7 @@ export class GameEngine {
     this.camera.lookAt(...CAMERA_TARGET);
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
+    this.updateVisualTableSize();
   };
 
   private gameLoop = (): void => {
