@@ -63,10 +63,10 @@ interface PerfStats {
 }
 
 const PERF_UPDATE_INTERVAL_MS = 500;
-const TABLE_TEXTURE_BASE_URL = '/assets/table/wood-cabinet-worn-long-2k/';
-const TABLE_COLOR_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_long_diff_2k.jpg`;
-const TABLE_NORMAL_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_long_nor_gl_2k.png`;
-const TABLE_ROUGHNESS_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_long_rough_2k.png`;
+const TABLE_TEXTURE_BASE_URL = '/assets/table/wood-cabinet-worn-long-1k/';
+const TABLE_COLOR_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_long_diff_1k.jpg`;
+const TABLE_NORMAL_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_long_nor_gl_1k.png`;
+const TABLE_ROUGHNESS_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_long_rough_1k.png`;
 const TABLE_VISUAL_OVERSCAN = 1.04;
 const DIRECTIONAL_LIGHT_Y = 9.5;
 const CEILING_LIGHT_Y_OFFSET = 1.1;
@@ -77,7 +77,7 @@ const SHADOW_CAMERA_HALF_DEPTH = 6.5;
 const SHADOW_CAMERA_FAR = 25;
 const PS1_RENDER_SCALE = 0.48;
 const TABLE_PS1_TEXTURE_SIZE = 256;
-const TABLE_PS1_DITHER_STRENGTH = 3;
+const TABLE_PS1_DITHER_STRENGTH = 2;
 const TABLE_PS1_COLOR_STEP = 24;
 const PERF_DEBUG_ENABLED = (): boolean => {
   const params = new URLSearchParams(window.location.search);
