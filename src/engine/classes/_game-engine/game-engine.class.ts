@@ -71,10 +71,10 @@ const TABLE_VISUAL_OVERSCAN = 1.04;
 const DIRECTIONAL_LIGHT_Y = 9.5;
 const CEILING_LIGHT_Y_OFFSET = 1.1;
 const LIGHT_FORWARD_Z = -5.2;
-const SHADOW_MAP_SIZE = 1024;
+const SHADOW_MAP_SIZE = 512;
 const SHADOW_CAMERA_HALF_WIDTH = 9.5;
 const SHADOW_CAMERA_HALF_DEPTH = 6.5;
-const SHADOW_SOFT_RADIUS = 0;
+const SHADOW_CAMERA_FAR = 25;
 const PS1_RENDER_SCALE = 0.48;
 const TABLE_PS1_TEXTURE_SIZE = 256;
 const TABLE_PS1_DITHER_STRENGTH = 3;
@@ -501,16 +501,16 @@ export class GameEngine {
     if (shadows) {
       directional.shadow.mapSize.width = SHADOW_MAP_SIZE;
       directional.shadow.mapSize.height = SHADOW_MAP_SIZE;
-      directional.shadow.bias = -0.0005;
-      directional.shadow.normalBias = 0.02;
-      directional.shadow.radius = SHADOW_SOFT_RADIUS;
+      directional.shadow.bias = -0.0001;
+      directional.shadow.normalBias = 0;
+      directional.shadow.radius = 2;
 
       directional.shadow.camera.left = -SHADOW_CAMERA_HALF_WIDTH;
       directional.shadow.camera.right = SHADOW_CAMERA_HALF_WIDTH;
       directional.shadow.camera.top = SHADOW_CAMERA_HALF_DEPTH;
       directional.shadow.camera.bottom = -SHADOW_CAMERA_HALF_DEPTH;
       directional.shadow.camera.near = 0.5;
-      directional.shadow.camera.far = 60;
+      directional.shadow.camera.far = SHADOW_CAMERA_FAR;
     }
 
     const ceilingLight = new THREE.PointLight(0xfff1d0, 1.4, 14, 1.2);
@@ -546,7 +546,7 @@ export class GameEngine {
     renderer.setPixelRatio(1);
     this.setRendererPixelSize(renderer);
     renderer.shadowMap.enabled = this.areShadowsEnabled();
-    if (renderer.shadowMap.enabled) renderer.shadowMap.type = THREE.BasicShadowMap;
+    if (renderer.shadowMap.enabled) renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     return renderer;
   }
 
