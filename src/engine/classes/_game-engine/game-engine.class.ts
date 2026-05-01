@@ -70,7 +70,7 @@ const TABLE_ROUGHNESS_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_long
 const TABLE_VISUAL_OVERSCAN = 1.04;
 const DIRECTIONAL_LIGHT_Y = 9.5;
 const CEILING_LIGHT_Y_OFFSET = 1.1;
-const LIGHT_FORWARD_Z = -5.2;
+const LIGHT_FORWARD_Z = -5.8;
 const SHADOW_MAP_SIZE = 512;
 const SHADOW_CAMERA_HALF_WIDTH = 9.5;
 const SHADOW_CAMERA_HALF_DEPTH = 6.5;
@@ -546,7 +546,7 @@ export class GameEngine {
     renderer.setPixelRatio(1);
     this.setRendererPixelSize(renderer);
     renderer.shadowMap.enabled = this.areShadowsEnabled();
-    if (renderer.shadowMap.enabled) renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    if (renderer.shadowMap.enabled) renderer.shadowMap.type = THREE.BasicShadowMap;
     return renderer;
   }
 
