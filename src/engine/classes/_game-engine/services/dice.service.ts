@@ -17,12 +17,14 @@ import type { DieStateFull } from './network.service';
 
 interface LocalDie {
   mesh: THREE.Mesh;
+  shadow: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
   body: CANNON.Body;
   spawnOffset: THREE.Vector3;
 }
 
 interface RemoteDie {
   mesh: THREE.Mesh;
+  shadow: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
   p: THREE.Vector3;
   q: THREE.Quaternion;
   v: THREE.Vector3;
@@ -76,7 +78,21 @@ const DICE_ROUGHNESS_MAP_URL = `${DICE_TEXTURE_BASE_URL}plastered_stone_wall_rou
 const DICE_BASE_BRIGHTNESS = 1.45;
 const VISUAL_EDGE_SOFTNESS = 0.035;
 const VISUAL_EDGE_START = 0.68;
-const VISUAL_WOBBLE = 0.012;
+const VISUAL_WOBBLE = 0.0114;
+const CONTACT_SHADOW_TEXTURE_SIZE = 8;
+const CONTACT_SHADOW_SIZE = 0.94;
+const CONTACT_SHADOW_DEPTH_SCALE = 0.9;
+const CONTACT_SHADOW_Y = 0.018;
+const CONTACT_SHADOW_BASE_OPACITY = 0.34;
+const CONTACT_SHADOW_NOISE_STRENGTH = 0.38;
+const CONTACT_SHADOW_ALPHA_STEP = 34;
+const CONTACT_SHADOW_DITHER_STRENGTH = 58;
+const CONTACT_SHADOW_BAYER_4X4 = [
+  0, 8, 2, 10,
+  12, 4, 14, 6,
+  3, 11, 1, 9,
+  15, 7, 13, 5,
+];
 
 interface FaceTextureEntry {
   value: number;
@@ -94,13 +110,14 @@ let diceBaseImage: HTMLImageElement | null = null;
 let diceBaseImageLoading = false;
 let cachedFaceTextureEntries: FaceTextureEntry[] | null = null;
 let cachedDiceSurfaceMaps: DiceSurfaceMaps | null = null;
+let cachedContactShadowTexture: THREE.CanvasTexture | null = null;
 
 const drawFaceTexture = (entry: FaceTextureEntry): void => {
   const { ctx, value } = entry;
   ctx.fillStyle = FACE_BG;
   ctx.fillRect(0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
   if (diceBaseImage) {
-    ctx.filter = `brightness(${DICE_BASE_BRIGHTNESS})`;
+    ctx.filter = `brightness(${DICE_BASE_BRIGHTNESS}) contrast(95%)`;
     ctx.drawImage(diceBaseImage, 0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
     ctx.filter = 'none';
   }
@@ -178,10 +195,73 @@ const createFaceMaterials = (): THREE.MeshStandardMaterial[] => {
         roughnessMap: surfaceMaps.roughnessMap,
         roughness: 1.0,
         metalness: 0.0,
-        normalScale: new THREE.Vector2(0.08, 0.08),
+        normalScale: new THREE.Vector2(0.076, 0.076),
         flatShading: true,
       }),
   );
+};
+
+const getContactShadowTexture = (): THREE.CanvasTexture => {
+  if (cachedContactShadowTexture) return cachedContactShadowTexture;
+  const size = CONTACT_SHADOW_TEXTURE_SIZE;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const center = size / 2;
+  const gradient = ctx.createRadialGradient(center, center, 2, center, center, center);
+  gradient.addColorStop(0, 'rgba(0,0,0,0.95)');
+  gradient.addColorStop(0.48, 'rgba(0,0,0,0.58)');
+  gradient.addColorStop(0.74, 'rgba(0,0,0,0.22)');
+  gradient.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+  const data = ctx.getImageData(0, 0, size, size);
+
+  for (let i = 0; i < data.data.length; i += 4) {
+    const cell = i / 4;
+    const x = cell % size;
+    const y = Math.floor(cell / size);
+    const alpha = data.data[i + 3]!;
+    if (alpha === 0) continue;
+    const noise = deterministicNoise(x, y, 17.3) - 0.5;
+    const bayer = CONTACT_SHADOW_BAYER_4X4[(y % 4) * 4 + (x % 4)]! / 15 - 0.5;
+    const checker = (x + y) % 2 === 0 ? 1 : -1;
+    const noisyAlpha =
+      alpha * (1 + noise * CONTACT_SHADOW_NOISE_STRENGTH) +
+      bayer * CONTACT_SHADOW_DITHER_STRENGTH +
+      checker * CONTACT_SHADOW_ALPHA_STEP * 0.45;
+    data.data[i + 3] = clamp(
+      Math.round(noisyAlpha / CONTACT_SHADOW_ALPHA_STEP) * CONTACT_SHADOW_ALPHA_STEP,
+      0,
+      255,
+    );
+  }
+
+  ctx.putImageData(data, 0, 0);
+
+  cachedContactShadowTexture = new THREE.CanvasTexture(canvas);
+  cachedContactShadowTexture.magFilter = THREE.NearestFilter;
+  cachedContactShadowTexture.minFilter = THREE.NearestFilter;
+  cachedContactShadowTexture.generateMipmaps = false;
+  return cachedContactShadowTexture;
+};
+
+const createContactShadowMesh = (): THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial> => {
+  const material = new THREE.MeshBasicMaterial({
+    map: getContactShadowTexture(),
+    transparent: true,
+    opacity: CONTACT_SHADOW_BASE_OPACITY,
+    depthWrite: false,
+    color: 0x111111,
+  });
+  const shadow = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = CONTACT_SHADOW_Y;
+  shadow.scale.set(CONTACT_SHADOW_SIZE, CONTACT_SHADOW_SIZE * CONTACT_SHADOW_DEPTH_SCALE, 1);
+  shadow.renderOrder = 2;
+  shadow.frustumCulled = false;
+  return shadow;
 };
 
 const deterministicNoise = (x: number, y: number, z: number): number => {
@@ -279,8 +359,10 @@ export class DiceService {
     for (let i = 0; i < DICE_COUNT; i++) {
       const materials = createFaceMaterials();
       const mesh = new THREE.Mesh(geometry, materials);
+      const shadow = createContactShadowMesh();
       mesh.castShadow = this.shadowsEnabled;
       mesh.receiveShadow = this.shadowsEnabled;
+      this.scene.add(shadow);
       this.scene.add(mesh);
 
       const offsetX = (i - (DICE_COUNT - 1) / 2) * DICE_SPACING;
@@ -302,9 +384,11 @@ export class DiceService {
 
         body.position.set(offsetX, DICE_HALF_SIZE + 0.05, 0);
         mesh.position.copy(body.position as unknown as THREE.Vector3);
+        this.updateContactShadow(shadow, mesh);
 
         this.localDice.push({
           mesh,
+          shadow,
           body,
           spawnOffset: new THREE.Vector3(offsetX, 0, 0),
         });
@@ -313,9 +397,11 @@ export class DiceService {
         // В network mode до первого snapshot'а кости не показываем — первый
         // dice-spawn от сервера даст их реальную позицию. Иначе мигнут в локальных.
         mesh.visible = false;
+        shadow.visible = false;
 
         this.remoteDice.push({
           mesh,
+          shadow,
           p: mesh.position.clone(),
           q: new THREE.Quaternion(),
           v: new THREE.Vector3(),
@@ -339,6 +425,7 @@ export class DiceService {
         if (!active.has(i)) continue;
         const die = this.localDice[i]!;
         die.mesh.visible = false;
+        die.shadow.visible = false;
         die.body.type = CANNON.Body.KINEMATIC;
         die.body.velocity.setZero();
         die.body.angularVelocity.setZero();
@@ -353,6 +440,7 @@ export class DiceService {
     // пока не придёт первый снапшот (начала нового броска) — кости скрыты.
     for (const die of this.remoteDice) {
       die.mesh.visible = false;
+      die.shadow.visible = false;
       this.clearRemoteSamples(die);
       // Обнуляем velocity чтобы extrapolate не уводил мешь в сторону
       // на случай запоздалого снапшота с velocity != 0.
@@ -403,6 +491,7 @@ export class DiceService {
         die.body.quaternion.z,
         die.body.quaternion.w,
       );
+      this.updateContactShadow(die.shadow, die.mesh);
     }
   }
 
@@ -434,6 +523,7 @@ export class DiceService {
         die.body.quaternion.z,
         die.body.quaternion.w,
       );
+      this.updateContactShadow(die.shadow, die.mesh);
     }
   }
 
@@ -522,6 +612,7 @@ export class DiceService {
       // пул в 6-1 = 5 кубиков и т.д. без отдельного opcode'а.
       if (state.p[1] < -100) {
         die.mesh.visible = false;
+        die.shadow.visible = false;
         this.clearRemoteSamples(die);
         continue;
       }
@@ -539,6 +630,7 @@ export class DiceService {
       if (wasEmpty || options.immediate) {
         die.mesh.position.copy(die.p);
         die.mesh.quaternion.copy(die.q);
+        this.updateContactShadow(die.shadow, die.mesh);
       }
     }
   }
@@ -588,6 +680,7 @@ export class DiceService {
       if (renderAtMs <= first.atMs) {
         die.mesh.position.copy(first.p);
         die.mesh.quaternion.copy(first.q);
+        this.updateContactShadow(die.shadow, die.mesh);
         continue;
       }
 
@@ -611,6 +704,7 @@ export class DiceService {
       } else {
         this.renderExtrapolated(die, last, renderAtMs);
       }
+      this.updateContactShadow(die.shadow, die.mesh);
     }
   }
 
@@ -687,6 +781,7 @@ export class DiceService {
 
   private parkLocalDie(die: LocalDie): void {
     die.mesh.visible = false;
+    die.shadow.visible = false;
     die.body.type = CANNON.Body.KINEMATIC;
     die.body.velocity.setZero();
     die.body.angularVelocity.setZero();
@@ -709,6 +804,28 @@ export class DiceService {
     die.body.wakeUp();
     die.mesh.position.set(die.body.position.x, die.body.position.y, die.body.position.z);
     die.mesh.quaternion.set(0, 0, 0, 1);
+    this.updateContactShadow(die.shadow, die.mesh);
+  }
+
+  private updateContactShadow(
+    shadow: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>,
+    mesh: THREE.Mesh,
+  ): void {
+    if (!mesh.visible || mesh.position.y < -100) {
+      shadow.visible = false;
+      return;
+    }
+    shadow.visible = true;
+    shadow.position.set(mesh.position.x, CONTACT_SHADOW_Y, mesh.position.z);
+    const lift = Math.max(0, mesh.position.y - DICE_HALF_SIZE);
+    const contact = clamp(1 - lift / 1.6, 0.28, 1);
+    const spread = 1 + Math.min(1.4, lift * 0.32);
+    shadow.scale.set(
+      CONTACT_SHADOW_SIZE * spread,
+      CONTACT_SHADOW_SIZE * CONTACT_SHADOW_DEPTH_SCALE * spread,
+      1,
+    );
+    shadow.material.opacity = CONTACT_SHADOW_BASE_OPACITY * contact;
   }
 
   private readFaceValue(body: CANNON.Body): number {

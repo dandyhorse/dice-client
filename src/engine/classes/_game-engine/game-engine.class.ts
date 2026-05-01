@@ -71,10 +71,14 @@ const TABLE_VISUAL_OVERSCAN = 1.04;
 const DIRECTIONAL_LIGHT_Y = 9.5;
 const CEILING_LIGHT_Y_OFFSET = 1.1;
 const LIGHT_FORWARD_Z = -5.2;
-const SHADOW_MAP_SIZE = 4096;
+const SHADOW_MAP_SIZE = 1024;
 const SHADOW_CAMERA_HALF_WIDTH = 9.5;
 const SHADOW_CAMERA_HALF_DEPTH = 6.5;
+const SHADOW_SOFT_RADIUS = 0;
 const PS1_RENDER_SCALE = 0.48;
+const TABLE_PS1_TEXTURE_SIZE = 256;
+const TABLE_PS1_DITHER_STRENGTH = 3;
+const TABLE_PS1_COLOR_STEP = 24;
 const PERF_DEBUG_ENABLED = (): boolean => {
   const params = new URLSearchParams(window.location.search);
   if (params.has('perf')) return true;
@@ -499,7 +503,7 @@ export class GameEngine {
       directional.shadow.mapSize.height = SHADOW_MAP_SIZE;
       directional.shadow.bias = -0.0005;
       directional.shadow.normalBias = 0.02;
-      directional.shadow.radius = 2;
+      directional.shadow.radius = SHADOW_SOFT_RADIUS;
 
       directional.shadow.camera.left = -SHADOW_CAMERA_HALF_WIDTH;
       directional.shadow.camera.right = SHADOW_CAMERA_HALF_WIDTH;
@@ -542,7 +546,7 @@ export class GameEngine {
     renderer.setPixelRatio(1);
     this.setRendererPixelSize(renderer);
     renderer.shadowMap.enabled = this.areShadowsEnabled();
-    if (renderer.shadowMap.enabled) renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    if (renderer.shadowMap.enabled) renderer.shadowMap.type = THREE.BasicShadowMap;
     return renderer;
   }
 
@@ -599,7 +603,7 @@ export class GameEngine {
     const geometry = new THREE.BoxGeometry(1, TABLE_THICKNESS, 1);
     const material = new THREE.MeshStandardMaterial({
       color: 0xffffff,
-      map: this.createTableTexture(TABLE_COLOR_MAP_URL, THREE.SRGBColorSpace),
+      map: this.createTableTexture(TABLE_COLOR_MAP_URL, THREE.SRGBColorSpace, true),
       normalMap: this.createTableTexture(TABLE_NORMAL_MAP_URL),
       roughnessMap: this.createTableTexture(TABLE_ROUGHNESS_MAP_URL),
       roughness: 1.0,
@@ -627,8 +631,14 @@ export class GameEngine {
     }
   }
 
-  private createTableTexture(url: string, colorSpace?: THREE.ColorSpace): THREE.Texture {
-    const texture = new THREE.TextureLoader().load(url);
+  private createTableTexture(
+    url: string,
+    colorSpace?: THREE.ColorSpace,
+    ps1Quantize = false,
+  ): THREE.Texture {
+    const texture = new THREE.TextureLoader().load(url, (loaded) => {
+      if (ps1Quantize) this.applyPs1TablePalette(loaded);
+    });
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     texture.repeat.set(1, 1);
@@ -639,6 +649,48 @@ export class GameEngine {
     if (colorSpace) texture.colorSpace = colorSpace;
     this.tableTextures.push(texture);
     return texture;
+  }
+
+  private applyPs1TablePalette(texture: THREE.Texture): void {
+    const image = texture.image as HTMLImageElement | undefined;
+    if (!image || image.naturalWidth <= 0 || image.naturalHeight <= 0) return;
+    const canvas = document.createElement('canvas');
+    canvas.width = TABLE_PS1_TEXTURE_SIZE;
+    canvas.height = TABLE_PS1_TEXTURE_SIZE;
+    const ctx = canvas.getContext('2d')!;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+    for (let i = 0; i < data.data.length; i += 4) {
+      const cell = i / 4;
+      const x = cell % canvas.width;
+      const y = Math.floor(cell / canvas.width);
+      const checker = (x + y) % 2 === 0 ? 1 : -1;
+      const dither = checker * TABLE_PS1_DITHER_STRENGTH;
+      data.data[i] = this.quantizeTableChannel(data.data[i]!, dither);
+      data.data[i + 1] = this.quantizeTableChannel(data.data[i + 1]!, dither);
+      data.data[i + 2] = this.quantizeTableChannel(data.data[i + 2]!, dither);
+    }
+
+    ctx.putImageData(data, 0, 0);
+    texture.image = canvas;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.magFilter = THREE.NearestFilter;
+    texture.minFilter = THREE.NearestFilter;
+    texture.generateMipmaps = false;
+    texture.needsUpdate = true;
+  }
+
+  private quantizeTableChannel(value: number, dither: number): number {
+    return Math.max(
+      0,
+      Math.min(
+        255,
+        Math.round((value + dither) / TABLE_PS1_COLOR_STEP) * TABLE_PS1_COLOR_STEP,
+      ),
+    );
   }
 
   private updateVisualTableSize(): void {
