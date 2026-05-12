@@ -33,18 +33,43 @@ import {
   t,
   type Language,
 } from './ui/i18n';
+import { bindMouseOnlyClick } from './ui/mouse-only-button';
 import { FONT_FAMILY, FONT_SIZE, UI_SIZE, scaledPx } from './ui/theme';
+import {
+  CONTROL_ACTIONS,
+  DEFAULT_PLAYER_SETTINGS,
+  controlCodeLabel,
+  getPlayerSettings,
+  isAcceptedControlCode,
+  loadPlayerSettings,
+  onPlayerSettingsChange,
+  savePlayerSettings,
+  validatePlayerSettings,
+  type ControlAction,
+  type ControlBindings,
+  type PlayerSettings,
+} from './player-settings';
 
 const USER_ID_KEY = 'dice.userId';
 const DISPLAY_NAME_KEY = 'dice.displayName';
 const AUTH_CONTROLS_ID = 'auth-controls';
 const AUTH_MODAL_ID = 'auth-modal';
+const SETTINGS_MODAL_ID = 'settings-modal';
 const BACK_BUTTON_ID = 'back-button';
 const ROOM_BADGE_ID = 'room-badge';
 const LANG_CONTROLS_ID = 'lang-controls';
 const ROOM_LIST_MODAL_ID = 'room-list-modal';
 const LEADERBOARD_ID = 'leaderboard-panel';
 const MOBILE_DEVICE_RE = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
+const LANG_ICON_SRC: Record<Language, string> = {
+  en: '/assets/lang/united-kingdom.png',
+  ru: '/assets/lang/russia.png',
+};
+const LANG_ICON_BUTTON_SIZE = scaledPx(35);
+const LANG_ICON_LABEL: Record<Language, string> = {
+  en: 'English',
+  ru: 'Русский',
+};
 
 // `crypto.randomUUID` в браузере доступен только в secure context (HTTPS/localhost).
 // При открытии dev-клиента по LAN-IP его нет — ломается "Create room". Fallback:
@@ -130,13 +155,17 @@ let activeGame: GameEngine | null = null;
 let activeNetwork: NetworkService | null = null;
 let currentLobbyView: 'home' | 'solo' | 'multiplayer' = 'home';
 
+onPlayerSettingsChange((settings) => {
+  activeGame?.setPlayerSettings(settings);
+});
+
 const startLocal = (soloConfig: SoloModeConfig = DEFAULT_SOLO_MODE): void => {
   clearLobby();
   clearRoomScreen();
   clearAuthControls();
   clearAuthModal();
   clearRoomBadge();
-  const game = new GameEngine({ mode: 'local', soloConfig });
+  const game = new GameEngine({ mode: 'local', soloConfig, playerSettings: getPlayerSettings() });
   app.appendChild(game.renderer.domElement);
   game.start();
   activeGame = game;
@@ -207,6 +236,11 @@ const clearAuthModal = (): void => {
   if (existing) existing.remove();
 };
 
+const clearSettingsModal = (): void => {
+  const existing = document.getElementById(SETTINGS_MODAL_ID);
+  if (existing) existing.remove();
+};
+
 const clearRoomListModal = (): void => {
   const existing = document.getElementById(ROOM_LIST_MODAL_ID);
   if (existing) existing.remove();
@@ -237,24 +271,40 @@ const returnToLobby = (): void => {
   clearRoomBadge();
   clearBackButton();
   clearAuthModal();
+  clearSettingsModal();
   clearRoomListModal();
   renderLobby();
 };
 
 const renderBackButton = (): void => {
   clearBackButton();
-  const backBtn = button(t('back'), returnToLobby);
-  backBtn.id = BACK_BUTTON_ID;
-  Object.assign(backBtn.style, {
+  const wrap = document.createElement('div');
+  wrap.id = BACK_BUTTON_ID;
+  Object.assign(wrap.style, {
     position: 'fixed',
     right: '12px',
     bottom: '12px',
+    display: 'flex',
+    gap: '8px',
     zIndex: '35',
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  const controlsBtn = button(t('controls'), renderControlsModal);
+  Object.assign(controlsBtn.style, {
+    background: 'rgba(82,82,91,0.9)',
+    border: '1px solid rgba(255,255,255,0.18)',
+    boxShadow: '0 8px 22px rgba(0,0,0,0.35)',
+  } satisfies Partial<CSSStyleDeclaration>);
+  wrap.appendChild(controlsBtn);
+
+  const backBtn = button(t('back'), returnToLobby);
+  Object.assign(backBtn.style, {
     background: 'rgba(15,15,22,0.86)',
     border: '1px solid rgba(255,255,255,0.22)',
     boxShadow: '0 8px 22px rgba(0,0,0,0.35)',
   } satisfies Partial<CSSStyleDeclaration>);
-  document.body.appendChild(backBtn);
+  wrap.appendChild(backBtn);
+  document.body.appendChild(wrap);
 };
 
 const rerenderCurrentShell = (): void => {
@@ -293,8 +343,8 @@ const renderLanguageControls = (): void => {
     top: '12px',
     right: '12px',
     display: 'flex',
-    gap: '6px',
-    padding: '6px',
+    gap: '0',
+    padding: '0',
     background: 'rgba(12,12,18,0.78)',
     border: '1px solid rgba(255,255,255,0.12)',
     borderRadius: '8px',
@@ -305,21 +355,38 @@ const renderLanguageControls = (): void => {
   const current = getLanguage();
   for (const language of ['en', 'ru'] as Language[]) {
     const btn = document.createElement('button');
-    btn.textContent = language.toUpperCase();
+    btn.type = 'button';
+    btn.title = LANG_ICON_LABEL[language];
+    btn.setAttribute('aria-label', LANG_ICON_LABEL[language]);
+    btn.setAttribute('aria-pressed', String(current === language));
     Object.assign(btn.style, {
-      padding: '4px 8px',
-      background: current === language ? '#3b82f6' : 'transparent',
+      padding: '0',
+      display: 'grid',
+      placeItems: 'center',
+      background: current === language ? 'rgba(59,130,246,0.28)' : 'transparent',
       color: '#fff',
-      border: current === language ? '1px solid #3b82f6' : '1px solid #555',
+      border: 'none',
       borderRadius: '5px',
       cursor: 'pointer',
       fontFamily: FONT_FAMILY.ui,
-      fontSize: FONT_SIZE.lang,
       lineHeight: '1',
-      width: UI_SIZE.langButtonWidth,
-      height: UI_SIZE.langButtonHeight,
+      width: LANG_ICON_BUTTON_SIZE,
+      height: LANG_ICON_BUTTON_SIZE,
       boxSizing: 'border-box',
+      overflow: 'hidden',
     } satisfies Partial<CSSStyleDeclaration>);
+    const icon = document.createElement('img');
+    icon.src = LANG_ICON_SRC[language];
+    icon.alt = '';
+    icon.draggable = false;
+    Object.assign(icon.style, {
+      width: '100%',
+      height: '100%',
+      display: 'block',
+      objectFit: 'cover',
+      pointerEvents: 'none',
+    } satisfies Partial<CSSStyleDeclaration>);
+    btn.appendChild(icon);
     btn.addEventListener('click', () => {
       if (getLanguage() !== language) setLanguage(language);
     });
@@ -369,7 +436,7 @@ const handleRoomState = (network: NetworkService, state: RoomState): void => {
   renderBackButton();
   renderLanguageControls();
   if (!activeGame) {
-    activeGame = new GameEngine({ mode: 'network', network });
+    activeGame = new GameEngine({ mode: 'network', network, playerSettings: getPlayerSettings() });
     app.appendChild(activeGame.renderer.domElement);
     activeGame.start();
   }
@@ -612,6 +679,9 @@ const renderAuthControls = (): void => {
     const logoutBtn = button('×', () => {
       logoutAccount()
         .then(() => {
+          return loadPlayerSettings();
+        })
+        .then(() => {
           renderAuthControls();
           renderLobby();
         })
@@ -636,6 +706,11 @@ const renderAuthControls = (): void => {
     applyAuthButtonSize(loginBtn);
     wrap.appendChild(loginBtn);
   }
+
+  const controlsBtn = button(t('controls'), renderControlsModal);
+  controlsBtn.style.background = '#52525b';
+  applyAuthButtonSize(controlsBtn);
+  wrap.appendChild(controlsBtn);
 
   document.body.appendChild(wrap);
 };
@@ -720,6 +795,9 @@ const renderAuthModal = (mode: 'register' | 'login'): void => {
     request
       .then((payload) => {
         saveDisplayName(payload.user.username);
+        return loadPlayerSettings();
+      })
+      .then(() => {
         clearAuthModal();
         renderAuthControls();
         renderLobby();
@@ -745,6 +823,176 @@ const renderAuthModal = (mode: 'register' | 'login'): void => {
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   usernameInput.focus();
+};
+
+const controlActionLabel = (action: ControlAction): string => {
+  switch (action) {
+    case 'throwDice':
+      return t('throwDice');
+    case 'selectAll':
+      return t('selectAllAction');
+    case 'continueTurn':
+      return t('continueAction');
+    case 'bankTurn':
+      return t('bankAction');
+  }
+};
+
+const renderControlsModal = (): void => {
+  clearSettingsModal();
+
+  let draft: ControlBindings = { ...getPlayerSettings().controls };
+  let capturing: ControlAction | null = null;
+  let saving = false;
+  const rowButtons = new Map<ControlAction, HTMLButtonElement>();
+
+  const overlay = document.createElement('div');
+  overlay.id = SETTINGS_MODAL_ID;
+  Object.assign(overlay.style, {
+    position: 'fixed',
+    inset: '0',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'rgba(0,0,0,0.58)',
+    zIndex: '45',
+    fontFamily: FONT_FAMILY.ui,
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  const panel = document.createElement('div');
+  Object.assign(panel.style, {
+    width: 'min(420px, calc(100vw - 32px))',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+    padding: '22px',
+    background: '#1c1c24',
+    color: '#eee',
+    borderRadius: '8px',
+    boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  const title = document.createElement('h2');
+  title.textContent = t('controlsTitle');
+  Object.assign(title.style, {
+    margin: '0',
+    fontFamily: FONT_FAMILY.title,
+    fontSize: FONT_SIZE.title,
+  } satisfies Partial<CSSStyleDeclaration>);
+  panel.appendChild(title);
+
+  const rows = document.createElement('div');
+  Object.assign(rows.style, {
+    display: 'grid',
+    gap: '8px',
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  for (const action of CONTROL_ACTIONS) {
+    const row = button('', () => {
+      capturing = action;
+      renderRows();
+    });
+    Object.assign(row.style, {
+      width: '100%',
+      justifyContent: 'space-between',
+      background: '#111',
+      border: '1px solid #444',
+    } satisfies Partial<CSSStyleDeclaration>);
+    rowButtons.set(action, row);
+    rows.appendChild(row);
+  }
+  panel.appendChild(rows);
+
+  const error = document.createElement('div');
+  Object.assign(error.style, {
+    minHeight: scaledPx(16),
+    color: '#f66',
+    fontSize: FONT_SIZE.error,
+  } satisfies Partial<CSSStyleDeclaration>);
+  panel.appendChild(error);
+
+  const actions = document.createElement('div');
+  Object.assign(actions.style, {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr 1fr',
+    gap: '8px',
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  const resetBtn = button(t('resetDefaults'), () => {
+    draft = { ...DEFAULT_PLAYER_SETTINGS.controls };
+    capturing = null;
+    renderRows();
+  });
+  resetBtn.style.background = '#52525b';
+  actions.appendChild(resetBtn);
+
+  const cancelBtn = button(t('authCancel'), () => close());
+  cancelBtn.style.background = 'transparent';
+  cancelBtn.style.border = '1px solid #555';
+  actions.appendChild(cancelBtn);
+
+  const saveBtn = button(t('save'), () => {
+    const settings: PlayerSettings = { version: 1, controls: { ...draft } };
+    const validation = validatePlayerSettings(settings);
+    if (!validation.valid || saving) return;
+    saving = true;
+    saveBtn.disabled = true;
+    savePlayerSettings(settings)
+      .then(() => close())
+      .catch((err: Error) => {
+        saving = false;
+        error.textContent = err.message;
+        renderRows();
+      });
+  });
+  actions.appendChild(saveBtn);
+  panel.appendChild(actions);
+
+  const keyListener = (event: KeyboardEvent): void => {
+    if (!capturing) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (!isAcceptedControlCode(event.code)) {
+      error.textContent = t('invalidControlKey');
+      return;
+    }
+    draft = { ...draft, [capturing]: event.code };
+    capturing = null;
+    renderRows();
+  };
+
+  function close(): void {
+    window.removeEventListener('keydown', keyListener, true);
+    clearSettingsModal();
+  }
+
+  function renderRows(): void {
+    for (const action of CONTROL_ACTIONS) {
+      const row = rowButtons.get(action);
+      if (!row) continue;
+      row.textContent =
+        capturing === action
+          ? `${controlActionLabel(action)}: ${t('pressKey')}`
+          : `${controlActionLabel(action)}: ${controlCodeLabel(draft[action])}`;
+    }
+
+    const settings: PlayerSettings = { version: 1, controls: { ...draft } };
+    const validation = validatePlayerSettings(settings);
+    error.textContent = validation.valid ? '' : t('duplicateControls');
+    saveBtn.disabled = !validation.valid || saving;
+    saveBtn.style.opacity = saveBtn.disabled ? '0.4' : '1';
+    saveBtn.style.cursor = saveBtn.disabled ? 'not-allowed' : 'pointer';
+  }
+
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) close();
+  });
+  panel.addEventListener('click', (event) => event.stopPropagation());
+  window.addEventListener('keydown', keyListener, true);
+
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+  renderRows();
 };
 
 const createLobbyFrame = (widthPx = 340): HTMLDivElement => {
@@ -1323,7 +1571,7 @@ const button = (label: string, onClick: () => void): HTMLButtonElement => {
     lineHeight: '1',
     whiteSpace: 'nowrap',
   } satisfies Partial<CSSStyleDeclaration>);
-  btn.addEventListener('click', onClick);
+  bindMouseOnlyClick(btn, onClick);
   return btn;
 };
 
@@ -1333,5 +1581,11 @@ const showError = (err: unknown): void => {
 };
 
 onLanguageChange(rerenderCurrentShell);
-renderLanguageControls();
-if (!mobileRuntime) renderLobby();
+loadPlayerSettings()
+  .catch((err: Error) => {
+    console.warn(`settings load failed: ${err.message}`);
+  })
+  .finally(() => {
+    renderLanguageControls();
+    if (!mobileRuntime) renderLobby();
+  });

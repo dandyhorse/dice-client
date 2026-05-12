@@ -7,6 +7,13 @@ import {
   DICE_SPACING,
   HOLD_HEIGHT,
   INTERPOLATION_DELAY_MS,
+  REST_CORRECTION_ANGULAR_VELOCITY,
+  REST_CORRECTION_DOWNWARD_VELOCITY,
+  REST_CORRECTION_LIFT,
+  REST_FACE_DOT_MIN,
+  REST_REROLL_CLEARANCE,
+  REST_REROLL_POSITION_ATTEMPTS,
+  REST_STACKED_CENTER_Y_MIN,
   TABLE_DEPTH,
   TABLE_WIDTH,
   THROW_ANGULAR_RANDOM,
@@ -39,6 +46,11 @@ interface RemoteSample {
   q: THREE.Quaternion;
   v: THREE.Vector3;
   w: THREE.Vector3;
+}
+
+interface FaceAlignment {
+  faceValue: number;
+  dot: number;
 }
 
 // Three.js BoxGeometry materials indexed in порядке: [+X, -X, +Y, -Y, +Z, -Z].
@@ -493,6 +505,30 @@ export class DiceService {
     });
   }
 
+  resolveLocalRestAmbiguities(): boolean {
+    if (this.mode !== 'local') return false;
+    const active = this.getValidLocalActiveIndices();
+    const stackedIndices = active.filter((index) => {
+      const die = this.localDice[index]!;
+      return die.body.position.y >= REST_STACKED_CENTER_Y_MIN;
+    });
+    if (stackedIndices.length > 0) {
+      for (const index of stackedIndices) this.rerollLocalDie(index, active);
+      return true;
+    }
+
+    const ambiguousIndices = active.filter((index) => {
+      const die = this.localDice[index]!;
+      return this.readFaceAlignment(die.body).dot < REST_FACE_DOT_MIN;
+    });
+    if (ambiguousIndices.length > 0) {
+      for (const index of ambiguousIndices) this.alignAmbiguousLocalDie(index);
+      return true;
+    }
+
+    return false;
+  }
+
   getLocalActiveFaces(): number[] {
     if (this.mode !== 'local') return [];
     return this.localActiveIndices.map((index) => this.readFaceValue(this.localDice[index]!.body));
@@ -711,7 +747,144 @@ export class DiceService {
     die.mesh.quaternion.set(0, 0, 0, 1);
   }
 
+  private getValidLocalActiveIndices(): number[] {
+    const seen = new Set<number>();
+    const out: number[] = [];
+    for (const index of this.localActiveIndices) {
+      if (!Number.isInteger(index) || index < 0 || index >= this.localDice.length || seen.has(index)) {
+        continue;
+      }
+      const die = this.localDice[index]!;
+      if (die.body.type !== CANNON.Body.DYNAMIC || die.body.position.y < -100) continue;
+      seen.add(index);
+      out.push(index);
+    }
+    return out;
+  }
+
+  private rerollLocalDie(index: number, activeIndices: number[]): void {
+    const die = this.localDice[index]!;
+    const [x, z] = this.pickLocalRerollPosition(index, activeIndices);
+    const axis = this.randomUnitAxis();
+
+    die.mesh.visible = true;
+    die.body.type = CANNON.Body.DYNAMIC;
+    die.body.force.setZero();
+    die.body.torque.setZero();
+    die.body.velocity.set(0, REST_CORRECTION_DOWNWARD_VELOCITY, 0);
+    die.body.angularVelocity.set(
+      (Math.random() - 0.5) * REST_CORRECTION_ANGULAR_VELOCITY * 2,
+      (Math.random() - 0.5) * REST_CORRECTION_ANGULAR_VELOCITY * 2,
+      (Math.random() - 0.5) * REST_CORRECTION_ANGULAR_VELOCITY * 2,
+    );
+    die.body.position.set(x, HOLD_HEIGHT, z);
+    die.body.quaternion.setFromAxisAngle(axis, Math.random() * Math.PI * 2);
+    die.body.wakeUp();
+  }
+
+  private alignAmbiguousLocalDie(index: number): void {
+    const die = this.localDice[index]!;
+    const bottomNormal = this.readBottomFaceNormal(die.body);
+    const alignToTable = new CANNON.Quaternion();
+    const current = new CANNON.Quaternion(
+      die.body.quaternion.x,
+      die.body.quaternion.y,
+      die.body.quaternion.z,
+      die.body.quaternion.w,
+    );
+
+    alignToTable.setFromVectors(bottomNormal, new CANNON.Vec3(0, -1, 0));
+    alignToTable.mult(current, die.body.quaternion);
+    die.body.quaternion.normalize();
+
+    die.body.type = CANNON.Body.DYNAMIC;
+    die.body.force.setZero();
+    die.body.torque.setZero();
+    die.body.position.y = DICE_HALF_SIZE + REST_CORRECTION_LIFT;
+    die.body.velocity.set(0, REST_CORRECTION_DOWNWARD_VELOCITY, 0);
+    die.body.angularVelocity.setZero();
+    die.body.wakeUp();
+  }
+
+  private readBottomFaceNormal(body: CANNON.Body): CANNON.Vec3 {
+    const up = new CANNON.Vec3(0, 1, 0);
+    let bestDot = Infinity;
+    let bottomNormal = new CANNON.Vec3(0, -1, 0);
+
+    for (const { axis } of FACE_AXES) {
+      const rotated = body.quaternion.vmult(axis);
+      const dot = rotated.dot(up);
+      if (dot < bestDot) {
+        bestDot = dot;
+        bottomNormal = rotated;
+      }
+    }
+
+    bottomNormal.normalize();
+    return bottomNormal;
+  }
+
+  private pickLocalRerollPosition(dieIndex: number, activeIndices: number[]): [number, number] {
+    const limitX = Math.max(
+      0,
+      TABLE_WIDTH / 2 - WALL_INSET - DICE_HALF_SIZE - THROW_POSITION_PADDING,
+    );
+    const limitZ = Math.max(
+      0,
+      TABLE_DEPTH / 2 - WALL_INSET - DICE_HALF_SIZE - THROW_POSITION_PADDING,
+    );
+
+    for (let attempt = 0; attempt < REST_REROLL_POSITION_ATTEMPTS; attempt++) {
+      const x = Math.random() * limitX * 2 - limitX;
+      const z = Math.random() * limitZ * 2 - limitZ;
+      if (this.hasLocalRerollClearance(dieIndex, activeIndices, x, z)) return [x, z];
+    }
+
+    const fallbackX = clamp(
+      (dieIndex - (this.localDice.length - 1) / 2) * DICE_SPACING,
+      -limitX,
+      limitX,
+    );
+    return [fallbackX, 0];
+  }
+
+  private hasLocalRerollClearance(
+    dieIndex: number,
+    activeIndices: number[],
+    x: number,
+    z: number,
+  ): boolean {
+    const minDistanceSq = REST_REROLL_CLEARANCE * REST_REROLL_CLEARANCE;
+    for (const index of activeIndices) {
+      if (index === dieIndex) continue;
+      const die = this.localDice[index]!;
+      if (die.body.position.y < -100) continue;
+      const dx = die.body.position.x - x;
+      const dz = die.body.position.z - z;
+      if (dx * dx + dz * dz < minDistanceSq) return false;
+    }
+    return true;
+  }
+
+  private randomUnitAxis(): CANNON.Vec3 {
+    let x = 0;
+    let y = 0;
+    let z = 0;
+    do {
+      x = Math.random() - 0.5;
+      y = Math.random() - 0.5;
+      z = Math.random() - 0.5;
+    } while (Math.hypot(x, y, z) < 1e-6);
+    const axis = new CANNON.Vec3(x, y, z);
+    axis.normalize();
+    return axis;
+  }
+
   private readFaceValue(body: CANNON.Body): number {
+    return this.readFaceAlignment(body).faceValue;
+  }
+
+  private readFaceAlignment(body: CANNON.Body): FaceAlignment {
     const up = new CANNON.Vec3(0, 1, 0);
     let bestDot = -Infinity;
     let bestFace = 1;
@@ -723,6 +896,6 @@ export class DiceService {
         bestFace = face;
       }
     }
-    return bestFace;
+    return { faceValue: bestFace, dot: bestDot };
   }
 }

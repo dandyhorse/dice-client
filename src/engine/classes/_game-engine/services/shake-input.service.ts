@@ -22,11 +22,22 @@ interface Sample {
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
+const SPACE_THROW_SPEED_SCALE = 0.2;
+const DEFAULT_THROW_KEY_CODE = 'Space';
+
+const isInteractiveKeyboardTarget = (target: EventTarget | null): boolean => {
+  if (!(target instanceof Element)) return false;
+  if (target.closest('input, textarea, select, button')) return true;
+  const editable = target.closest('[contenteditable]');
+  return editable instanceof HTMLElement && editable.isContentEditable;
+};
+
 export class ShakeInputService {
   readonly events = new EventEmitter();
 
   private isHolding = false;
   private enabled = true;
+  private throwKeyCode = DEFAULT_THROW_KEY_CODE;
   private samples: Sample[] = [];
   private currentPos = new THREE.Vector3();
   private lastEmittedPos = new THREE.Vector3();
@@ -40,12 +51,18 @@ export class ShakeInputService {
   private canvas: HTMLCanvasElement;
   private camera: THREE.PerspectiveCamera;
 
-  constructor(canvas: HTMLCanvasElement, camera: THREE.PerspectiveCamera) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    camera: THREE.PerspectiveCamera,
+    throwKeyCode = DEFAULT_THROW_KEY_CODE,
+  ) {
     this.canvas = canvas;
     this.camera = camera;
+    this.throwKeyCode = throwKeyCode;
     canvas.addEventListener('mousedown', this.onMouseDown);
     canvas.addEventListener('mousemove', this.onMouseMove);
     window.addEventListener('mouseup', this.onMouseUp);
+    window.addEventListener('keydown', this.onKeyDown);
     canvas.addEventListener('contextmenu', this.onContextMenu);
   }
 
@@ -74,12 +91,17 @@ export class ShakeInputService {
     }
   }
 
+  setThrowKeyCode(code: string): void {
+    this.throwKeyCode = code;
+  }
+
   destroy(): void {
     this.setEnabled(false);
     this.canvas.removeEventListener('mousedown', this.onMouseDown);
     this.canvas.removeEventListener('mousemove', this.onMouseMove);
     this.canvas.removeEventListener('contextmenu', this.onContextMenu);
     window.removeEventListener('mouseup', this.onMouseUp);
+    window.removeEventListener('keydown', this.onKeyDown);
     this.samples.length = 0;
   }
 
@@ -150,6 +172,48 @@ export class ShakeInputService {
     this.samples.length = 0;
     this.events.emit('release', velocity, this.currentPos.clone());
   };
+
+  private onKeyDown = (event: KeyboardEvent): void => {
+    if (!this.enabled) return;
+    if (event.code !== this.throwKeyCode) return;
+    if (event.repeat || event.defaultPrevented) return;
+    if (this.isHolding) return;
+    if (isInteractiveKeyboardTarget(event.target)) return;
+
+    event.preventDefault();
+    this.emitSpaceThrow();
+  };
+
+  private emitSpaceThrow(): void {
+    this.isHolding = true;
+    this.samples.length = 0;
+    this.currentPos.set(0, HOLD_HEIGHT, 0);
+    this.lastEmittedPos.copy(this.currentPos);
+    this.events.emit('hold-start', this.currentPos.clone());
+
+    if (!this.enabled || !this.isHolding) return;
+    this.isHolding = false;
+
+    const velocity = this.createSpaceThrowVelocity();
+    this.events.emit('release', velocity, this.currentPos.clone());
+  }
+
+  private createSpaceThrowVelocity(): THREE.Vector3 {
+    const tableForward = new THREE.Vector3().copy(this.camera.up);
+    tableForward.y = 0;
+    if (tableForward.lengthSq() === 0) {
+      tableForward.set(0, 0, -1);
+    } else {
+      tableForward.normalize();
+    }
+
+    const velocity = tableForward.multiplyScalar(THROW_MAX_SPEED * SPACE_THROW_SPEED_SCALE);
+    velocity.y = THROW_DOWNWARD_BIAS;
+    if (velocity.length() > THROW_MAX_SPEED) {
+      velocity.setLength(THROW_MAX_SPEED);
+    }
+    return velocity;
+  }
 
   private pushSample(time: number): void {
     this.samples.push({ pos: this.currentPos.clone(), time });

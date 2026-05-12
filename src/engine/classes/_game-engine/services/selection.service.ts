@@ -84,6 +84,21 @@ export class SelectionService {
     this.emitSelectionChanged();
   }
 
+  selectAllAvailable(): void {
+    if (!this.enabled) return;
+    this.selected.clear();
+    this.orderedSelection.length = 0;
+
+    for (const entry of this.dice.getActiveDiceMeshes()) {
+      if (!this.selectable.has(entry.index)) continue;
+      this.selected.add(entry.index);
+      this.orderedSelection.push(entry.index);
+    }
+
+    this.applyAllHighlights();
+    this.emitSelectionChanged();
+  }
+
   setScoringOptions(rolledFaces: number[], options: ScoringOption[], showHighlights = true): void {
     this.clearScoringOptions(false);
     this.rolledFaces = [...rolledFaces];

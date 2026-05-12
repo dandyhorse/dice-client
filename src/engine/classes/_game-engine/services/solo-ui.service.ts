@@ -6,6 +6,7 @@ import {
   soloModeTitle,
   t,
 } from '../../../../ui/i18n';
+import { bindMouseOnlyClick } from '../../../../ui/mouse-only-button';
 import { FONT_FAMILY, FONT_SIZE, UI_SIZE } from '../../../../ui/theme';
 
 import type { SoloModeConfig, SoloRunState } from '../../../../domain/solo-run';
@@ -335,7 +336,7 @@ export class SoloUiService {
       cursor: 'pointer',
       pointerEvents: 'auto',
     } satisfies Partial<CSSStyleDeclaration>);
-    btn.addEventListener('click', onClick);
+    bindMouseOnlyClick(btn, onClick);
     return btn;
   }
 

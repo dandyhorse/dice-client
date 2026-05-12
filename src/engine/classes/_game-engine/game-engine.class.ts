@@ -6,6 +6,7 @@ import {
   CAMERA_UP,
   CAMERA_X,
   CAMERA_Z,
+  REST_CORRECTION_MAX_PASSES,
   TABLE_DEPTH,
   TABLE_THICKNESS,
   TABLE_WIDTH,
@@ -28,6 +29,7 @@ import {
 } from '../../../domain/solo-run';
 import { SoloUiService } from './services/solo-ui.service';
 import { t } from '../../../ui/i18n';
+import { DEFAULT_PLAYER_SETTINGS, type PlayerSettings } from '../../../player-settings';
 import type {
   MatchRollResultPayload,
   MatchStatePayload,
@@ -37,9 +39,16 @@ import type {
   SnapshotPayload,
 } from './services/network.service';
 import type { SoloModeConfig, SoloRunState } from '../../../domain/solo-run';
-import { MATCH_PHASE, ROOM_MODE, ROOM_ROLE, ROOM_STATUS } from './services/network.service';
+import {
+  DEFAULT_ROOM_OPTIONS,
+  MATCH_PHASE,
+  ROOM_MODE,
+  ROOM_ROLE,
+  ROOM_STATUS,
+} from './services/network.service';
 import { SelectionService } from './services/selection.service';
 import { ShakeInputService } from './services/shake-input.service';
+import { TurnHotkeysService } from './services/turn-hotkeys.service';
 
 export type GameMode = 'local' | 'network';
 
@@ -47,6 +56,7 @@ export interface GameEngineOptions {
   mode?: GameMode;
   network?: NetworkService;
   soloConfig?: SoloModeConfig;
+  playerSettings?: PlayerSettings;
 }
 
 interface PerfStats {
@@ -108,6 +118,7 @@ export class GameEngine {
   readonly mode: GameMode;
   private readonly dice: DiceService;
   private readonly input: ShakeInputService;
+  private readonly turnHotkeys: TurnHotkeysService;
   private readonly network: NetworkService | null;
   private readonly selection: SelectionService | null;
   private readonly hud: HudUiService | null;
@@ -117,7 +128,9 @@ export class GameEngine {
   private currentMatchState: MatchStatePayload | null = null;
   private soloState: SoloRunState | null = null;
   private localRolling = false;
+  private localRestCorrectionPasses = 0;
   private localLastRolledFaces: number[] = [];
+  private networkLastRolledFaces: number[] = [];
   private tableVisualMesh: THREE.Mesh | null = null;
   private readonly tableTextures: THREE.Texture[] = [];
 
@@ -154,7 +167,16 @@ export class GameEngine {
     this.dice.spawn();
     this.perf = this.createPerfStats();
 
-    this.input = new ShakeInputService(this.renderer.domElement, this.camera);
+    const playerSettings = options.playerSettings ?? DEFAULT_PLAYER_SETTINGS;
+    this.input = new ShakeInputService(
+      this.renderer.domElement,
+      this.camera,
+      playerSettings.controls.throwDice,
+    );
+    this.turnHotkeys = new TurnHotkeysService(playerSettings.controls);
+    this.turnHotkeys.events.on('select-all', this.handleHotkeySelectAll);
+    this.turnHotkeys.events.on('continue', this.handleHotkeyContinue);
+    this.turnHotkeys.events.on('bank', this.handleHotkeyBank);
     this.input.events.on('hold-start', () => {
       this.dice.pickup();
     });
@@ -169,9 +191,11 @@ export class GameEngine {
         this.network.sendRelease(velocity, position);
       } else if (this.mode === 'local' && this.soloState && !isSoloRunEnded(this.soloState)) {
         this.localRolling = true;
+        this.localRestCorrectionPasses = 0;
         this.localLastRolledFaces = [];
         this.selection?.disable();
         this.input.setEnabled(false);
+        this.syncTurnHotkeysEnabled();
         this.soloHud?.clearRollResult();
         this.soloHud?.setStatus(t('rolling'));
       }
@@ -216,6 +240,7 @@ export class GameEngine {
         this.currentRoomState = state;
         this.hud?.setRoomState(state);
         if (isTestRoom) this.input.setEnabled(this.canUseTestInput(ownUserId));
+        this.syncTurnHotkeysEnabled();
       });
 
       if (isTestRoom) {
@@ -230,6 +255,7 @@ export class GameEngine {
         // Без этого pickup() прячет кости как раз когда игрок хочет в них кликать.
         net.events.on('match-state', (state: MatchStatePayload) => {
           this.currentMatchState = state;
+          if (state.phase !== MATCH_PHASE.SELECTING) this.networkLastRolledFaces = [];
           this.hud?.setMatchState(state);
           const isOwnPlayer = this.isOwnPlayer(ownUserId);
           const isMyTurn = state.currentPlayer === ownUserId;
@@ -248,28 +274,33 @@ export class GameEngine {
             this.input.setEnabled(false);
             this.selection?.disable();
           }
+          this.syncTurnHotkeysEnabled();
         });
 
         // Casual показывает scoring-подсказки; ranked только блокирует
         // невалидные клики через SelectionService без текстовых комбинаций/подсветки.
         net.events.on('match-roll-result', (r: MatchRollResultPayload) => {
           if (r.bust) {
+            this.networkLastRolledFaces = [];
             this.selection?.clearScoringOptions();
             if (!this.isRankedRoom()) this.hud?.showError('BUST');
           } else {
             const canSelectRoll =
               this.currentMatchState?.currentPlayer === ownUserId && this.isOwnPlayer(ownUserId);
             if (canSelectRoll) {
+              this.networkLastRolledFaces = [...r.rolledFaces];
               this.selection?.setScoringOptions(
                 r.rolledFaces,
                 scoreRoll(r.rolledFaces),
                 !this.isRankedRoom(),
               );
             } else {
+              this.networkLastRolledFaces = [];
               this.selection?.clearScoringOptions();
             }
             this.hud?.setRollResult(this.isRankedRoom() ? [] : r.rolledFaces);
           }
+          this.syncTurnHotkeysEnabled();
         });
 
         net.events.on('match-turn-result', (r: MatchTurnResultPayload) => {
@@ -283,27 +314,8 @@ export class GameEngine {
           },
         );
 
-        this.hud?.events.on('continue-clicked', () => {
-          const sel = this.selection;
-          if (!sel) return;
-          const indices = sel.getSelectedIndices();
-          if (indices.length === 0) return;
-          net
-            .sendSelectDice(indices)
-            .then(() => sel.clear())
-            .catch((e: Error) => this.hud?.showError(e.message));
-        });
-
-        this.hud?.events.on('bank-clicked', () => {
-          const sel = this.selection;
-          if (!sel) return;
-          const indices = sel.getSelectedIndices();
-          if (indices.length === 0) return;
-          net
-            .sendBank(indices)
-            .then(() => sel.clear())
-            .catch((e: Error) => this.hud?.showError(e.message));
-        });
+        this.hud?.events.on('continue-clicked', this.handleNetworkContinue);
+        this.hud?.events.on('bank-clicked', this.handleNetworkBank);
 
         // До получения первого MATCH_STATE: shake-input выключен, чтобы игрок
         // не успел отправить release в неподтверждённой фазе. Включится в
@@ -342,6 +354,7 @@ export class GameEngine {
     const config = this.soloConfig;
     if (!state || !config || isSoloRunEnded(state)) return;
     this.localRolling = false;
+    this.localRestCorrectionPasses = 0;
     const rolledFaces = this.dice.getLocalActiveFaces();
     this.localLastRolledFaces = rolledFaces;
 
@@ -358,6 +371,7 @@ export class GameEngine {
 
     this.selection?.setScoringOptions(rolledFaces, scoreRoll(rolledFaces));
     this.selection?.enable();
+    this.syncTurnHotkeysEnabled();
     this.soloHud?.setRollResult(rolledFaces);
     this.soloHud?.setStatus(t('chooseScoringDice'));
   }
@@ -423,7 +437,9 @@ export class GameEngine {
     const config = this.soloConfig;
     if (!config) return;
     this.localRolling = false;
+    this.localRestCorrectionPasses = 0;
     this.localLastRolledFaces = [];
+    this.networkLastRolledFaces = [];
     this.soloState = createSoloRun(config);
     this.dice.resetLocalForNewTurn();
     this.selection?.disable();
@@ -437,11 +453,153 @@ export class GameEngine {
     if (!state) return;
     const active = !isSoloRunEnded(state);
     this.input.setEnabled(active);
+    this.syncTurnHotkeysEnabled();
     if (active) {
       this.soloHud?.setStatus(t('readyToRoll'));
     } else {
       this.soloHud?.setStatus('');
     }
+  }
+
+  private handleLocalActiveRest(): void {
+    if (!this.localRolling) return;
+    if (this.localRestCorrectionPasses < REST_CORRECTION_MAX_PASSES) {
+      const corrected = this.dice.resolveLocalRestAmbiguities();
+      if (corrected) {
+        this.localRestCorrectionPasses += 1;
+        return;
+      }
+    }
+    this.finishSoloRoll();
+  }
+
+  private handleHotkeySelectAll = (): void => {
+    if (!this.canUseTurnHotkeys()) return;
+    this.selection?.selectAllAvailable();
+  };
+
+  private handleHotkeyContinue = (): void => {
+    if (this.mode === 'local') {
+      if (!this.canSubmitSoloSelection()) return;
+      this.handleSoloContinue();
+      return;
+    }
+
+    if (!this.canUseNetworkHotkeys() || !this.canSubmitNetworkSelection()) return;
+    this.handleNetworkContinue();
+  };
+
+  private handleHotkeyBank = (): void => {
+    if (this.mode === 'local') {
+      if (!this.canSubmitSoloSelection()) return;
+      this.handleSoloBank();
+      return;
+    }
+
+    if (!this.canUseNetworkHotkeys() || !this.canSubmitNetworkBank()) return;
+    this.handleNetworkBank();
+  };
+
+  private handleNetworkContinue = (): void => {
+    const selection = this.selection;
+    const network = this.network;
+    if (!selection || !network || !this.canSubmitNetworkSelection()) return;
+    const indices = selection.getSelectedIndices();
+    network
+      .sendSelectDice(indices)
+      .then(() => {
+        this.networkLastRolledFaces = [];
+        selection.clear();
+        this.syncTurnHotkeysEnabled();
+      })
+      .catch((e: Error) => this.hud?.showError(e.message));
+  };
+
+  private handleNetworkBank = (): void => {
+    const selection = this.selection;
+    const network = this.network;
+    if (!selection || !network || !this.canSubmitNetworkBank()) return;
+    const indices = selection.getSelectedIndices();
+    network
+      .sendBank(indices)
+      .then(() => {
+        this.networkLastRolledFaces = [];
+        selection.clear();
+        this.syncTurnHotkeysEnabled();
+      })
+      .catch((e: Error) => this.hud?.showError(e.message));
+  };
+
+  private syncTurnHotkeysEnabled(): void {
+    this.turnHotkeys.setEnabled(this.canUseTurnHotkeys());
+  }
+
+  private canUseTurnHotkeys(): boolean {
+    if (this.mode === 'local') return this.canUseSoloHotkeys();
+    return this.canUseNetworkHotkeys();
+  }
+
+  private canUseSoloHotkeys(): boolean {
+    const state = this.soloState;
+    return (
+      this.mode === 'local' &&
+      state !== null &&
+      !isSoloRunEnded(state) &&
+      !this.localRolling &&
+      this.selection !== null &&
+      this.localLastRolledFaces.length > 0
+    );
+  }
+
+  private canUseNetworkSelectionControls(): boolean {
+    const state = this.currentMatchState;
+    const ownUserId = this.network?.getUserId() ?? '';
+    return (
+      this.mode === 'network' &&
+      this.selection !== null &&
+      state !== null &&
+      !state.paused &&
+      state.phase === MATCH_PHASE.SELECTING &&
+      state.currentPlayer === ownUserId &&
+      this.isOwnPlayer(ownUserId) &&
+      this.networkLastRolledFaces.length > 0
+    );
+  }
+
+  private canUseNetworkHotkeys(): boolean {
+    return this.canUseNetworkSelectionControls() && !this.isRankedRoom();
+  }
+
+  private canSubmitSoloSelection(): boolean {
+    const selection = this.selection;
+    if (!this.canUseSoloHotkeys() || !selection) return false;
+    const validation = validateSelection(
+      this.localLastRolledFaces,
+      selection.getSelectedRollIndices(),
+    );
+    return validation.valid === true;
+  }
+
+  private getNetworkSelectionPoints(): number | null {
+    const selection = this.selection;
+    if (!this.canUseNetworkSelectionControls() || !selection) return null;
+    const validation = validateSelection(
+      this.networkLastRolledFaces,
+      selection.getSelectedRollIndices(),
+    );
+    return validation.valid === true ? validation.points : null;
+  }
+
+  private canSubmitNetworkSelection(): boolean {
+    return this.getNetworkSelectionPoints() !== null;
+  }
+
+  private canSubmitNetworkBank(): boolean {
+    const points = this.getNetworkSelectionPoints();
+    const state = this.currentMatchState;
+    if (points === null || state === null) return false;
+    const minBank = this.currentRoomState?.options.minBank ?? DEFAULT_ROOM_OPTIONS.minBank;
+    return state.turnPoints + points >= minBank;
   }
 
   private isOwnPlayer(ownUserId: string): boolean {
@@ -476,6 +634,7 @@ export class GameEngine {
   destroy(): void {
     this.stop();
     window.removeEventListener('resize', this.onResize);
+    this.turnHotkeys.destroy();
     this.input.destroy();
     this.selection?.destroy();
     this.hud?.destroy();
@@ -483,6 +642,11 @@ export class GameEngine {
     this.perf?.el.remove();
     this.renderer.domElement.remove();
     this.renderer.dispose();
+  }
+
+  setPlayerSettings(settings: PlayerSettings): void {
+    this.input.setThrowKeyCode(settings.controls.throwDice);
+    this.turnHotkeys.setBindings(settings.controls);
   }
 
   private areShadowsEnabled(): boolean {
@@ -774,7 +938,7 @@ export class GameEngine {
       this.physicsWorld.step(1 / 60, deltaTime, 3);
       this.dice.syncMeshes();
       if (this.localRolling && this.dice.areLocalActiveDiceAtRest()) {
-        this.finishSoloRoll();
+        this.handleLocalActiveRest();
       }
     } else {
       // network: interpolation buffer + короткий extrapolation fallback.

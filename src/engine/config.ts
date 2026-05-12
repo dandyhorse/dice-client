@@ -20,6 +20,15 @@ export const DICE_HALF_SIZE = 0.22;
 export const DICE_MASS = 0.6;
 export const DICE_SPACING = 0.6;
 
+export const REST_FACE_DOT_MIN = 0.82;
+export const REST_STACKED_CENTER_Y_MIN = DICE_HALF_SIZE * 2.2;
+export const REST_CORRECTION_MAX_PASSES = 3;
+export const REST_CORRECTION_DOWNWARD_VELOCITY = -1.6;
+export const REST_CORRECTION_ANGULAR_VELOCITY = 1.2;
+export const REST_CORRECTION_LIFT = 0.04;
+export const REST_REROLL_POSITION_ATTEMPTS = 16;
+export const REST_REROLL_CLEARANCE = DICE_SPACING;
+
 // Turn-based: целевой счёт для победы (KCD1 = 4000). Сервер судит — клиенту
 // нужно для прогресс-бара. При изменении — править и dice-server/src/engine/config.ts.
 export const TARGET_SCORE = 4000;

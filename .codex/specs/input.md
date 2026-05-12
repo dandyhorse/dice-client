@@ -2,7 +2,9 @@
 
 `src/engine/classes/_game-engine/services/shake-input.service.ts`
 
-Сервис ввода. Превращает движение мыши в события `hold-start`, `hold-move`, `release` с позицией в мировых координатах и скоростью движения мыши.
+Сервис ввода. Превращает движение мыши и настраиваемую клавишу броска
+(`Space` по умолчанию) в события `hold-start`, `hold-move`, `release` с
+позицией в мировых координатах и скоростью броска.
 
 ## Поля
 
@@ -21,6 +23,7 @@
 - `canvas.mousedown` → `onMouseDown`
 - `canvas.mousemove` → `onMouseMove`
 - `window.mouseup` → `onMouseUp` (на window, чтобы поймать release вне канваса)
+- `window.keydown` → `onKeyDown` (настраиваемая клавиша мгновенного броска)
 - `canvas.contextmenu` → `preventDefault` (не показывать меню по правой кнопке)
 
 ## Обработчики
@@ -52,6 +55,18 @@
 6. **Clamp**: если `length > THROW_MAX_SPEED` — `setLength(THROW_MAX_SPEED)`. Гарантия отсутствия tunneling сквозь стены при очень быстрой мыши.
 7. Очистить буфер, эмитнуть `release(velocity, position)` — позиция = `currentPos.clone()` (последняя позиция курсора в мире на hold-плоскости, уже зажатая в safe throw zone)
 
+### `onKeyDown(event)`
+
+1. Только `event.code === throwKeyCode`
+2. Игнорировать, если input выключен через `setEnabled(false)`, событие повторное (`event.repeat`), уже отменено (`defaultPrevented`) или сейчас активен mouse-hold
+3. Игнорировать, если фокус/target внутри `input`, `textarea`, `select`, `button` или `[contenteditable]`
+4. `preventDefault()`, чтобы пробел не скроллил страницу
+5. Эмитнуть `hold-start` из центра стола: `(0, HOLD_HEIGHT, 0)`
+6. Сразу эмитнуть `release` из этой же позиции с мягким импульсом:
+   - направление = screen-up/table-forward (`camera.up`, спроецированный на XZ), fallback `(0, 0, -1)`
+   - горизонтальная скорость = `THROW_MAX_SPEED * 0.2`
+   - вертикальная составляющая = `THROW_DOWNWARD_BIAS`
+
 ## `update(currentTime)`
 
 Вызывается из `GameEngine.gameLoop` каждый кадр. Удаляет из буфера сэмплы старше `currentTime - VELOCITY_BUFFER_MS`. Это нужно, чтобы при медленном движении в конце броска не учитывалась "история" быстрого старта.
@@ -66,5 +81,8 @@
 ## Важные тонкости
 
 - `mouseup` слушается на `window`, не на `canvas` — иначе если игрок отпускает ЛКМ за пределами canvas, бросок не сработает
+- `keydown` слушается на `window`, но `Space` не перехватывается при фокусе в интерактивных UI-элементах
+- `throwKeyCode` хранится как `KeyboardEvent.code`, чтобы физическая клавиша
+  работала одинаково в EN/RU раскладках.
 - `samples.shift()` — O(n), но n маленькое (≤ ~10 при VELOCITY_BUFFER_MS = 90ms и 60Hz). При увеличении окна стоит перейти на ring buffer
 - Все Vector3, передаваемые в события, клонируются — иначе подписчики получат ссылку на изменяющийся `currentPos`

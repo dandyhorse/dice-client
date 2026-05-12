@@ -38,6 +38,43 @@ export interface LeaderboardEntry {
 
 const authUrl = (path: string): string => `${SERVER_URL}${path}`;
 
+const isObject = (value: unknown): value is Record<string, unknown> => {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+};
+
+const isAuthUser = (value: unknown): value is AuthUser => {
+  if (!isObject(value)) return false;
+  return (
+    typeof value.id === 'string' &&
+    value.id.length > 0 &&
+    typeof value.username === 'string' &&
+    value.username.length > 0 &&
+    typeof value.displayName === 'string'
+  );
+};
+
+const isAuthPayload = (value: unknown): value is AuthPayload => {
+  if (!isObject(value)) return false;
+  return (
+    isAuthUser(value.user) &&
+    typeof value.accessToken === 'string' &&
+    value.accessToken.length > 0 &&
+    typeof value.refreshToken === 'string' &&
+    value.refreshToken.length > 0 &&
+    typeof value.accessExpiresIn === 'number' &&
+    Number.isFinite(value.accessExpiresIn) &&
+    typeof value.refreshExpiresIn === 'number' &&
+    Number.isFinite(value.refreshExpiresIn)
+  );
+};
+
+const assertAuthPayload = (value: unknown): AuthPayload => {
+  if (!isAuthPayload(value)) {
+    throw new Error('auth server returned invalid user data');
+  }
+  return value;
+};
+
 const storedNumber = (key: string): number => {
   const raw = localStorage.getItem(key);
   return raw ? Number(raw) : 0;
@@ -47,13 +84,17 @@ export const getStoredUser = (): AuthUser | null => {
   const raw = localStorage.getItem(AUTH_USER_KEY);
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as AuthUser;
+    const user = JSON.parse(raw) as unknown;
+    if (isAuthUser(user)) return user;
   } catch {
-    return null;
+    // Ignore and clear below.
   }
+  localStorage.removeItem(AUTH_USER_KEY);
+  return null;
 };
 
 const storeAuth = (payload: AuthPayload): AuthPayload => {
+  assertAuthPayload(payload);
   const now = Date.now();
   localStorage.setItem(ACCESS_TOKEN_KEY, payload.accessToken);
   localStorage.setItem(REFRESH_TOKEN_KEY, payload.refreshToken);
@@ -71,7 +112,12 @@ export const clearAuth = (): void => {
   localStorage.removeItem(AUTH_USER_KEY);
 };
 
-const postAuth = async <T>(path: string, body: unknown, accessToken?: string): Promise<T> => {
+const errorMessage = (payload: unknown): string | null => {
+  if (!isObject(payload)) return null;
+  return typeof payload.message === 'string' && payload.message.length > 0 ? payload.message : null;
+};
+
+const postAuth = async (path: string, body: unknown, accessToken?: string): Promise<unknown> => {
   const res = await fetch(authUrl(path), {
     method: 'POST',
     headers: {
@@ -80,9 +126,9 @@ const postAuth = async <T>(path: string, body: unknown, accessToken?: string): P
     },
     body: JSON.stringify(body),
   });
-  const payload = (await res.json().catch(() => ({}))) as { message?: string };
-  if (!res.ok) throw new Error(payload.message || `auth request failed: ${res.status}`);
-  return payload as T;
+  const payload = (await res.json().catch(() => null)) as unknown;
+  if (!res.ok) throw new Error(errorMessage(payload) || `auth request failed: ${res.status}`);
+  return payload;
 };
 
 export const registerAccount = async (input: {
@@ -90,14 +136,14 @@ export const registerAccount = async (input: {
   password: string;
   guestId: string;
 }): Promise<AuthPayload> => {
-  return storeAuth(await postAuth<AuthPayload>('/auth/register', input));
+  return storeAuth(assertAuthPayload(await postAuth('/auth/register', input)));
 };
 
 export const loginAccount = async (input: {
   username: string;
   password: string;
 }): Promise<AuthPayload> => {
-  return storeAuth(await postAuth<AuthPayload>('/auth/login', input));
+  return storeAuth(assertAuthPayload(await postAuth('/auth/login', input)));
 };
 
 export const refreshAuth = async (): Promise<AuthPayload | null> => {
@@ -108,7 +154,7 @@ export const refreshAuth = async (): Promise<AuthPayload | null> => {
     return null;
   }
   try {
-    return storeAuth(await postAuth<AuthPayload>('/auth/refresh', { refreshToken }));
+    return storeAuth(assertAuthPayload(await postAuth('/auth/refresh', { refreshToken })));
   } catch {
     clearAuth();
     return null;
