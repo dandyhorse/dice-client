@@ -5,6 +5,7 @@ import {
   getStoredUser,
   loginAccount,
   logoutAccount,
+  refreshCurrentUser,
   registerAccount,
 } from './auth';
 import { GameEngine } from './engine/classes/_game-engine/game-engine.class';
@@ -49,6 +50,10 @@ import {
   type ControlBindings,
   type PlayerSettings,
 } from './player-settings';
+import { assetPreloader } from './engine/assets/asset-preloader';
+import { audioService } from './engine/audio/audio.service';
+import { MenuDiceScene } from './ui/menu-dice-scene';
+import { hideLoadingOverlay, showLoadingOverlay } from './ui/loading-overlay';
 
 const USER_ID_KEY = 'dice.userId';
 const DISPLAY_NAME_KEY = 'dice.displayName';
@@ -60,6 +65,7 @@ const ROOM_BADGE_ID = 'room-badge';
 const LANG_CONTROLS_ID = 'lang-controls';
 const ROOM_LIST_MODAL_ID = 'room-list-modal';
 const LEADERBOARD_ID = 'leaderboard-panel';
+const RANKED_ENTRY_FEE = 10;
 const MOBILE_DEVICE_RE = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
 const LANG_ICON_SRC: Record<Language, string> = {
   en: '/assets/lang/united-kingdom.png',
@@ -154,22 +160,39 @@ if (mobileRuntime) {
 let activeGame: GameEngine | null = null;
 let activeNetwork: NetworkService | null = null;
 let currentLobbyView: 'home' | 'solo' | 'multiplayer' = 'home';
+let menuDiceScene: MenuDiceScene | null = null;
+let menuDiceSceneLoading: Promise<void> | null = null;
+let networkGameMounting: Promise<void> | null = null;
+
+audioService.bindUnlockListeners();
 
 onPlayerSettingsChange((settings) => {
   activeGame?.setPlayerSettings(settings);
 });
 
-const startLocal = (soloConfig: SoloModeConfig = DEFAULT_SOLO_MODE): void => {
-  clearLobby();
-  clearRoomScreen();
-  clearAuthControls();
-  clearAuthModal();
-  clearRoomBadge();
-  const game = new GameEngine({ mode: 'local', soloConfig, playerSettings: getPlayerSettings() });
-  app.appendChild(game.renderer.domElement);
-  game.start();
-  activeGame = game;
-  renderBackButton();
+const startLocal = async (soloConfig: SoloModeConfig = DEFAULT_SOLO_MODE): Promise<void> => {
+  destroyMenuDiceScene();
+  audioService.stopMusic();
+  showLoadingOverlay();
+  try {
+    await Promise.all([
+      assetPreloader.preloadGroup('gameplay'),
+      audioService.preloadGroup('gameplay'),
+    ]);
+    clearLobby();
+    clearRoomScreen();
+    clearAuthControls();
+    clearAuthModal();
+    clearRoomBadge();
+    const game = new GameEngine({ mode: 'local', soloConfig, playerSettings: getPlayerSettings() });
+    app.appendChild(game.renderer.domElement);
+    game.warmup();
+    game.start();
+    activeGame = game;
+    renderBackButton();
+  } finally {
+    hideLoadingOverlay();
+  }
 };
 
 const startNetwork = async (
@@ -183,7 +206,12 @@ const startNetwork = async (
   const network = await connectNetwork(displayNameInput);
   activeNetwork = network;
   let state: RoomState;
+  showLoadingOverlay();
   try {
+    await Promise.all([
+      assetPreloader.preloadGroup('gameplay'),
+      audioService.preloadGroup('gameplay'),
+    ]);
     state =
       mode === 'create'
         ? await network.createRoom(roomMode, roomOptions, gameName)
@@ -192,6 +220,8 @@ const startNetwork = async (
     if (activeNetwork === network) activeNetwork = null;
     network.disconnect();
     throw err;
+  } finally {
+    hideLoadingOverlay();
   }
   clearLobby();
   clearAuthControls();
@@ -214,6 +244,23 @@ const connectNetwork = async (displayNameInput: string): Promise<NetworkService>
   });
   await network.connect(identity.userId, identity.displayName, identity.accessToken);
   return network;
+};
+
+const rankedAccessError = (): Error | null => {
+  const user = getStoredUser();
+  if (!user) return new Error(t('authRequiredRanked'));
+  if (user.coins < RANKED_ENTRY_FEE) return new Error(t('insufficientCoinsRanked'));
+  return null;
+};
+
+const refreshAuthUserSilently = (): void => {
+  refreshCurrentUser()
+    .then(() => {
+      if (document.getElementById(AUTH_CONTROLS_ID)) renderAuthControls();
+    })
+    .catch(() => {
+      // Game flow should not be blocked by a stale auth badge refresh.
+    });
 };
 
 const clearLobby = (): void => {
@@ -259,6 +306,32 @@ const clearRoomBadge = (): void => {
 const clearLanguageControls = (): void => {
   const existing = document.getElementById(LANG_CONTROLS_ID);
   if (existing) existing.remove();
+};
+
+const destroyMenuDiceScene = (): void => {
+  menuDiceScene?.destroy();
+  menuDiceScene = null;
+};
+
+const ensureMenuDiceScene = (): void => {
+  if (menuDiceScene || menuDiceSceneLoading) return;
+  showLoadingOverlay();
+  menuDiceSceneLoading = Promise.all([
+    assetPreloader.preloadGroup('menu'),
+    audioService.preloadGroup('menu'),
+  ])
+    .then(() => {
+      if (currentLobbyView !== 'home' || activeGame || mobileRuntime) return;
+      const scene = new MenuDiceScene();
+      scene.mount(document.body);
+      menuDiceScene = scene;
+      audioService.playMusic('menu-music');
+    })
+    .catch(showError)
+    .finally(() => {
+      menuDiceSceneLoading = null;
+      hideLoadingOverlay();
+    });
 };
 
 const returnToLobby = (): void => {
@@ -421,11 +494,20 @@ const showRoomCode = (code: string, status: string, gameName?: string): void => 
 };
 
 const handleRoomState = (network: NetworkService, state: RoomState): void => {
+  if (
+    state.mode === ROOM_MODE.RANKED &&
+    (state.status === ROOM_STATUS.ACTIVE || state.status === ROOM_STATUS.FINISHED)
+  ) {
+    refreshAuthUserSilently();
+  }
+
   if (state.status === ROOM_STATUS.WAITING) {
     renderRoomScreen(network, state);
     return;
   }
 
+  destroyMenuDiceScene();
+  audioService.stopMusic();
   clearLobby();
   clearRoomScreen();
   showRoomCode(
@@ -436,13 +518,36 @@ const handleRoomState = (network: NetworkService, state: RoomState): void => {
   renderBackButton();
   renderLanguageControls();
   if (!activeGame) {
-    activeGame = new GameEngine({ mode: 'network', network, playerSettings: getPlayerSettings() });
-    app.appendChild(activeGame.renderer.domElement);
-    activeGame.start();
+    mountNetworkGame(network).catch(showError);
   }
 };
 
+const mountNetworkGame = async (network: NetworkService): Promise<void> => {
+  if (activeGame) return;
+  if (networkGameMounting) return networkGameMounting;
+
+  showLoadingOverlay();
+  networkGameMounting = Promise.all([
+    assetPreloader.preloadGroup('gameplay'),
+    audioService.preloadGroup('gameplay'),
+  ])
+    .then(() => {
+      if (activeGame || activeNetwork !== network) return;
+      activeGame = new GameEngine({ mode: 'network', network, playerSettings: getPlayerSettings() });
+      app.appendChild(activeGame.renderer.domElement);
+      activeGame.warmup();
+      activeGame.start();
+    })
+    .finally(() => {
+      networkGameMounting = null;
+      hideLoadingOverlay();
+    });
+  return networkGameMounting;
+};
+
 const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
+  destroyMenuDiceScene();
+  audioService.stopMusic();
   clearLobby();
   clearAuthControls();
   clearRoomScreen();
@@ -517,7 +622,10 @@ const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
     startBtn.disabled = true;
     network
       .startRoom()
-      .then((next) => handleRoomState(network, next))
+      .then((next) => {
+        if (next.mode === ROOM_MODE.RANKED) refreshAuthUserSilently();
+        handleRoomState(network, next);
+      })
       .catch((err: Error) => {
         startBtn.disabled = false;
         error.textContent = err.message;
@@ -675,6 +783,18 @@ const renderAuthControls = (): void => {
       letterSpacing: '0.04em',
     } satisfies Partial<CSSStyleDeclaration>);
     wrap.appendChild(label);
+
+    const coins = document.createElement('span');
+    coins.textContent = `${user.coins} ${t('coins')}`;
+    Object.assign(coins.style, {
+      padding: '2px 6px',
+      border: '1px solid rgba(250,204,21,0.32)',
+      borderRadius: '6px',
+      color: '#facc15',
+      lineHeight: '1',
+      whiteSpace: 'nowrap',
+    } satisfies Partial<CSSStyleDeclaration>);
+    wrap.appendChild(coins);
 
     const logoutBtn = button('×', () => {
       logoutAccount()
@@ -1009,7 +1129,7 @@ const createLobbyFrame = (widthPx = 340): HTMLDivElement => {
     alignItems: 'center',
     justifyContent: 'center',
     gap: scaledPx(22),
-    background: 'rgba(10,10,15,0.85)',
+    background: 'rgba(10,10,15,0.62)',
     zIndex: '20',
   } satisfies Partial<CSSStyleDeclaration>);
 
@@ -1273,6 +1393,13 @@ const renderRoomListModal = (displayNameInput: string): void => {
         borderBottom: '1px solid rgba(255,255,255,0.08)',
       } satisfies Partial<CSSStyleDeclaration>);
       const joinBtn = button(room.canJoinAsPlayer ? t('join') : t('spectate'), () => {
+        if (room.mode === ROOM_MODE.RANKED && room.canJoinAsPlayer) {
+          const accessError = rankedAccessError();
+          if (accessError) {
+            content.appendChild(errorLine(accessError.message));
+            return;
+          }
+        }
         joinBtn.disabled = true;
         network
           .joinRoom(room.code)
@@ -1335,6 +1462,7 @@ const renderLobby = (): void => {
   const card = createLobbyFrame(360);
   appendBrand(card);
   renderLeaderboard();
+  ensureMenuDiceScene();
 
   const soloBtn = button(t('soloGame'), renderSoloCreate);
   soloBtn.style.fontSize = FONT_SIZE.menuButton;
@@ -1352,6 +1480,8 @@ const renderLobby = (): void => {
 
 const renderSoloCreate = (): void => {
   currentLobbyView = 'solo';
+  destroyMenuDiceScene();
+  audioService.stopMusic();
   renderAuthControls();
   renderLanguageControls();
   const card = createLobbyFrame(420);
@@ -1364,7 +1494,7 @@ const renderSoloCreate = (): void => {
   card.appendChild(labeledControl(t('mode'), soloSelect));
 
   const startBtn = button(t('createGame'), () => {
-    startLocal(getSoloModeConfig(soloSelect.value));
+    startLocal(getSoloModeConfig(soloSelect.value)).catch(showError);
   });
   card.appendChild(startBtn);
 
@@ -1376,6 +1506,8 @@ const renderSoloCreate = (): void => {
 
 const renderMultiplayerCreate = (): void => {
   currentLobbyView = 'multiplayer';
+  destroyMenuDiceScene();
+  audioService.stopMusic();
   renderAuthControls();
   renderLanguageControls();
   const card = createLobbyFrame(460);
@@ -1437,9 +1569,12 @@ const renderMultiplayerCreate = (): void => {
 
   const createBtn = button(t('createGame'), () => {
     const mode = roomModeValue();
-    if (mode === ROOM_MODE.RANKED && !getStoredUser()) {
-      showError(new Error(t('authRequiredRanked')));
-      return;
+    if (mode === ROOM_MODE.RANKED) {
+      const accessError = rankedAccessError();
+      if (accessError) {
+        showError(accessError);
+        return;
+      }
     }
     const gameName = gameNameInput.value.trim();
     if (!gameName) {
@@ -1585,6 +1720,7 @@ loadPlayerSettings()
   .catch((err: Error) => {
     console.warn(`settings load failed: ${err.message}`);
   })
+  .then(() => refreshCurrentUser().catch(() => null))
   .finally(() => {
     renderLanguageControls();
     if (!mobileRuntime) renderLobby();

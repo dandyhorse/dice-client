@@ -10,6 +10,7 @@ export interface AuthUser {
   id: string;
   username: string;
   displayName: string;
+  coins: number;
 }
 
 interface AuthPayload {
@@ -49,7 +50,9 @@ const isAuthUser = (value: unknown): value is AuthUser => {
     value.id.length > 0 &&
     typeof value.username === 'string' &&
     value.username.length > 0 &&
-    typeof value.displayName === 'string'
+    typeof value.displayName === 'string' &&
+    typeof value.coins === 'number' &&
+    Number.isFinite(value.coins)
   );
 };
 
@@ -104,6 +107,12 @@ const storeAuth = (payload: AuthPayload): AuthPayload => {
   return payload;
 };
 
+const storeUser = (user: AuthUser): AuthUser => {
+  if (!isAuthUser(user)) throw new Error('auth server returned invalid user data');
+  localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user));
+  return user;
+};
+
 export const clearAuth = (): void => {
   localStorage.removeItem(ACCESS_TOKEN_KEY);
   localStorage.removeItem(REFRESH_TOKEN_KEY);
@@ -125,6 +134,15 @@ const postAuth = async (path: string, body: unknown, accessToken?: string): Prom
       ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     },
     body: JSON.stringify(body),
+  });
+  const payload = (await res.json().catch(() => null)) as unknown;
+  if (!res.ok) throw new Error(errorMessage(payload) || `auth request failed: ${res.status}`);
+  return payload;
+};
+
+const getAuth = async (path: string, accessToken: string): Promise<unknown> => {
+  const res = await fetch(authUrl(path), {
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
   const payload = (await res.json().catch(() => null)) as unknown;
   if (!res.ok) throw new Error(errorMessage(payload) || `auth request failed: ${res.status}`);
@@ -169,6 +187,27 @@ export const logoutAccount = async (): Promise<void> => {
     await postAuth('/auth/logout', { refreshToken }, accessToken ?? undefined);
   } catch {
     // Local logout should not be blocked by a stale token or offline server.
+  }
+};
+
+export const refreshCurrentUser = async (): Promise<AuthUser | null> => {
+  const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+  const accessExpiresAt = storedNumber(ACCESS_EXPIRES_AT_KEY);
+  if (!accessToken || accessExpiresAt <= Date.now() + 30_000) {
+    const refreshed = await refreshAuth();
+    return refreshed?.user ?? null;
+  }
+
+  try {
+    const payload = await getAuth('/auth/me', accessToken);
+    if (isObject(payload) && isAuthUser(payload.user)) {
+      return storeUser(payload.user);
+    }
+    throw new Error('auth server returned invalid user data');
+  } catch (error) {
+    const refreshed = await refreshAuth();
+    if (refreshed) return refreshed.user;
+    throw error;
   }
 };
 

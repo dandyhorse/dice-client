@@ -6,6 +6,7 @@ import {
   CAMERA_UP,
   CAMERA_X,
   CAMERA_Z,
+  DICE_HALF_SIZE,
   REST_CORRECTION_MAX_PASSES,
   TABLE_DEPTH,
   TABLE_THICKNESS,
@@ -15,6 +16,13 @@ import {
   WALL_THICKNESS,
   WORLD_GRAVITY,
 } from '../../config';
+import { assetPreloader } from '../../assets/asset-preloader';
+import {
+  TABLE_COLOR_MAP_URL,
+  TABLE_NORMAL_MAP_URL,
+  TABLE_ROUGHNESS_MAP_URL,
+} from '../../assets/asset-manifest';
+import { audioService } from '../../audio/audio.service';
 import { DiceService } from './services/dice.service';
 import { HudUiService } from './services/hud-ui.service';
 import { NetworkService } from './services/network.service';
@@ -37,6 +45,7 @@ import type {
   RestPayload,
   RoomState,
   SnapshotPayload,
+  DieStateFull,
 } from './services/network.service';
 import type { SoloModeConfig, SoloRunState } from '../../../domain/solo-run';
 import {
@@ -73,10 +82,6 @@ interface PerfStats {
 }
 
 const PERF_UPDATE_INTERVAL_MS = 500;
-const TABLE_TEXTURE_BASE_URL = '/assets/table/wood-cabinet-worn-long-1k/';
-const TABLE_COLOR_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_long_diff_1k.jpg`;
-const TABLE_NORMAL_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_long_nor_gl_1k.png`;
-const TABLE_ROUGHNESS_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_long_rough_1k.png`;
 const TABLE_VISUAL_OVERSCAN = 1.04;
 const DIRECTIONAL_LIGHT_Y = 9.5;
 const CEILING_LIGHT_Y_OFFSET = 1.1;
@@ -133,6 +138,8 @@ export class GameEngine {
   private networkLastRolledFaces: number[] = [];
   private tableVisualMesh: THREE.Mesh | null = null;
   private readonly tableTextures: THREE.Texture[] = [];
+  private readonly networkCollisionVelocities = new Map<number, THREE.Vector3>();
+  private readonly networkCollisionLastPlayedMs = new Map<number, number>();
 
   private lastTime = 0;
   private rafId: number | null = null;
@@ -163,6 +170,7 @@ export class GameEngine {
 
     this.dice = new DiceService(this.scene, this.physicsWorld, this.diceMaterial, this.mode, {
       shadowsEnabled: this.areShadowsEnabled(),
+      onCollision: this.handleDiceCollision,
     });
     this.dice.spawn();
     this.perf = this.createPerfStats();
@@ -178,9 +186,11 @@ export class GameEngine {
     this.turnHotkeys.events.on('continue', this.handleHotkeyContinue);
     this.turnHotkeys.events.on('bank', this.handleHotkeyBank);
     this.input.events.on('hold-start', () => {
+      audioService.play('dice-pickup');
       this.dice.pickup();
     });
     this.input.events.on('release', (velocity: THREE.Vector3, position: THREE.Vector3) => {
+      audioService.play('dice-throw');
       // dice.release() для обоих режимов: в local — спавн с импульсом, в network —
       // только снять hold-флаг (см. dice.service.ts), чтобы первый снапшот сервера
       // мог вернуть visible=true. Без этого кости остаются скрытыми после броска.
@@ -206,12 +216,14 @@ export class GameEngine {
       const net = this.network;
       net.events.on('dice-spawn', (snap: SnapshotPayload) => {
         this.recordSnapshot(performance.now());
+        this.networkCollisionVelocities.clear();
         this.dice.applySnapshot(snap.dice, performance.now());
       });
       net.events.on('dice-snapshot', (snap: SnapshotPayload) => {
         const now = performance.now();
         this.recordSnapshot(now);
         this.dice.applySnapshot(snap.dice, now);
+        this.handleNetworkCollisionAudio(snap.dice, now);
       });
       net.events.on('dice-rest', (rest: RestPayload) => {
         const now = performance.now();
@@ -225,6 +237,7 @@ export class GameEngine {
           now,
           { immediate: true },
         );
+        this.networkCollisionVelocities.clear();
       });
 
       this.currentRoomState = net.getRoomState();
@@ -347,6 +360,42 @@ export class GameEngine {
     }
 
     window.addEventListener('resize', this.onResize);
+  }
+
+  warmup(): void {
+    this.renderer.compile(this.scene, this.camera);
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  private handleDiceCollision = (impact: number): void => {
+    audioService.playCollision(impact);
+  };
+
+  private handleNetworkCollisionAudio(dice: DieStateFull[], now: number): void {
+    for (let i = 0; i < dice.length; i++) {
+      const state = dice[i]!;
+      if (state.p[1] < -100) {
+        this.networkCollisionVelocities.delete(i);
+        continue;
+      }
+
+      const previous = this.networkCollisionVelocities.get(i);
+      const current = new THREE.Vector3(state.v[0], state.v[1], state.v[2]);
+      if (previous) {
+        const nearTable = state.p[1] <= DICE_HALF_SIZE + 0.28;
+        const verticalBounce = previous.y < -0.35 && current.y > 0.02;
+        const speedDrop = previous.length() - current.length() > 1.2;
+        const impact = Math.max(Math.abs(previous.y - current.y), previous.length() - current.length());
+        const last = this.networkCollisionLastPlayedMs.get(i) ?? 0;
+
+        if (nearTable && (verticalBounce || speedDrop) && impact >= 0.85 && now - last >= 90) {
+          audioService.playCollision(impact);
+          this.networkCollisionLastPlayedMs.set(i, now);
+        }
+      }
+
+      this.networkCollisionVelocities.set(i, current);
+    }
   }
 
   private finishSoloRoll(): void {
@@ -475,7 +524,13 @@ export class GameEngine {
 
   private handleHotkeySelectAll = (): void => {
     if (!this.canUseTurnHotkeys()) return;
-    this.selection?.selectAllAvailable();
+    const selection = this.selection;
+    if (!selection) return;
+    if (selection.getSelectedIndices().length > 0) {
+      selection.clear();
+      return;
+    }
+    selection.selectAllAvailable();
   };
 
   private handleHotkeyContinue = (): void => {
@@ -800,9 +855,8 @@ export class GameEngine {
     colorSpace?: THREE.ColorSpace,
     ps1Quantize = false,
   ): THREE.Texture {
-    const texture = new THREE.TextureLoader().load(url, (loaded) => {
-      if (ps1Quantize) this.applyPs1TablePalette(loaded);
-    });
+    const texture = assetPreloader.getTextureClone(url);
+    if (ps1Quantize) this.applyPs1TablePalette(texture);
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
     texture.repeat.set(1, 1);
