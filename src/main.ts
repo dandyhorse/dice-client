@@ -12,9 +12,15 @@ import { GameEngine } from './engine/classes/_game-engine/game-engine.class';
 import {
   NetworkService,
   DEFAULT_ROOM_OPTIONS,
+  ROOM_MIN_BANK_MAX,
+  ROOM_MIN_BANK_MIN,
+  ROOM_MIN_BANK_STEP,
   ROOM_MODE,
   ROOM_ROLE,
   ROOM_STATUS,
+  ROOM_TARGET_SCORE_MAX,
+  ROOM_TARGET_SCORE_MIN,
+  ROOM_TARGET_SCORE_STEP,
   type RoomMode,
   type RoomOptionsPayload,
   type RoomListItem,
@@ -159,7 +165,17 @@ if (mobileRuntime) {
 
 let activeGame: GameEngine | null = null;
 let activeNetwork: NetworkService | null = null;
-let currentLobbyView: 'home' | 'solo' | 'multiplayer' = 'home';
+type LobbyView =
+  | 'home'
+  | 'create-room'
+  | 'solo'
+  | 'multiplayer'
+  | 'multiplayer-create'
+  | 'multiplayer-join'
+  | 'ranked'
+  | 'settings';
+
+let currentLobbyView: LobbyView = 'home';
 let menuDiceScene: MenuDiceScene | null = null;
 let menuDiceSceneLoading: Promise<void> | null = null;
 let networkGameMounting: Promise<void> | null = null;
@@ -394,11 +410,26 @@ const rerenderCurrentShell = (): void => {
     return;
   }
   switch (currentLobbyView) {
+    case 'create-room':
+      renderCreateRoomMenu();
+      break;
     case 'solo':
       renderSoloCreate();
       break;
     case 'multiplayer':
+      renderMultiplayerMenu();
+      break;
+    case 'multiplayer-create':
       renderMultiplayerCreate();
+      break;
+    case 'multiplayer-join':
+      renderMultiplayerJoin();
+      break;
+    case 'ranked':
+      renderRankedMenu();
+      break;
+    case 'settings':
+      renderSettingsMenu();
       break;
     case 'home':
     default:
@@ -1455,64 +1486,63 @@ const errorLine = (message: string): HTMLDivElement => {
   return error;
 };
 
-const renderLobby = (): void => {
-  currentLobbyView = 'home';
-  renderAuthControls();
-  renderLanguageControls();
-  const card = createLobbyFrame(360);
-  appendBrand(card);
-  renderLeaderboard();
-  ensureMenuDiceScene();
-
-  const soloBtn = button(t('soloGame'), renderSoloCreate);
-  soloBtn.style.fontSize = FONT_SIZE.menuButton;
-  soloBtn.style.padding = scaledPx(12);
-  soloBtn.style.height = UI_SIZE.menuButtonHeight;
-  card.appendChild(soloBtn);
-
-  const multiplayerBtn = button(t('multiplayer'), renderMultiplayerCreate);
-  multiplayerBtn.style.fontSize = FONT_SIZE.menuButton;
-  multiplayerBtn.style.padding = scaledPx(12);
-  multiplayerBtn.style.height = UI_SIZE.menuButtonHeight;
-  multiplayerBtn.style.background = '#0f766e';
-  card.appendChild(multiplayerBtn);
+const applyLargeMenuButtonStyle = (btn: HTMLButtonElement): void => {
+  Object.assign(btn.style, {
+    fontSize: FONT_SIZE.menuButton,
+    padding: scaledPx(12),
+    height: UI_SIZE.menuButtonHeight,
+    width: '100%',
+  } satisfies Partial<CSSStyleDeclaration>);
 };
 
-const renderSoloCreate = (): void => {
-  currentLobbyView = 'solo';
-  destroyMenuDiceScene();
-  audioService.stopMusic();
-  renderAuthControls();
-  renderLanguageControls();
-  const card = createLobbyFrame(420);
-  appendTitle(card, t('soloGame'));
+const appendMenuButton = (
+  card: HTMLElement,
+  label: string,
+  onClick: () => void,
+  accent = '#3b82f6',
+): HTMLButtonElement => {
+  const btn = button(label, onClick);
+  applyLargeMenuButtonStyle(btn);
+  btn.style.background = accent;
+  card.appendChild(btn);
+  return btn;
+};
 
-  const soloSelect = selectInput(
-    SOLO_MODE_CONFIGS.map((mode) => [mode.id, soloModeTitle(mode.id, mode.title)]),
-  );
-  soloSelect.value = DEFAULT_SOLO_MODE.id;
-  card.appendChild(labeledControl(t('mode'), soloSelect));
+const appendDisabledMenuButton = (card: HTMLElement, label: string): HTMLButtonElement => {
+  const btn = button(`${label} · ${t('comingSoon')}`, () => undefined);
+  applyLargeMenuButtonStyle(btn);
+  btn.disabled = true;
+  Object.assign(btn.style, {
+    background: '#2b2b33',
+    color: '#8e8e9d',
+    cursor: 'not-allowed',
+    border: '1px solid rgba(255,255,255,0.08)',
+  } satisfies Partial<CSSStyleDeclaration>);
+  card.appendChild(btn);
+  return btn;
+};
 
-  const startBtn = button(t('createGame'), () => {
-    startLocal(getSoloModeConfig(soloSelect.value)).catch(showError);
-  });
-  card.appendChild(startBtn);
+const appendSectionTitle = (card: HTMLElement, text: string): HTMLDivElement => {
+  const title = document.createElement('div');
+  title.textContent = text;
+  Object.assign(title.style, {
+    marginTop: scaledPx(4),
+    color: '#b8b8c8',
+    fontSize: FONT_SIZE.label,
+    fontWeight: '700',
+  } satisfies Partial<CSSStyleDeclaration>);
+  card.appendChild(title);
+  return title;
+};
 
-  const backBtn = button(t('back'), renderLobby);
+const appendBackTo = (card: HTMLElement, onClick: () => void): void => {
+  const backBtn = button(t('back'), onClick);
   backBtn.style.background = 'transparent';
   backBtn.style.border = '1px solid #555';
   card.appendChild(backBtn);
 };
 
-const renderMultiplayerCreate = (): void => {
-  currentLobbyView = 'multiplayer';
-  destroyMenuDiceScene();
-  audioService.stopMusic();
-  renderAuthControls();
-  renderLanguageControls();
-  const card = createLobbyFrame(460);
-  appendTitle(card, t('multiplayer'));
-
+const appendDisplayNameInput = (card: HTMLElement): (() => string) => {
   const user = getStoredUser();
   let nameInput: HTMLInputElement | null = null;
   if (!user) {
@@ -1521,61 +1551,199 @@ const renderMultiplayerCreate = (): void => {
     nameInput.value = getSavedDisplayName();
     card.appendChild(nameInput);
   }
+  return () => user?.username ?? nameInput?.value ?? '';
+};
 
-  const displayNameValue = (): string => user?.username ?? nameInput?.value ?? '';
+const readSteppedNumber = (
+  input: HTMLInputElement,
+  fallback: number,
+  min: number,
+  max: number,
+  step: number,
+): number => {
+  const raw = Number(input.value);
+  if (!Number.isFinite(raw)) {
+    input.value = String(fallback);
+    return fallback;
+  }
+  const stepped = Math.round((raw - min) / step) * step + min;
+  const clamped = Math.max(min, Math.min(max, stepped));
+  input.value = String(clamped);
+  return clamped;
+};
 
+const createRoomOptionsControls = (
+  card: HTMLElement,
+): {
+  targetInput: HTMLInputElement;
+  minBankInput: HTMLInputElement;
+  roomOptionsValue: () => RoomOptionsPayload;
+} => {
+  const targetInput = numberInput(
+    DEFAULT_ROOM_OPTIONS.targetScore,
+    ROOM_TARGET_SCORE_MIN,
+    ROOM_TARGET_SCORE_MAX,
+    ROOM_TARGET_SCORE_STEP,
+  );
+  card.appendChild(labeledControl(t('targetScore'), targetInput));
+
+  const minBankInput = numberInput(
+    DEFAULT_ROOM_OPTIONS.minBank,
+    ROOM_MIN_BANK_MIN,
+    ROOM_MIN_BANK_MAX,
+    ROOM_MIN_BANK_STEP,
+  );
+  card.appendChild(labeledControl(t('bankRule'), minBankInput));
+
+  return {
+    targetInput,
+    minBankInput,
+    roomOptionsValue: () => ({
+      ...DEFAULT_ROOM_OPTIONS,
+      targetScore: readSteppedNumber(
+        targetInput,
+        DEFAULT_ROOM_OPTIONS.targetScore,
+        ROOM_TARGET_SCORE_MIN,
+        ROOM_TARGET_SCORE_MAX,
+        ROOM_TARGET_SCORE_STEP,
+      ),
+      minBank: readSteppedNumber(
+        minBankInput,
+        DEFAULT_ROOM_OPTIONS.minBank,
+        ROOM_MIN_BANK_MIN,
+        ROOM_MIN_BANK_MAX,
+        ROOM_MIN_BANK_STEP,
+      ),
+    }),
+  };
+};
+
+const renderLobby = (): void => {
+  currentLobbyView = 'home';
+  renderAuthControls();
+  renderLanguageControls();
+  const card = createLobbyFrame(380);
+  appendBrand(card);
+  ensureMenuDiceScene();
+
+  appendMenuButton(card, t('createRoomMenu'), renderCreateRoomMenu);
+  appendMenuButton(card, t('rankedGame'), renderRankedMenu, '#0f766e');
+  appendMenuButton(card, t('settings'), renderSettingsMenu, '#52525b');
+  appendDisabledMenuButton(card, t('shop'));
+  appendDisabledMenuButton(card, t('shopPromo'));
+};
+
+const renderCreateRoomMenu = (): void => {
+  currentLobbyView = 'create-room';
+  destroyMenuDiceScene();
+  audioService.stopMusic();
+  renderAuthControls();
+  renderLanguageControls();
+  const card = createLobbyFrame(420);
+  appendTitle(card, t('createRoomMenu'));
+  appendSectionTitle(card, t('modeSelection'));
+
+  appendDisabledMenuButton(card, t('tutorial'));
+  appendMenuButton(card, t('soloGame'), renderSoloCreate);
+  appendMenuButton(card, t('multiplayer'), renderMultiplayerMenu, '#0f766e');
+  appendBackTo(card, renderLobby);
+};
+
+const renderSoloCreate = (): void => {
+  currentLobbyView = 'solo';
+  destroyMenuDiceScene();
+  audioService.stopMusic();
+  renderAuthControls();
+  renderLanguageControls();
+  const card = createLobbyFrame(440);
+  appendTitle(card, t('soloGame'));
+
+  const soloSelect = selectInput(
+    SOLO_MODE_CONFIGS.map((mode) => [mode.id, soloModeTitle(mode.id, mode.title)]),
+  );
+  soloSelect.value = DEFAULT_SOLO_MODE.id;
+  card.appendChild(labeledControl(t('mode'), soloSelect));
+
+  const { targetInput, minBankInput } = createRoomOptionsControls(card);
+  const syncSoloDefaults = (): void => {
+    const selected = getSoloModeConfig(soloSelect.value);
+    targetInput.value = String(selected.targetScore ?? DEFAULT_ROOM_OPTIONS.targetScore);
+  };
+  soloSelect.addEventListener('change', syncSoloDefaults);
+  syncSoloDefaults();
+
+  appendDisabledMenuButton(card, `${t('mode')}: Bot ${t('normalMode')}`);
+
+  const startBtn = button(t('createGame'), () => {
+    const selected = getSoloModeConfig(soloSelect.value);
+    const soloConfig: SoloModeConfig = {
+      ...selected,
+      targetScore: readSteppedNumber(
+        targetInput,
+        selected.targetScore ?? DEFAULT_ROOM_OPTIONS.targetScore,
+        ROOM_TARGET_SCORE_MIN,
+        ROOM_TARGET_SCORE_MAX,
+        ROOM_TARGET_SCORE_STEP,
+      ),
+      minBank: readSteppedNumber(
+        minBankInput,
+        DEFAULT_ROOM_OPTIONS.minBank,
+        ROOM_MIN_BANK_MIN,
+        ROOM_MIN_BANK_MAX,
+        ROOM_MIN_BANK_STEP,
+      ),
+    };
+    startLocal(soloConfig).catch(showError);
+  });
+  card.appendChild(startBtn);
+
+  appendBackTo(card, renderCreateRoomMenu);
+  appendLobbyError(card);
+};
+
+const renderMultiplayerMenu = (): void => {
+  currentLobbyView = 'multiplayer';
+  destroyMenuDiceScene();
+  audioService.stopMusic();
+  renderAuthControls();
+  renderLanguageControls();
+  const card = createLobbyFrame(420);
+  appendTitle(card, t('multiplayer'));
+
+  appendSectionTitle(card, t('quickGame'));
+  appendDisabledMenuButton(card, t('normalMode'));
+  appendDisabledMenuButton(card, t('hardcoreMode'));
+  appendSectionTitle(card, t('room'));
+  appendMenuButton(card, t('createRoomAction'), renderMultiplayerCreate);
+  appendMenuButton(card, t('joinRoom'), renderMultiplayerJoin, '#0f766e');
+  appendBackTo(card, renderCreateRoomMenu);
+};
+
+const renderMultiplayerCreate = (): void => {
+  currentLobbyView = 'multiplayer-create';
+  destroyMenuDiceScene();
+  audioService.stopMusic();
+  renderAuthControls();
+  renderLanguageControls();
+  const card = createLobbyFrame(460);
+  appendTitle(card, t('createRoomAction'));
+
+  const displayNameValue = appendDisplayNameInput(card);
   const gameNameInput = textInput(t('gameName'));
   gameNameInput.maxLength = 40;
   const baseName = displayNameValue().trim() || 'Player';
   gameNameInput.value = `${baseName} game`;
   card.appendChild(gameNameInput);
 
-  const roomModeSelect = selectInput([
-    ['match', t('match')],
-    ['ranked', t('ranked')],
-    ['test', t('testRoom')],
-  ]);
-  card.appendChild(labeledControl(t('mode'), roomModeSelect));
+  const { roomOptionsValue } = createRoomOptionsControls(card);
 
-  const targetSelect = selectInput([
-    ['3000', 'Quick 3000'],
-    ['4000', 'Classic 4000'],
-    ['5000', 'Long 5000'],
-    ['10000', 'Marathon 10000'],
-  ]);
-  targetSelect.value = String(DEFAULT_ROOM_OPTIONS.targetScore);
-  card.appendChild(labeledControl(t('targetScore'), targetSelect));
-
-  const minBankSelect = selectInput([
-    ['0', `${t('minBank')}: ${t('noValue')}`],
-    ['300', `${t('minBank')}: 300`],
-    ['500', `${t('minBank')}: 500`],
-  ]);
-  minBankSelect.value = String(DEFAULT_ROOM_OPTIONS.minBank);
-  card.appendChild(labeledControl(t('bankRule'), minBankSelect));
-
-  const roomOptionsValue = (): RoomOptionsPayload => ({
-    ...DEFAULT_ROOM_OPTIONS,
-    targetScore: Number(targetSelect.value) as RoomOptionsPayload['targetScore'],
-    minBank: Number(minBankSelect.value) as RoomOptionsPayload['minBank'],
-  });
-
-  const roomModeValue = (): RoomMode =>
-    roomModeSelect.value === 'test'
-      ? ROOM_MODE.TEST
-      : roomModeSelect.value === 'ranked'
-        ? ROOM_MODE.RANKED
-        : ROOM_MODE.MATCH;
+  const generatedCodeInput = textInput(t('roomCode'));
+  generatedCodeInput.value = t('generatedAfterCreate');
+  generatedCodeInput.disabled = true;
+  generatedCodeInput.style.color = '#8e8e9d';
+  card.appendChild(labeledControl(t('roomCode'), generatedCodeInput));
 
   const createBtn = button(t('createGame'), () => {
-    const mode = roomModeValue();
-    if (mode === ROOM_MODE.RANKED) {
-      const accessError = rankedAccessError();
-      if (accessError) {
-        showError(accessError);
-        return;
-      }
-    }
     const gameName = gameNameInput.value.trim();
     if (!gameName) {
       showError(new Error(t('gameNameRequired')));
@@ -1585,36 +1753,29 @@ const renderMultiplayerCreate = (): void => {
       'create',
       displayNameValue(),
       undefined,
-      mode,
+      ROOM_MODE.MATCH,
       roomOptionsValue(),
       gameName,
     ).catch(showError);
   });
   card.appendChild(createBtn);
 
-  const listBtn = button(t('browseLobbies'), () => {
-    renderRoomListModal(displayNameValue());
-  });
-  listBtn.style.background = '#52525b';
-  card.appendChild(listBtn);
+  appendBackTo(card, renderMultiplayerMenu);
+  appendLobbyError(card);
+};
 
-  const codeInput = document.createElement('input');
-  codeInput.placeholder = t('roomCode');
-  codeInput.maxLength = 16;
-  codeInput.autocapitalize = 'characters';
-  Object.assign(codeInput.style, {
-    padding: scaledPx(8),
-    fontSize: FONT_SIZE.control,
-    height: UI_SIZE.controlHeight,
-    boxSizing: 'border-box',
-    border: '1px solid #444',
-    background: '#111',
-    color: '#eee',
-    borderRadius: '6px',
-    textTransform: 'uppercase',
-    fontFamily: FONT_FAMILY.ui,
-  } satisfies Partial<CSSStyleDeclaration>);
-  card.appendChild(codeInput);
+const renderMultiplayerJoin = (): void => {
+  currentLobbyView = 'multiplayer-join';
+  destroyMenuDiceScene();
+  audioService.stopMusic();
+  renderAuthControls();
+  renderLanguageControls();
+  const card = createLobbyFrame(420);
+  appendTitle(card, t('joinRoom'));
+
+  const displayNameValue = appendDisplayNameInput(card);
+  const codeInput = roomCodeInput();
+  card.appendChild(labeledControl(t('roomCode'), codeInput));
 
   const joinBtn = button(t('joinByCode'), () => {
     const code = codeInput.value.trim().toUpperCase();
@@ -1623,12 +1784,80 @@ const renderMultiplayerCreate = (): void => {
   });
   card.appendChild(joinBtn);
 
-  const backBtn = button(t('back'), renderLobby);
-  backBtn.style.background = 'transparent';
-  backBtn.style.border = '1px solid #555';
-  card.appendChild(backBtn);
+  const listBtn = button(t('browseLobbies'), () => {
+    renderRoomListModal(displayNameValue());
+  });
+  listBtn.style.background = '#52525b';
+  card.appendChild(listBtn);
 
+  appendBackTo(card, renderMultiplayerMenu);
   appendLobbyError(card);
+};
+
+const renderRankedMenu = (): void => {
+  currentLobbyView = 'ranked';
+  destroyMenuDiceScene();
+  audioService.stopMusic();
+  renderAuthControls();
+  renderLanguageControls();
+  const card = createLobbyFrame(380);
+  appendTitle(card, t('rankedGame'));
+  renderLeaderboard();
+
+  const startBtn = button(t('startGame'), () => {
+    const accessError = rankedAccessError();
+    if (accessError) {
+      showError(accessError);
+      return;
+    }
+    const user = getStoredUser();
+    startNetwork(
+      'create',
+      user?.username ?? '',
+      undefined,
+      ROOM_MODE.RANKED,
+      DEFAULT_ROOM_OPTIONS,
+      `${user?.username ?? 'Player'} ranked`,
+    ).catch(showError);
+  });
+  card.appendChild(startBtn);
+
+  const leaderboardBtn = button(t('leaderboard'), () => {
+    document.getElementById(LEADERBOARD_ID)?.remove();
+    renderLeaderboard();
+  });
+  leaderboardBtn.style.background = '#52525b';
+  card.appendChild(leaderboardBtn);
+
+  appendBackTo(card, renderLobby);
+  appendLobbyError(card);
+};
+
+const renderSettingsMenu = (): void => {
+  currentLobbyView = 'settings';
+  destroyMenuDiceScene();
+  audioService.stopMusic();
+  renderAuthControls();
+  renderLanguageControls();
+  const card = createLobbyFrame(440);
+  appendTitle(card, t('settings'));
+
+  appendSectionTitle(card, t('playerSettings'));
+  appendDisabledMenuButton(card, `${t('playerName')} / ${t('titleLabel')}`);
+  appendDisabledMenuButton(card, t('rating'));
+  appendDisabledMenuButton(card, t('avatar'));
+  appendDisabledMenuButton(card, t('avatarFrame'));
+  appendDisabledMenuButton(card, t('diceCosmetics'));
+  appendDisabledMenuButton(card, t('handCup'));
+
+  appendSectionTitle(card, t('soundSettings'));
+  appendDisabledMenuButton(card, t('generalVolume'));
+  appendDisabledMenuButton(card, t('music'));
+  appendDisabledMenuButton(card, t('sounds'));
+
+  appendMenuButton(card, t('controls'), renderControlsModal, '#52525b');
+  appendDisabledMenuButton(card, `${t('autoResetDice')} (${t('yesNo')})`);
+  appendBackTo(card, renderLobby);
 };
 
 const textInput = (placeholder: string): HTMLInputElement => {
@@ -1645,6 +1874,25 @@ const textInput = (placeholder: string): HTMLInputElement => {
     borderRadius: '6px',
     fontFamily: FONT_FAMILY.ui,
   } satisfies Partial<CSSStyleDeclaration>);
+  return input;
+};
+
+const numberInput = (value: number, min: number, max: number, step: number): HTMLInputElement => {
+  const input = textInput('');
+  input.type = 'number';
+  input.min = String(min);
+  input.max = String(max);
+  input.step = String(step);
+  input.value = String(value);
+  input.inputMode = 'numeric';
+  return input;
+};
+
+const roomCodeInput = (): HTMLInputElement => {
+  const input = textInput(t('roomCode'));
+  input.maxLength = 16;
+  input.autocapitalize = 'characters';
+  input.style.textTransform = 'uppercase';
   return input;
 };
 

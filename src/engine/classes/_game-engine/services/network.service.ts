@@ -55,9 +55,15 @@ export type {
 export {
   DEFAULT_ROOM_OPTIONS,
   MATCH_PHASE,
+  ROOM_MIN_BANK_MAX,
+  ROOM_MIN_BANK_MIN,
+  ROOM_MIN_BANK_STEP,
   ROOM_MODE,
   ROOM_ROLE,
   ROOM_STATUS,
+  ROOM_TARGET_SCORE_MAX,
+  ROOM_TARGET_SCORE_MIN,
+  ROOM_TARGET_SCORE_STEP,
 } from '../../../../network/protocol/types';
 export type DieStateFull = DieStateBin;
 export type RestDieState = DieRestStateBin;

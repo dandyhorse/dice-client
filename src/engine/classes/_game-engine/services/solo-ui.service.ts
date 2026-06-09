@@ -221,6 +221,7 @@ export class SoloUiService {
       }`,
       `${t('turn')}: ${s.turnIndex}${this.config.turnLimit ? ` / ${this.config.turnLimit}` : ''}`,
       `${t('turnScore')}: ${s.turnScore}`,
+      `${t('minBank')}: ${this.config.minBank && this.config.minBank > 0 ? this.config.minBank : '-'}`,
       `${t('activeDice')}: ${s.activeDiceCount}`,
       `${t('banks')}: ${s.bankCount} · ${t('busts')}: ${s.bustCount}`,
       `${t('hotDice')}: ${s.hotDiceCount}`,
@@ -278,10 +279,12 @@ export class SoloUiService {
   private renderActions(): void {
     const selecting = this.state.status === 'active' && this.lastRolledFaces.length > 0;
     const canSubmit = selecting && this.selectedCount > 0 && this.selectionValid;
+    const minBank = this.config.minBank ?? 0;
+    const canBank = canSubmit && this.state.turnScore + this.selectedPoints >= minBank;
     this.continueBtn.style.display = selecting ? 'inline-block' : 'none';
     this.bankBtn.style.display = selecting ? 'inline-block' : 'none';
     this.setButtonEnabled(this.continueBtn, canSubmit);
-    this.setButtonEnabled(this.bankBtn, canSubmit);
+    this.setButtonEnabled(this.bankBtn, canBank);
   }
 
   private renderStatus(): void {

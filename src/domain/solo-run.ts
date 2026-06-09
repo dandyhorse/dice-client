@@ -17,6 +17,7 @@ export interface SoloModeConfig {
   description: string;
   turnLimit?: number;
   targetScore?: number;
+  minBank?: number;
   allowHotDice: boolean;
   scoringRuleset: SoloScoringRuleset;
 }

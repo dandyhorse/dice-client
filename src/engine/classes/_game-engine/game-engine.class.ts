@@ -467,6 +467,11 @@ export class GameEngine {
       this.soloHud?.showError(validation.reason);
       return;
     }
+    const minBank = config.minBank ?? 0;
+    if (state.turnScore + validation.points < minBank) {
+      this.soloHud?.showError(`${t('minBank')}: ${minBank}`);
+      return;
+    }
 
     this.soloState = recordSoloBank(
       state,
@@ -546,7 +551,7 @@ export class GameEngine {
 
   private handleHotkeyBank = (): void => {
     if (this.mode === 'local') {
-      if (!this.canSubmitSoloSelection()) return;
+      if (!this.canSubmitSoloBank()) return;
       this.handleSoloBank();
       return;
     }
@@ -625,14 +630,25 @@ export class GameEngine {
     return this.canUseNetworkSelectionControls() && !this.isRankedRoom();
   }
 
-  private canSubmitSoloSelection(): boolean {
+  private getSoloSelectionPoints(): number | null {
     const selection = this.selection;
-    if (!this.canUseSoloHotkeys() || !selection) return false;
+    if (!this.canUseSoloHotkeys() || !selection) return null;
     const validation = validateSelection(
       this.localLastRolledFaces,
       selection.getSelectedRollIndices(),
     );
-    return validation.valid === true;
+    return validation.valid === true ? validation.points : null;
+  }
+
+  private canSubmitSoloSelection(): boolean {
+    return this.getSoloSelectionPoints() !== null;
+  }
+
+  private canSubmitSoloBank(): boolean {
+    const points = this.getSoloSelectionPoints();
+    const state = this.soloState;
+    if (points === null || state === null) return false;
+    return state.turnScore + points >= (this.soloConfig?.minBank ?? 0);
   }
 
   private getNetworkSelectionPoints(): number | null {

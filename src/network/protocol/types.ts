@@ -64,8 +64,8 @@ export const ROOM_SCORING_RULESET = {
 
 export type RoomScoringRuleset = (typeof ROOM_SCORING_RULESET)[keyof typeof ROOM_SCORING_RULESET];
 
-export type RoomTargetScore = 3000 | 4000 | 5000 | 10000;
-export type RoomMinBank = 0 | 300 | 500;
+export type RoomTargetScore = number;
+export type RoomMinBank = number;
 
 export interface RoomOptionsPayload {
   targetScore: RoomTargetScore;
@@ -81,18 +81,47 @@ export const DEFAULT_ROOM_OPTIONS: RoomOptionsPayload = {
   scoringRuleset: ROOM_SCORING_RULESET.BASE_D6,
 };
 
-const TARGET_SCORE_PRESETS = new Set<number>([3000, 4000, 5000, 10000]);
-const MIN_BANK_PRESETS = new Set<number>([0, 300, 500]);
+export const ROOM_TARGET_SCORE_MIN = 1000;
+export const ROOM_TARGET_SCORE_MAX = 10000;
+export const ROOM_TARGET_SCORE_STEP = 500;
+export const ROOM_MIN_BANK_MIN = 0;
+export const ROOM_MIN_BANK_MAX = 1000;
+export const ROOM_MIN_BANK_STEP = 50;
+
+const isStepAligned = (value: number, min: number, step: number): boolean =>
+  (value - min) % step === 0;
+
+const normalizeBoundedStepValue = (
+  value: unknown,
+  fallback: number,
+  min: number,
+  max: number,
+  step: number,
+): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value)) {
+    return fallback;
+  }
+  if (value < min || value > max || !isStepAligned(value, min, step)) return fallback;
+  return value;
+};
 
 export const normalizeRoomOptions = (
   options: Partial<RoomOptionsPayload> | undefined,
 ): RoomOptionsPayload => {
-  const targetScore = TARGET_SCORE_PRESETS.has(options?.targetScore ?? 0)
-    ? (options!.targetScore as RoomTargetScore)
-    : DEFAULT_ROOM_OPTIONS.targetScore;
-  const minBank = MIN_BANK_PRESETS.has(options?.minBank ?? -1)
-    ? (options!.minBank as RoomMinBank)
-    : DEFAULT_ROOM_OPTIONS.minBank;
+  const targetScore = normalizeBoundedStepValue(
+    options?.targetScore,
+    DEFAULT_ROOM_OPTIONS.targetScore,
+    ROOM_TARGET_SCORE_MIN,
+    ROOM_TARGET_SCORE_MAX,
+    ROOM_TARGET_SCORE_STEP,
+  );
+  const minBank = normalizeBoundedStepValue(
+    options?.minBank,
+    DEFAULT_ROOM_OPTIONS.minBank,
+    ROOM_MIN_BANK_MIN,
+    ROOM_MIN_BANK_MAX,
+    ROOM_MIN_BANK_STEP,
+  );
   return {
     targetScore,
     minBank,
