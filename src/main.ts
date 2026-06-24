@@ -336,9 +336,13 @@ const ensureMenuDiceScene = (): void => {
     assetPreloader.preloadGroup('menu'),
     audioService.preloadGroup('menu'),
   ])
-    .then(() => {
+    .then(async () => {
       if (currentLobbyView !== 'home' || activeGame || mobileRuntime) return;
-      const scene = new MenuDiceScene();
+      const scene = await MenuDiceScene.create();
+      if (currentLobbyView !== 'home' || activeGame || mobileRuntime) {
+        scene.destroy();
+        return;
+      }
       scene.mount(document.body);
       menuDiceScene = scene;
       audioService.playMusic('menu-music');

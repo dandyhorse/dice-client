@@ -9,6 +9,8 @@ const MENU_DICE_MODEL_URL = '/assets/dice/dice-stone-2/dice-stone.glb';
 const POINTER_EASE = 0.08;
 
 export class MenuDiceScene {
+  private static modelTemplateLoading: Promise<THREE.Group | null> | null = null;
+
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(38, window.innerWidth / window.innerHeight, 0.1, 50);
   private readonly renderer = new THREE.WebGLRenderer({
@@ -21,9 +23,43 @@ export class MenuDiceScene {
   private readonly pointer = new THREE.Vector2();
   private rafId: number | null = null;
   private lastTime = 0;
-  private destroyed = false;
 
-  constructor() {
+  static async create(): Promise<MenuDiceScene> {
+    return new MenuDiceScene(await MenuDiceScene.loadModelTemplate());
+  }
+
+  private static loadModelTemplate(): Promise<THREE.Group | null> {
+    if (!MenuDiceScene.modelTemplateLoading) {
+      const loader = new GLTFLoader();
+      MenuDiceScene.modelTemplateLoading = loader
+        .loadAsync(MENU_DICE_MODEL_URL)
+        .then((gltf) => MenuDiceScene.createNormalizedModelTemplate(gltf.scene))
+        .catch(() => null);
+    }
+    return MenuDiceScene.modelTemplateLoading;
+  }
+
+  private static createNormalizedModelTemplate(model: THREE.Object3D): THREE.Group {
+    model.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(model);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const maxAxis = Math.max(size.x, size.y, size.z) || 1;
+    const wrap = new THREE.Group();
+
+    model.position.sub(center);
+    model.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      child.castShadow = false;
+      child.receiveShadow = false;
+    });
+
+    wrap.add(model);
+    wrap.scale.setScalar(DICE_SIZE / maxAxis);
+    return wrap;
+  }
+
+  private constructor(modelTemplate: THREE.Group | null) {
     this.renderer.setPixelRatio(1);
     this.renderer.domElement.id = 'menu-dice-canvas';
     Object.assign(this.renderer.domElement.style, {
@@ -47,8 +83,11 @@ export class MenuDiceScene {
     rim.position.set(-3.4, -0.8, 3.6);
     this.scene.add(ambient, key, rim);
 
-    this.addFallbackDice();
-    void this.loadModelDice();
+    if (modelTemplate) {
+      this.addModelDice(modelTemplate);
+    } else {
+      this.addFallbackDice();
+    }
     this.onResize();
   }
 
@@ -62,7 +101,6 @@ export class MenuDiceScene {
   }
 
   destroy(): void {
-    this.destroyed = true;
     if (this.rafId !== null) cancelAnimationFrame(this.rafId);
     this.rafId = null;
     window.removeEventListener('resize', this.onResize);
@@ -78,36 +116,8 @@ export class MenuDiceScene {
     this.addDicePair(left, right);
   }
 
-  private async loadModelDice(): Promise<void> {
-    const loader = new GLTFLoader();
-    const gltf = await loader.loadAsync(MENU_DICE_MODEL_URL).catch(() => null);
-    if (!gltf || this.destroyed) return;
-
-    const template = this.createNormalizedModelTemplate(gltf.scene);
-    const left = template.clone(true);
-    const right = template.clone(true);
-    this.clearDice();
-    this.addDicePair(left, right);
-  }
-
-  private createNormalizedModelTemplate(model: THREE.Object3D): THREE.Group {
-    model.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(model);
-    const center = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3());
-    const maxAxis = Math.max(size.x, size.y, size.z) || 1;
-    const wrap = new THREE.Group();
-
-    model.position.sub(center);
-    model.traverse((child) => {
-      if (!(child instanceof THREE.Mesh)) return;
-      child.castShadow = false;
-      child.receiveShadow = false;
-    });
-
-    wrap.add(model);
-    wrap.scale.setScalar(DICE_SIZE / maxAxis);
-    return wrap;
+  private addModelDice(template: THREE.Group): void {
+    this.addDicePair(template.clone(true), template.clone(true));
   }
 
   private addDicePair(left: THREE.Object3D, right: THREE.Object3D): void {
@@ -118,11 +128,6 @@ export class MenuDiceScene {
 
     this.dice.push(left, right);
     this.scene.add(left, right);
-  }
-
-  private clearDice(): void {
-    for (const die of this.dice) this.scene.remove(die);
-    this.dice.length = 0;
   }
 
   private loop = (now: number): void => {
