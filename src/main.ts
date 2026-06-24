@@ -704,6 +704,7 @@ const handleRoomState = (network: NetworkService, state: RoomState): void => {
   }
 
   if (state.status === ROOM_STATUS.FINISHED) {
+    if (activeGame && activeNetwork === network) return;
     scheduleFinishedRoomReturn(network);
     return;
   }
@@ -747,7 +748,12 @@ const mountNetworkGame = async (network: NetworkService): Promise<void> => {
   ])
     .then(() => {
       if (activeGame || activeNetwork !== network) return;
-      activeGame = new GameEngine({ mode: 'network', network, playerSettings: getPlayerSettings() });
+      activeGame = new GameEngine({
+        mode: 'network',
+        network,
+        playerSettings: getPlayerSettings(),
+        onExit: returnToLobby,
+      });
       app.appendChild(activeGame.renderer.domElement);
       activeGame.warmup();
       activeGame.start();

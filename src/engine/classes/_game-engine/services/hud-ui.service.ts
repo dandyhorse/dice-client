@@ -63,10 +63,13 @@ export class HudUiService {
   private readonly statusPanel: HTMLDivElement;
   private readonly errorPanel: HTMLDivElement;
   private readonly turnBannerPanel: HTMLDivElement;
+  private readonly finalActionsPanel: HTMLDivElement;
   private readonly selectAllBtn: HTMLButtonElement;
   private readonly continueBtn: HTMLButtonElement;
   private readonly bankBtn: HTMLButtonElement;
   private readonly surrenderBtn: HTMLButtonElement;
+  private readonly finalExitBtn: HTMLButtonElement;
+  private readonly finalRematchBtn: HTMLButtonElement;
   private readonly unsubscribeLanguage: () => void;
 
   private state: MatchStatePayload | null = null;
@@ -82,6 +85,8 @@ export class HudUiService {
   private turnBannerTimer: number | null = null;
   private queuedTurnBannerUserId = '';
   private lastAnnouncedTurnPlayer = '';
+  private finalResult: 'WIN' | 'FARKLE' | null = null;
+  private finalRematchRequestedBy: string[] = [];
   private readonly ownUserId: string;
 
   constructor(ownUserId: string, controls: ControlBindings = DEFAULT_PLAYER_SETTINGS.controls) {
@@ -223,6 +228,35 @@ export class HudUiService {
       letterSpacing: '0',
     } satisfies Partial<CSSStyleDeclaration>);
 
+    this.finalActionsPanel = document.createElement('div');
+    this.finalActionsPanel.id = 'hud-final-actions';
+    Object.assign(this.finalActionsPanel.style, {
+      position: 'fixed',
+      top: 'calc(50% + 108px)',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      display: 'none',
+      gap: '10px',
+      width: 'min(380px, calc(100vw - 24px))',
+      pointerEvents: 'auto',
+      zIndex: '16',
+    } satisfies Partial<CSSStyleDeclaration>);
+    this.finalExitBtn = this.makeButton('', () => {
+      if (this.finalExitBtn.disabled) return;
+      this.events.emit('final-exit-clicked');
+    });
+    this.finalExitBtn.style.background = '#374151';
+    this.finalExitBtn.style.flex = '1 1 0';
+    this.finalExitBtn.style.width = 'auto';
+    this.finalRematchBtn = this.makeButton('', () => {
+      if (this.finalRematchBtn.disabled) return;
+      this.events.emit('rematch-clicked');
+    });
+    this.finalRematchBtn.style.flex = '1 1 0';
+    this.finalRematchBtn.style.width = 'auto';
+    this.finalActionsPanel.appendChild(this.finalExitBtn);
+    this.finalActionsPanel.appendChild(this.finalRematchBtn);
+
     this.root.appendChild(this.leftPanel);
     this.root.appendChild(this.opponentPanel);
     this.root.appendChild(this.rightPanel);
@@ -232,6 +266,7 @@ export class HudUiService {
     document.body.appendChild(this.statusPanel);
     document.body.appendChild(this.errorPanel);
     document.body.appendChild(this.turnBannerPanel);
+    document.body.appendChild(this.finalActionsPanel);
 
     this.unsubscribeLanguage = onLanguageChange(() => {
       this.renderButtonLabels();
@@ -242,6 +277,9 @@ export class HudUiService {
   }
 
   setMatchState(state: MatchStatePayload): void {
+    if (state.phase !== MATCH_PHASE.FINISHED && this.finalResult !== null) {
+      this.clearFinalResult();
+    }
     if (state.phase !== MATCH_PHASE.SELECTING) {
       this.selectedCount = 0;
       this.selectionValid = false;
@@ -291,6 +329,7 @@ export class HudUiService {
   }
 
   showError(message: string): void {
+    if (this.finalResult !== null) return;
     const isFarkle = message.toUpperCase() === 'BUST';
     this.errorPanel.textContent = isFarkle ? t('farkle') : message;
     this.errorPanel.style.display = 'block';
@@ -315,6 +354,31 @@ export class HudUiService {
     }, isFarkle ? FARKLE_DURATION_MS : ERROR_DURATION_MS);
   }
 
+  showFinalResult(result: 'WIN' | 'FARKLE', requestedBy: string[] = []): void {
+    this.finalResult = result;
+    this.finalRematchRequestedBy = Array.from(new Set(requestedBy));
+    if (this.errorTimer !== null) clearTimeout(this.errorTimer);
+    if (this.turnBannerTimer !== null) clearTimeout(this.turnBannerTimer);
+    this.errorTimer = null;
+    this.turnBannerTimer = null;
+    this.queuedTurnBannerUserId = '';
+    this.actionsBlocked = true;
+    this.errorPanel.textContent = result === 'FARKLE' ? t('farkle') : 'WIN';
+    this.errorPanel.style.background =
+      result === 'WIN' ? 'rgba(34,197,94,0.88)' : 'rgba(180,40,40,0.85)';
+    this.errorPanel.style.display = 'block';
+    this.turnBannerPanel.style.display = 'none';
+    this.finalActionsPanel.style.display = 'flex';
+    this.renderFinalButtons();
+    this.renderActions();
+    this.renderStatus();
+  }
+
+  setFinalRematchRequestedBy(requestedBy: string[]): void {
+    this.finalRematchRequestedBy = Array.from(new Set(requestedBy));
+    if (this.finalResult !== null) this.renderFinalButtons();
+  }
+
   destroy(): void {
     if (this.errorTimer !== null) clearTimeout(this.errorTimer);
     if (this.statusTimer !== null) clearInterval(this.statusTimer);
@@ -329,6 +393,7 @@ export class HudUiService {
     this.statusPanel.remove();
     this.errorPanel.remove();
     this.turnBannerPanel.remove();
+    this.finalActionsPanel.remove();
   }
 
   private render(): void {
@@ -352,6 +417,7 @@ export class HudUiService {
       t('surrenderAction'),
       this.controls.surrender,
     );
+    this.renderFinalButtons();
   }
 
   private renderLeft(): void {
@@ -510,7 +576,8 @@ export class HudUiService {
     const showPanel =
       s !== null &&
       this.getOwnRole() !== ROOM_ROLE.SPECTATOR &&
-      s.phase !== MATCH_PHASE.FINISHED;
+      s.phase !== MATCH_PHASE.FINISHED &&
+      this.finalResult === null;
     this.actionsPanel.style.display = showPanel ? 'flex' : 'none';
     this.selectAllBtn.style.display = this.isRanked() ? 'none' : 'inline-flex';
 
@@ -683,5 +750,28 @@ export class HudUiService {
     btn.disabled = !enabled;
     btn.style.opacity = enabled ? '1' : BTN_DISABLED_OPACITY;
     btn.style.cursor = enabled ? 'pointer' : 'not-allowed';
+  }
+
+  private renderFinalButtons(): void {
+    this.finalExitBtn.textContent = t('exitMatch');
+    const requested = this.finalRematchRequestedBy;
+    const ownRequested = requested.includes(this.ownUserId);
+    const opponentRequested = requested.some((userId) => userId !== this.ownUserId);
+    this.finalRematchBtn.textContent = ownRequested
+      ? t('rematchWaiting')
+      : opponentRequested
+        ? t('rematchAccept')
+        : t('rematchAsk');
+    this.setButtonEnabled(this.finalExitBtn, true);
+    this.setButtonEnabled(this.finalRematchBtn, !ownRequested);
+  }
+
+  private clearFinalResult(): void {
+    this.finalResult = null;
+    this.finalRematchRequestedBy = [];
+    this.actionsBlocked = false;
+    this.errorPanel.style.display = 'none';
+    this.errorPanel.style.background = 'rgba(180,40,40,0.85)';
+    this.finalActionsPanel.style.display = 'none';
   }
 }

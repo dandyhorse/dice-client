@@ -42,6 +42,7 @@ import { t } from '../../../ui/i18n';
 import { DEFAULT_PLAYER_SETTINGS, type PlayerSettings } from '../../../player-settings';
 import type {
   MatchRollResultPayload,
+  MatchRematchStatePayload,
   MatchSelectionPreviewPayload,
   MatchStatePayload,
   MatchTurnResultPayload,
@@ -70,6 +71,7 @@ export interface GameEngineOptions {
   soloConfig?: SoloModeConfig;
   playerSettings?: PlayerSettings;
   onSurrender?: () => void;
+  onExit?: () => void;
 }
 
 interface PerfStats {
@@ -153,6 +155,8 @@ export class GameEngine {
   private networkActionsBlockedUntil = 0;
   private networkActionsBlockTimer: number | null = null;
   private readonly onSurrender?: () => void;
+  private readonly onExit?: () => void;
+  private networkRematchRequestedBy: string[] = [];
   private tableVisualMesh: THREE.Mesh | null = null;
   private backgroundMesh: THREE.Mesh | null = null;
   private backgroundTexture: THREE.Texture | null = null;
@@ -170,6 +174,7 @@ export class GameEngine {
     this.network = options.network ?? null;
     this.soloConfig = this.mode === 'local' ? (options.soloConfig ?? DEFAULT_SOLO_MODE) : null;
     this.onSurrender = options.onSurrender;
+    this.onExit = options.onExit;
 
     this.scene = this.createScene();
     this.camera = this.createCamera();
@@ -292,6 +297,10 @@ export class GameEngine {
         net.events.on('match-state', (state: MatchStatePayload) => {
           this.currentMatchState = state;
           if (state.phase !== MATCH_PHASE.SELECTING) this.networkLastRolledFaces = [];
+          if (state.phase !== MATCH_PHASE.FINISHED) {
+            this.networkRematchRequestedBy = [];
+            this.hud?.setFinalRematchRequestedBy([]);
+          }
           if (state.phase !== MATCH_PHASE.SELECTING || state.currentPlayer === ownUserId) {
             this.selection?.clearExternalSelection();
             this.pendingSelectionPreview = null;
@@ -316,6 +325,14 @@ export class GameEngine {
           } else {
             this.input.setEnabled(false);
             this.selection?.disable();
+          }
+          if (state.phase === MATCH_PHASE.FINISHED) {
+            this.pendingNetworkAutoRoll = false;
+            this.clearNetworkTurnDice();
+            this.hud?.showFinalResult(
+              state.winner === ownUserId ? 'WIN' : 'FARKLE',
+              this.networkRematchRequestedBy,
+            );
           }
           this.syncTurnHotkeysEnabled();
           this.tryNetworkAutoRoll();
@@ -350,10 +367,16 @@ export class GameEngine {
         });
 
         net.events.on('match-turn-result', (r: MatchTurnResultPayload) => {
+          this.clearNetworkTurnDice();
           if (this.isRankedRoom() && r.bust) {
             this.blockNetworkActions(FARKLE_ACTION_BLOCK_MS);
             this.hud?.showError('BUST');
           }
+        });
+
+        net.events.on('match-rematch-state', (payload: MatchRematchStatePayload) => {
+          this.networkRematchRequestedBy = [...payload.requestedBy];
+          this.hud?.setFinalRematchRequestedBy(payload.requestedBy);
         });
 
         net.events.on('match-selection-preview', (payload: MatchSelectionPreviewPayload) => {
@@ -379,6 +402,8 @@ export class GameEngine {
         this.hud?.events.on('continue-clicked', this.handleNetworkContinue);
         this.hud?.events.on('bank-clicked', this.handleNetworkBank);
         this.hud?.events.on('surrender-clicked', this.handleNetworkSurrender);
+        this.hud?.events.on('final-exit-clicked', this.handleNetworkFinalExit);
+        this.hud?.events.on('rematch-clicked', this.handleNetworkRematch);
 
         // До получения первого MATCH_STATE: shake-input выключен, чтобы игрок
         // не успел отправить release в неподтверждённой фазе. Включится в
@@ -670,6 +695,37 @@ export class GameEngine {
     network.sendForfeit().catch((e: Error) => this.hud?.showError(e.message));
   };
 
+  private handleNetworkFinalExit = (): void => {
+    const network = this.network;
+    this.pendingNetworkAutoRoll = false;
+    if (!network) {
+      this.onExit?.();
+      return;
+    }
+    network
+      .leaveRoom()
+      .catch(() => undefined)
+      .finally(() => this.onExit?.());
+  };
+
+  private handleNetworkRematch = (): void => {
+    const network = this.network;
+    const state = this.currentMatchState;
+    const ownUserId = network?.getUserId() ?? '';
+    if (!network || state?.phase !== MATCH_PHASE.FINISHED || ownUserId.length === 0) return;
+    if (!this.networkRematchRequestedBy.includes(ownUserId)) {
+      this.networkRematchRequestedBy = [...this.networkRematchRequestedBy, ownUserId];
+      this.hud?.setFinalRematchRequestedBy(this.networkRematchRequestedBy);
+    }
+    network.sendRematch().catch((e: Error) => {
+      this.networkRematchRequestedBy = this.networkRematchRequestedBy.filter(
+        (userId) => userId !== ownUserId,
+      );
+      this.hud?.setFinalRematchRequestedBy(this.networkRematchRequestedBy);
+      this.hud?.showError(e.message);
+    });
+  };
+
   private syncTurnHotkeysEnabled(): void {
     this.turnHotkeys.setEnabled(this.canUseTurnHotkeys() || this.canUseSurrender());
   }
@@ -731,6 +787,20 @@ export class GameEngine {
       this.syncTurnHotkeysEnabled();
       this.tryNetworkAutoRoll();
     }, durationMs);
+  }
+
+  private clearNetworkTurnDice(): void {
+    if (this.mode !== 'network') return;
+    this.networkLastRolledFaces = [];
+    this.pendingSelectionPreview = null;
+    this.dice.hideRemoteDice();
+    this.selection?.clearExternalSelection();
+    this.selection?.clear();
+    this.selection?.disable();
+    this.benchDice?.setFaces([]);
+    this.hud?.setSelectionPreview(null);
+    this.hud?.setSelectionState(0, false, 0);
+    this.networkCollisionVelocities.clear();
   }
 
   private areNetworkActionsBlocked(): boolean {

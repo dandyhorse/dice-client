@@ -6,6 +6,7 @@ import { EventEmitter } from '../../event-emitter.class';
 import {
   packMatchBank,
   packMatchForfeit,
+  packMatchRematch,
   packMatchSelectionPreviewCmd,
   packMatchSelectDice,
   packRelease,
@@ -18,6 +19,7 @@ import {
   unpackAckError,
   unpackAckOk,
   unpackMatchRollResult,
+  unpackMatchRematchState,
   unpackMatchSelectionPreview,
   unpackMatchState,
   unpackMatchTurnResult,
@@ -33,6 +35,7 @@ import type {
   DieRestStateBin,
   DieStateBin,
   MatchRollResultPayload,
+  MatchRematchStatePayload,
   MatchSelectionPreviewPayload,
   MatchStatePayload,
   MatchTurnResultPayload,
@@ -49,6 +52,7 @@ export type { RestPayload, RoomMember, SnapshotPayload } from '../../../../netwo
 export type {
   MatchPhase,
   MatchRollResultPayload,
+  MatchRematchStatePayload,
   MatchSelectionPreviewPayload,
   MatchStatePayload,
   MatchTotal,
@@ -271,6 +275,14 @@ export class NetworkService {
     ).then(() => undefined);
   };
 
+  sendRematch = (): Promise<void> => {
+    const roomId = this.currentRoomId;
+    if (!roomId) return Promise.reject(new Error('not in a room'));
+    return this.sendCommand((requestId) =>
+      packMatchRematch({ requestId, roomId }),
+    ).then(() => undefined);
+  };
+
   /**
    * Realtime preview локального выбора. Это fire-and-forget UI signal:
    * сервер всё равно валидирует финальный выбор в sendSelectDice/sendBank.
@@ -418,6 +430,11 @@ export class NetworkService {
       case OP.MATCH_SELECTION_PREVIEW: {
         const payload: MatchSelectionPreviewPayload = unpackMatchSelectionPreview(buf);
         this.events.emit('match-selection-preview', payload);
+        return;
+      }
+      case OP.MATCH_REMATCH_STATE: {
+        const payload: MatchRematchStatePayload = unpackMatchRematchState(buf);
+        this.events.emit('match-rematch-state', payload);
         return;
       }
       case OP.ACK_OK: {

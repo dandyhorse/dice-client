@@ -415,6 +415,17 @@ export class DiceService {
     }
   }
 
+  hideRemoteDice(): void {
+    if (this.mode !== 'network') return;
+    for (const die of this.remoteDice) {
+      die.mesh.visible = false;
+      die.v.set(0, 0, 0);
+      die.w.set(0, 0, 0);
+      this.clearRemoteSamples(die);
+    }
+    this.interpolationRampStartMs = 0;
+  }
+
   /**
    * network mode: получить mesh'и активных (не bench) костей в индексации
    * snapshot'а. Используется SelectionService для raycast'а — ему нужны как

@@ -17,6 +17,8 @@ import type {
   MatchBankCmd,
   MatchForfeitCmd,
   MatchPhase,
+  MatchRematchCmd,
+  MatchRematchStatePayload,
   MatchRollResultPayload,
   MatchSelectDiceCmd,
   MatchSelectionPreviewCmd,
@@ -735,6 +737,72 @@ export const unpackMatchForfeit = (buf: Uint8Array): MatchForfeitCmd => {
   const requestId = view.getUint32(1);
   const r = readStr16(view, buf, 5);
   return { requestId, roomId: r.value };
+};
+
+// ──────────────────────────────────────────────────────────────
+// MATCH_REMATCH (C→S command)
+// MATCH_REMATCH_STATE (S→C broadcast)
+//
+// Command layout:
+//   u8    op = 0x35
+//   u32   requestId
+//   str16 roomId
+//
+// Broadcast layout:
+//   u8    op = 0x47
+//   u8    requestedCount
+//   requestedCount × str16 userId
+// ──────────────────────────────────────────────────────────────
+
+export const packMatchRematch = (cmd: MatchRematchCmd): Uint8Array => {
+  const roomBytes = enc.encode(cmd.roomId);
+  const buf = new Uint8Array(1 + 4 + 2 + roomBytes.length);
+  const view = viewOf(buf);
+  view.setUint8(0, OP.MATCH_REMATCH);
+  view.setUint32(1, cmd.requestId >>> 0);
+  writeStr16(view, buf, 5, roomBytes);
+  return buf;
+};
+
+export const unpackMatchRematch = (buf: Uint8Array): MatchRematchCmd => {
+  const view = viewOf(buf);
+  const requestId = view.getUint32(1);
+  const r = readStr16(view, buf, 5);
+  return { requestId, roomId: r.value };
+};
+
+export const packMatchRematchState = (payload: MatchRematchStatePayload): Uint8Array => {
+  const requestedBytes = payload.requestedBy.map((userId) => enc.encode(userId));
+  if (requestedBytes.length > 0xff) {
+    throw new Error(`requestedBy too long: ${requestedBytes.length} > 255`);
+  }
+  let size = 1 + 1;
+  for (const bytes of requestedBytes) size += 2 + bytes.length;
+  const buf = new Uint8Array(size);
+  const view = viewOf(buf);
+  let off = 0;
+  view.setUint8(off, OP.MATCH_REMATCH_STATE);
+  off += 1;
+  view.setUint8(off, requestedBytes.length & 0xff);
+  off += 1;
+  for (const bytes of requestedBytes) {
+    off = writeStr16(view, buf, off, bytes);
+  }
+  return buf;
+};
+
+export const unpackMatchRematchState = (buf: Uint8Array): MatchRematchStatePayload => {
+  const view = viewOf(buf);
+  let off = 1;
+  const n = view.getUint8(off);
+  off += 1;
+  const requestedBy: string[] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const r = readStr16(view, buf, off);
+    requestedBy[i] = r.value;
+    off = r.next;
+  }
+  return { requestedBy };
 };
 
 // ──────────────────────────────────────────────────────────────

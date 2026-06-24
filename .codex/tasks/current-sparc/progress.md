@@ -46,6 +46,7 @@
 - [x] Table view was reduced back after the oversized pass; dice size is synced at `DICE_HALF_SIZE = 0.26` with spacing `0.71`, while wall collision thickness/inset remain reduced.
 - [x] Current checkpoint intentionally preserves the overloaded quick-game/menu code as-is for a follow-up refactor pass.
 - [x] Quick-match race note recorded: do not replay cached `MATCH_STATE`/`MATCH_DICE_SPAWN` into `GameEngine`; preload gameplay assets before sending `ROOM_QUICK_MATCH` so live server events arrive after listeners are installed.
+- [x] End-of-match multiplayer UI added: table dice are hidden after `MATCH_TURN_RESULT`, finished games keep players in the game view, winner sees persistent `WIN`, loser sees persistent `FARKLE`, and final buttons emit exit/rematch actions.
 
 ## Verification
 - [x] `npm run build` in `dice-client` passed after test-room changes.
@@ -60,6 +61,7 @@
 - [x] `npm run build` in `dice-client` passed after table sizing, selection rings, realtime remote selection, turn bench dice, duel HUD layout, and finished-room return handling.
 - [x] `npm run build` in `dice-client` passed after quick-search loading/cancel, table rollback, dice size sync, and raw background texture changes.
 - [x] `npm run build` in `dice-client` passed after reverting quick-match cached-event replay and preloading gameplay assets before quick-match send.
+- [x] `npm run build` in `dice-client` passed after end-of-match WIN/FARKLE, dice cleanup, and rematch UI wiring.
 - [x] `git diff --check` in `dice-client` passed before checkpoint commit.
 
 ## Notes

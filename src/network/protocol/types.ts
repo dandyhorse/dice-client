@@ -251,6 +251,12 @@ export interface MatchForfeitCmd {
   roomId: string;
 }
 
+/** C→S: запросить реванш после завершения матча. */
+export interface MatchRematchCmd {
+  requestId: number;
+  roomId: string;
+}
+
 /** C→S: realtime preview текущего локального выбора без изменения turn-state. */
 export interface MatchSelectionPreviewCmd {
   roomId: string;
@@ -263,6 +269,11 @@ export interface MatchSelectionPreviewPayload {
   indices: number[];
   valid: boolean;
   points: number;
+}
+
+/** S→C broadcast: кто уже запросил реванш в завершённом матче. */
+export interface MatchRematchStatePayload {
+  requestedBy: string[];
 }
 
 /** Накопленный счёт одного игрока для broadcast'а в MATCH_STATE. */
