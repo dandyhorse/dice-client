@@ -6,6 +6,7 @@ export const CONTROL_ACTIONS = [
   'selectAll',
   'continueTurn',
   'bankTurn',
+  'surrender',
 ] as const;
 
 export type ControlAction = (typeof CONTROL_ACTIONS)[number];
@@ -23,11 +24,12 @@ export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
     selectAll: 'KeyF',
     continueTurn: 'KeyQ',
     bankTurn: 'KeyE',
+    surrender: 'Escape',
   },
 };
 
 const GUEST_SETTINGS_KEY = 'dice.playerSettings.guest';
-const ACCEPTED_KEY_CODE_RE = /^(Space|Key[A-Z]|Digit[0-9]|Numpad[0-9])$/;
+const ACCEPTED_KEY_CODE_RE = /^(Escape|Space|Key[A-Z]|Digit[0-9]|Numpad[0-9])$/;
 const listeners = new Set<(settings: PlayerSettings) => void>();
 
 let currentSettings: PlayerSettings = cloneSettings(DEFAULT_PLAYER_SETTINGS);
@@ -48,11 +50,12 @@ export const isAcceptedControlCode = (code: unknown): code is string =>
   typeof code === 'string' && ACCEPTED_KEY_CODE_RE.test(code);
 
 export const controlCodeLabel = (code: string): string => {
-  if (code === 'Space') return 'Space';
+  if (code === 'Escape') return 'ESC';
+  if (code === 'Space') return 'SPACE';
   if (code.startsWith('Key')) return code.slice(3);
   if (code.startsWith('Digit')) return code.slice(5);
-  if (code.startsWith('Numpad')) return `Num ${code.slice(6)}`;
-  return code;
+  if (code.startsWith('Numpad')) return `NUM ${code.slice(6)}`;
+  return code.toUpperCase();
 };
 
 export const normalizePlayerSettings = (value: unknown): PlayerSettings => {
@@ -63,6 +66,10 @@ export const normalizePlayerSettings = (value: unknown): PlayerSettings => {
   const controls = { ...DEFAULT_PLAYER_SETTINGS.controls };
   for (const action of CONTROL_ACTIONS) {
     const code = value.controls[action];
+    if (code === undefined) {
+      controls[action] = DEFAULT_PLAYER_SETTINGS.controls[action];
+      continue;
+    }
     if (!isAcceptedControlCode(code)) return cloneSettings(DEFAULT_PLAYER_SETTINGS);
     controls[action] = code;
   }

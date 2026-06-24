@@ -9,9 +9,12 @@ export const OP = {
   ROOM_LEAVE: 0x12,
   ROOM_START: 0x13,
   ROOM_LIST: 0x14,
+  ROOM_QUICK_MATCH: 0x15,
   MATCH_RELEASE: 0x30, // fire-and-forget, без requestId
   MATCH_SELECT_DICE: 0x31, // turn-based: отложить scoring-кости, перебросить остальные
   MATCH_BANK: 0x32, // turn-based: отложить scoring-кости и закрыть ход
+  MATCH_SELECTION_PREVIEW_CMD: 0x33, // realtime preview выбора, без requestId
+  MATCH_FORFEIT: 0x34, // turn-based: сдаться и завершить матч
 
   // Server → Client
   ROOM_STATE: 0x20, // broadcast в комнату при join/leave/disconnect
@@ -21,6 +24,7 @@ export const OP = {
   MATCH_STATE: 0x43, // broadcast, при каждом изменении turn-фазы
   MATCH_ROLL_RESULT: 0x44, // broadcast, после rest — что выпало + bust?
   MATCH_TURN_RESULT: 0x45, // broadcast, итог хода (bank или bust)
+  MATCH_SELECTION_PREVIEW: 0x46, // broadcast realtime preview выбора активного игрока
   ACK_OK: 0x80, // ответ на command по requestId
   ACK_ERROR: 0x81, // ошибка обработки command
 } as const;

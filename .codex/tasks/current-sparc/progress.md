@@ -31,6 +31,20 @@
 - [x] Multiplayer social v1 UI added: named game creation, ranked mode selection, lobby/game browser modal, spectator join from active games, and homepage leaderboard panel.
 - [x] Ranked client UX hides scoring-combination hints and dice highlights while keeping invalid dice clicks blocked and showing turn/banked score information.
 - [x] Client protocol mirror now includes `ROOM_MODE.RANKED`, `gameName`, room-list payloads, and ranked turn deadline state.
+- [x] Multiplayer table view constrained from fullscreen tabletop to a fixed square table footprint (`TABLE_WIDTH = 9`, `TABLE_DEPTH = 9`) with visible rim, leaving surrounding space for game labels and future table expansion.
+- [x] Dice selection feedback moved from cube material emissive highlights to flat ring markers rendered under dice; local hints, local selected dice, and remote selected dice now share the same marker system.
+- [x] Realtime selection preview added on the client: local selection changes send fire-and-forget `MATCH_SELECTION_PREVIEW_CMD`, and remote `MATCH_SELECTION_PREVIEW` broadcasts are rendered for the active opponent.
+- [x] Turn bench display added with non-interactive 3D dice in world space next to the table, using the same dice mesh scale as table dice and matching the faces selected during the current turn.
+- [x] 1v1 HUD layout updated: own score panel is top-left, opponent score panel is bottom-left; multi-player score layout remains a future case.
+- [x] Finished-room handling added: when the server broadcasts `ROOM_STATUS.FINISHED`, the client returns players to the main lobby instead of leaving them in a stale game view.
+- [x] Main menu v2 checkpoint added: quick game, create room, join room; singleplayer/ranked/login buttons are hidden on the frontend for now.
+- [x] Player name entry moved to first-launch localStorage flow, with name/language/settings controls in the top menu.
+- [x] Settings, create-room, and join-room views now replace the main menu and return via `ESC`.
+- [x] Quick-search now keeps the loading overlay while waiting for a second player, hides the waiting lobby, and cancels via `ESC` by leaving the pseudo-room.
+- [x] Game HUD controls, FARKLE overlay, turn banners, player panels, realtime selected-points display, and auto-reroll-after-continue were updated for the current multiplayer UI pass.
+- [x] Background texture `public/assets/background/background_texture_2.png` is rendered behind the table without dither/vignette/color effects.
+- [x] Table view was reduced back after the oversized pass; dice size is synced at `DICE_HALF_SIZE = 0.26` with spacing `0.71`, while wall collision thickness/inset remain reduced.
+- [x] Current checkpoint intentionally preserves the overloaded quick-game/menu code as-is for a follow-up refactor pass.
 
 ## Verification
 - [x] `npm run build` in `dice-client` passed after test-room changes.
@@ -42,6 +56,9 @@
 - [x] `npm run build` in `dice-client` passed after solo/multiplayer split, i18n/fonts, centralized theme sizing, and compact logout button changes.
 - [x] `npm run build` in `dice-client` passed after table/dice texture, safe throw bounds, shadow quality, and dice physics tuning.
 - [x] `npm run build` in `dice-client` passed after multiplayer social v1/ranked UI changes.
+- [x] `npm run build` in `dice-client` passed after table sizing, selection rings, realtime remote selection, turn bench dice, duel HUD layout, and finished-room return handling.
+- [x] `npm run build` in `dice-client` passed after quick-search loading/cancel, table rollback, dice size sync, and raw background texture changes.
+- [x] `git diff --check` in `dice-client` passed before checkpoint commit.
 
 ## Notes
 - Public routing target is nginx on `80/443`; client preview remains internal on `127.0.0.1:5174`.
@@ -52,3 +69,6 @@
 - Dev server and pm2 were intentionally not touched during the latest UI iterations; only production builds were run.
 - Latest pushed client commit: `abd32d2 Update dice table visuals and physics`.
 - Dev server and pm2 were intentionally not touched during social v1 work; only production build was run.
+- Current UI batch keeps the 1v1 case primary; score placement for more than two players is intentionally left for a separate pass.
+- Selection preview protocol files remain mirrored with the server protocol files except the optional first marker comment.
+- Next cleanup target: split `src/main.ts` menu/quick-search flow into smaller stateful modules and remove race-prone coupling between loading overlay, lobby render, network callbacks, and `ESC`.

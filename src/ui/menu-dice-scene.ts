@@ -4,7 +4,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { createDiceMesh } from '../engine/assets/dice-visual.factory';
 
 const CAMERA_Z = 6.2;
-const DICE_SIZE = 1.18;
+const DICE_SIZE = 1.77;
 const MENU_DICE_MODEL_URL = '/assets/dice/dice-stone-2/dice-stone.glb';
 const POINTER_EASE = 0.08;
 
@@ -14,11 +14,12 @@ export class MenuDiceScene {
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(38, window.innerWidth / window.innerHeight, 0.1, 50);
   private readonly renderer = new THREE.WebGLRenderer({
-    antialias: false,
+    antialias: true,
     alpha: true,
     powerPreference: 'high-performance',
   });
   private readonly dice: THREE.Object3D[] = [];
+  private readonly diceGroup = new THREE.Group();
   private readonly pointerTarget = new THREE.Vector2();
   private readonly pointer = new THREE.Vector2();
   private rafId: number | null = null;
@@ -69,7 +70,6 @@ export class MenuDiceScene {
       height: '100vh',
       zIndex: '1',
       pointerEvents: 'none',
-      imageRendering: 'pixelated',
     } satisfies Partial<CSSStyleDeclaration>);
 
     this.scene.background = null;
@@ -81,7 +81,7 @@ export class MenuDiceScene {
     key.position.set(2.8, 4.2, 5);
     const rim = new THREE.PointLight(0x80d5ff, 1.1, 10);
     rim.position.set(-3.4, -0.8, 3.6);
-    this.scene.add(ambient, key, rim);
+    this.scene.add(ambient, key, rim, this.diceGroup);
 
     if (modelTemplate) {
       this.addModelDice(modelTemplate);
@@ -127,24 +127,23 @@ export class MenuDiceScene {
     right.rotation.set(-0.22, 0.52, -0.12);
 
     this.dice.push(left, right);
-    this.scene.add(left, right);
+    this.diceGroup.add(left, right);
   }
 
   private loop = (now: number): void => {
     const dt = Math.min(0.05, Math.max(0, (now - this.lastTime) / 1000));
     this.lastTime = now;
     this.pointer.lerp(this.pointerTarget, POINTER_EASE);
-    this.camera.position.x = this.pointer.x * 0.42;
-    this.camera.position.y = 0.4 + this.pointer.y * 0.22;
-    this.camera.lookAt(this.pointer.x * 0.18, this.pointer.y * 0.1, 0);
+    this.diceGroup.position.x += (this.pointer.x * 0.32 - this.diceGroup.position.x) * 0.06;
+    this.diceGroup.position.y += (this.pointer.y * 0.18 - this.diceGroup.position.y) * 0.06;
+    this.camera.position.set(0, 0.4, CAMERA_Z);
+    this.camera.lookAt(0, 0, 0);
 
     for (let i = 0; i < this.dice.length; i++) {
       const die = this.dice[i]!;
       const dir = i === 0 ? 1 : -1;
       die.rotation.x += dt * 0.18 * dir;
       die.rotation.y += dt * 0.28 * -dir;
-      die.position.x += (this.pointer.x * 0.16 * dir - (die.position.x - (i === 0 ? -1.35 : 1.35))) * 0.035;
-      die.position.y += (this.pointer.y * 0.1 - die.position.y + (i === 0 ? -0.25 : 0.18)) * 0.035;
     }
 
     this.renderer.render(this.scene, this.camera);
@@ -160,8 +159,8 @@ export class MenuDiceScene {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(
-      Math.max(320, Math.floor(window.innerWidth * 0.62)),
-      Math.max(180, Math.floor(window.innerHeight * 0.62)),
+      Math.max(320, window.innerWidth),
+      Math.max(180, window.innerHeight),
       false,
     );
   };

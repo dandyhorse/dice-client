@@ -2,7 +2,7 @@ export const WORLD_GRAVITY = -25;
 
 // Стол фиксированных размеров в мировых координатах. На любом аспекте экрана
 // игроки видят одинаковую физическую площадку — это требование мультиплеера.
-export const TABLE_WIDTH = 16;
+export const TABLE_WIDTH = 9;
 export const TABLE_DEPTH = 9;
 export const TABLE_THICKNESS = 0.4;
 
@@ -10,15 +10,15 @@ export const TABLE_THICKNESS = 0.4;
 // WALL_INSET = WALL_THICKNESS — внешняя грань стены ровно на кромке стола, внутренняя
 // сдвинута на толщину к центру.
 // CEILING закрывает арену сверху (невидимый), чтобы кости не вылетали при сильном броске.
-// Стены 0.5 в дополнение к THROW_MAX_SPEED остаются толще максимального substep-displacement.
+// Стены держим близко к визуальному борту, но толще максимального substep-displacement.
 export const WALL_HEIGHT = 4;
-export const WALL_THICKNESS = 0.5;
-export const WALL_INSET = 0.5;
+export const WALL_THICKNESS = 0.22;
+export const WALL_INSET = 0.22;
 
 export const DICE_COUNT = 6;
-export const DICE_HALF_SIZE = 0.22;
+export const DICE_HALF_SIZE = 0.26;
 export const DICE_MASS = 0.6;
-export const DICE_SPACING = 0.6;
+export const DICE_SPACING = 0.71;
 
 export const REST_FACE_DOT_MIN = 0.82;
 export const REST_STACKED_CENTER_Y_MIN = DICE_HALF_SIZE * 2.2;

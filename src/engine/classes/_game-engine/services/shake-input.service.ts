@@ -95,6 +95,12 @@ export class ShakeInputService {
     this.throwKeyCode = code;
   }
 
+  triggerKeyboardThrow(): void {
+    if (!this.enabled) return;
+    if (this.isHolding) return;
+    this.emitSpaceThrow();
+  }
+
   destroy(): void {
     this.setEnabled(false);
     this.canvas.removeEventListener('mousedown', this.onMouseDown);
@@ -181,7 +187,7 @@ export class ShakeInputService {
     if (isInteractiveKeyboardTarget(event.target)) return;
 
     event.preventDefault();
-    this.emitSpaceThrow();
+    this.triggerKeyboardThrow();
   };
 
   private emitSpaceThrow(): void {

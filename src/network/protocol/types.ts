@@ -145,6 +145,7 @@ export interface RoomStatePayload {
   id: string;
   code: string;
   gameName: string;
+  hasPassword: boolean;
   ownerId: string;
   status: RoomStatus;
   mode: RoomMode;
@@ -156,6 +157,7 @@ export interface RoomCreateCmd {
   requestId: number;
   mode?: RoomMode;
   gameName?: string;
+  password?: string;
   options?: Partial<RoomOptionsPayload>;
 }
 
@@ -167,6 +169,7 @@ export interface RoomListItemPayload {
   id: string;
   code: string;
   gameName: string;
+  hasPassword: boolean;
   ownerId: string;
   ownerDisplayName: string;
   status: RoomStatus;
@@ -184,6 +187,11 @@ export interface RoomListPayload {
 export interface RoomJoinCmd {
   requestId: number;
   code: string;
+  password?: string;
+}
+
+export interface RoomQuickMatchCmd {
+  requestId: number;
 }
 
 export interface RoomLeaveCmd {
@@ -235,6 +243,26 @@ export interface MatchBankCmd {
   requestId: number;
   roomId: string;
   indices: number[];
+}
+
+/** C→S: сдаться и завершить матч победой другого игрока. */
+export interface MatchForfeitCmd {
+  requestId: number;
+  roomId: string;
+}
+
+/** C→S: realtime preview текущего локального выбора без изменения turn-state. */
+export interface MatchSelectionPreviewCmd {
+  roomId: string;
+  indices: number[];
+}
+
+/** S→C broadcast: realtime preview выбора активного игрока. */
+export interface MatchSelectionPreviewPayload {
+  userId: string;
+  indices: number[];
+  valid: boolean;
+  points: number;
 }
 
 /** Накопленный счёт одного игрока для broadcast'а в MATCH_STATE. */

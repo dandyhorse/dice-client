@@ -1,6 +1,11 @@
 import { EventEmitter } from '../../event-emitter.class';
 import { scoreRoll } from '../../../../domain/scorer';
 import {
+  DEFAULT_PLAYER_SETTINGS,
+  controlCodeLabel,
+  type ControlBindings,
+} from '../../../../player-settings';
+import {
   onLanguageChange,
   soloModeDescription,
   soloModeTitle,
@@ -19,21 +24,27 @@ const BTN_BG = '#3b82f6';
 const BTN_DISABLED_OPACITY = '0.4';
 const ERROR_DURATION_MS = 2500;
 
+const formatActionLabel = (label: string, code: string): string =>
+  `${label} (${controlCodeLabel(code)})`;
+
 export class SoloUiService {
   readonly events = new EventEmitter();
 
   private readonly root: HTMLDivElement;
   private readonly leftPanel: HTMLDivElement;
   private readonly rightPanel: HTMLDivElement;
+  private readonly turnStatsPanel: HTMLDivElement;
   private readonly actionsPanel: HTMLDivElement;
   private readonly statusPanel: HTMLDivElement;
   private readonly errorPanel: HTMLDivElement;
+  private readonly selectAllBtn: HTMLButtonElement;
   private readonly continueBtn: HTMLButtonElement;
   private readonly bankBtn: HTMLButtonElement;
-  private readonly resetBtn: HTMLButtonElement;
+  private readonly surrenderBtn: HTMLButtonElement;
   private readonly unsubscribeLanguage: () => void;
 
   private readonly config: SoloModeConfig;
+  private controls: ControlBindings;
   private state: SoloRunState;
   private selectedCount = 0;
   private selectionValid = false;
@@ -42,9 +53,14 @@ export class SoloUiService {
   private statusText = '';
   private errorTimer: number | null = null;
 
-  constructor(config: SoloModeConfig, initialState: SoloRunState) {
+  constructor(
+    config: SoloModeConfig,
+    initialState: SoloRunState,
+    controls: ControlBindings = DEFAULT_PLAYER_SETTINGS.controls,
+  ) {
     this.config = config;
     this.state = initialState;
+    this.controls = { ...controls };
 
     this.root = document.createElement('div');
     this.root.id = 'solo-hud';
@@ -72,29 +88,49 @@ export class SoloUiService {
       textAlign: 'right',
     } satisfies Partial<CSSStyleDeclaration>);
 
+    this.turnStatsPanel = document.createElement('div');
+    this.turnStatsPanel.id = 'solo-hud-turn-stats';
+    Object.assign(this.turnStatsPanel.style, {
+      position: 'fixed',
+      top: '12px',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      display: 'grid',
+      gridTemplateColumns: '1fr 1fr',
+      gap: '8px',
+      minWidth: '260px',
+      pointerEvents: 'none',
+    } satisfies Partial<CSSStyleDeclaration>);
+
     this.actionsPanel = document.createElement('div');
     this.actionsPanel.id = 'solo-hud-actions';
     Object.assign(this.actionsPanel.style, {
       position: 'fixed',
-      bottom: '70px',
-      left: '50%',
-      transform: 'translateX(-50%)',
+      bottom: '12px',
+      right: '12px',
       display: 'flex',
-      gap: '12px',
+      flexDirection: 'column',
+      gap: '8px',
+      width: 'min(360px, calc(100vw - 24px))',
       pointerEvents: 'auto',
     } satisfies Partial<CSSStyleDeclaration>);
 
-    this.continueBtn = this.makeButton(t('continue'), () => {
+    this.selectAllBtn = this.makeButton('', () => {
+      if (!this.selectAllBtn.disabled) this.events.emit('select-all-clicked');
+    });
+    this.continueBtn = this.makeButton('', () => {
       if (!this.continueBtn.disabled) this.events.emit('continue-clicked');
     });
-    this.bankBtn = this.makeButton(t('bank'), () => {
+    this.bankBtn = this.makeButton('', () => {
       if (!this.bankBtn.disabled) this.events.emit('bank-clicked');
     });
-    this.resetBtn = this.makeButton(t('resetRun'), () => this.events.emit('reset-clicked'));
-    this.resetBtn.style.background = '#52525b';
+    this.surrenderBtn = this.makeButton('', () => {
+      if (!this.surrenderBtn.disabled) this.events.emit('surrender-clicked');
+    });
+    this.actionsPanel.appendChild(this.selectAllBtn);
     this.actionsPanel.appendChild(this.continueBtn);
     this.actionsPanel.appendChild(this.bankBtn);
-    this.actionsPanel.appendChild(this.resetBtn);
+    this.actionsPanel.appendChild(this.surrenderBtn);
 
     this.statusPanel = document.createElement('div');
     this.statusPanel.id = 'solo-hud-status';
@@ -125,9 +161,9 @@ export class SoloUiService {
       background: 'rgba(180,40,40,0.85)',
       color: '#fff',
       fontFamily: FONT_FAMILY.ui,
-      fontSize: FONT_SIZE.overlay,
+      fontSize: 'clamp(42px, 8vw, 92px)',
       fontWeight: 'bold',
-      borderRadius: PANEL_RADIUS,
+      borderRadius: '0',
       pointerEvents: 'none',
       display: 'none',
       letterSpacing: '0.05em',
@@ -135,16 +171,16 @@ export class SoloUiService {
 
     this.root.appendChild(this.leftPanel);
     this.root.appendChild(this.rightPanel);
+    this.root.appendChild(this.turnStatsPanel);
     document.body.appendChild(this.root);
     document.body.appendChild(this.actionsPanel);
     document.body.appendChild(this.statusPanel);
     document.body.appendChild(this.errorPanel);
     this.unsubscribeLanguage = onLanguageChange(() => {
-      this.continueBtn.textContent = t('continue');
-      this.bankBtn.textContent = t('bank');
-      this.resetBtn.textContent = t('resetRun');
+      this.renderButtonLabels();
       this.render();
     });
+    this.renderButtonLabels();
     this.render();
   }
 
@@ -157,6 +193,11 @@ export class SoloUiService {
       this.selectedPoints = 0;
     }
     this.render();
+  }
+
+  setControls(controls: ControlBindings): void {
+    this.controls = { ...controls };
+    this.renderButtonLabels();
   }
 
   setStatus(text: string): void {
@@ -183,10 +224,11 @@ export class SoloUiService {
     this.selectedPoints = points;
     this.renderActions();
     this.renderLeft();
+    this.renderTurnStats();
   }
 
   showError(message: string): void {
-    this.errorPanel.textContent = message;
+    this.errorPanel.textContent = message.toUpperCase() === 'BUST' ? t('farkle') : message;
     this.errorPanel.style.display = 'block';
     if (this.errorTimer !== null) clearTimeout(this.errorTimer);
     this.errorTimer = window.setTimeout(() => {
@@ -208,8 +250,25 @@ export class SoloUiService {
   private render(): void {
     this.renderLeft();
     this.renderRight();
+    this.renderTurnStats();
     this.renderActions();
     this.renderStatus();
+  }
+
+  private renderButtonLabels(): void {
+    this.selectAllBtn.textContent = formatActionLabel(
+      t('selectAllAction'),
+      this.controls.selectAll,
+    );
+    this.continueBtn.textContent = formatActionLabel(
+      t('continueAction'),
+      this.controls.continueTurn,
+    );
+    this.bankBtn.textContent = formatActionLabel(t('bankAction'), this.controls.bankTurn);
+    this.surrenderBtn.textContent = formatActionLabel(
+      t('surrenderAction'),
+      this.controls.surrender,
+    );
   }
 
   private renderLeft(): void {
@@ -265,7 +324,7 @@ export class SoloUiService {
         if (h.result === 'bank') {
           lines.push(`#${h.turnIndex}: ${t('bank')} ${h.banked} → ${h.totalScore}`);
         } else {
-          lines.push(`#${h.turnIndex}: bust, ${t('burned')} ${h.burned}`);
+          lines.push(`#${h.turnIndex}: ${t('farkle')}, ${t('burned')} ${h.burned}`);
         }
       }
     }
@@ -276,15 +335,65 @@ export class SoloUiService {
         : soloModeDescription(this.config.id, this.config.description);
   }
 
+  private renderTurnStats(): void {
+    if (this.state.status !== 'active') {
+      this.turnStatsPanel.style.display = 'none';
+      return;
+    }
+
+    this.turnStatsPanel.style.display = 'grid';
+    const selected = this.selectionValid ? this.selectedPoints : 0;
+    this.turnStatsPanel.replaceChildren(
+      this.makeStatTile(t('bankedTurn'), String(this.state.turnScore)),
+      this.makeStatTile(t('selectedPoints'), String(selected)),
+    );
+  }
+
+  private makeStatTile(label: string, value: string): HTMLDivElement {
+    const tile = document.createElement('div');
+    Object.assign(tile.style, {
+      padding: '8px 14px',
+      background: PANEL_BG,
+      color: PANEL_FG,
+      border: '1px solid rgba(255,255,255,0.12)',
+      borderRadius: PANEL_RADIUS,
+      textAlign: 'center',
+      minWidth: '120px',
+      boxSizing: 'border-box',
+    } satisfies Partial<CSSStyleDeclaration>);
+
+    const labelEl = document.createElement('div');
+    labelEl.textContent = label;
+    Object.assign(labelEl.style, {
+      fontSize: FONT_SIZE.label,
+      color: '#b8b8c8',
+      lineHeight: '1.1',
+    } satisfies Partial<CSSStyleDeclaration>);
+
+    const valueEl = document.createElement('div');
+    valueEl.textContent = value;
+    Object.assign(valueEl.style, {
+      marginTop: '4px',
+      fontSize: FONT_SIZE.title,
+      lineHeight: '1',
+      fontWeight: '700',
+    } satisfies Partial<CSSStyleDeclaration>);
+
+    tile.append(labelEl, valueEl);
+    return tile;
+  }
+
   private renderActions(): void {
     const selecting = this.state.status === 'active' && this.lastRolledFaces.length > 0;
+    const active = this.state.status === 'active';
     const canSubmit = selecting && this.selectedCount > 0 && this.selectionValid;
     const minBank = this.config.minBank ?? 0;
     const canBank = canSubmit && this.state.turnScore + this.selectedPoints >= minBank;
-    this.continueBtn.style.display = selecting ? 'inline-block' : 'none';
-    this.bankBtn.style.display = selecting ? 'inline-block' : 'none';
+    this.actionsPanel.style.display = active ? 'flex' : 'none';
+    this.setButtonEnabled(this.selectAllBtn, selecting);
     this.setButtonEnabled(this.continueBtn, canSubmit);
     this.setButtonEnabled(this.bankBtn, canBank);
+    this.setButtonEnabled(this.surrenderBtn, active);
   }
 
   private renderStatus(): void {
@@ -328,14 +437,15 @@ export class SoloUiService {
       borderRadius: PANEL_RADIUS,
       fontFamily: FONT_FAMILY.ui,
       fontSize: FONT_SIZE.hud,
-      width: UI_SIZE.hudButtonWidth,
-      height: UI_SIZE.hudButtonHeight,
+      width: '100%',
+      minHeight: UI_SIZE.hudButtonHeight,
       boxSizing: 'border-box',
       display: 'inline-flex',
       alignItems: 'center',
       justifyContent: 'center',
-      lineHeight: '1',
-      whiteSpace: 'nowrap',
+      textAlign: 'center',
+      lineHeight: '1.15',
+      whiteSpace: 'normal',
       cursor: 'pointer',
       pointerEvents: 'auto',
     } satisfies Partial<CSSStyleDeclaration>);

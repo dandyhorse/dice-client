@@ -1,5 +1,9 @@
 import { EventEmitter } from '../../event-emitter.class';
-import { scoreRoll } from '../../../../domain/scorer';
+import {
+  DEFAULT_PLAYER_SETTINGS,
+  controlCodeLabel,
+  type ControlBindings,
+} from '../../../../player-settings';
 import { onLanguageChange, t } from '../../../../ui/i18n';
 import { bindMouseOnlyClick } from '../../../../ui/mouse-only-button';
 import { FONT_FAMILY, FONT_SIZE, UI_SIZE } from '../../../../ui/theme';
@@ -11,30 +15,27 @@ import {
   ROOM_ROLE,
 } from '../../../../network/protocol/types';
 import type { MatchPhase, MatchStatePayload, RoomStatePayload } from '../../../../network/protocol/types';
+import type { MatchSelectionPreviewPayload } from '../../../../network/protocol/types';
 
 const PANEL_BG = 'rgba(0,0,0,0.6)';
 const PANEL_FG = '#eee';
+const PANEL_OFFLINE_FG = '#8e8e9d';
 const PANEL_RADIUS = '6px';
 const PANEL_PAD = '10px 12px';
+const PANEL_ACTIVE_BORDER = '#22c55e';
 
 const BTN_BG = '#3b82f6';
 const BTN_FG = '#fff';
 const BTN_DISABLED_OPACITY = '0.4';
 
 const ERROR_DURATION_MS = 2500;
+const FARKLE_DURATION_MS = 1200;
+const TURN_BANNER_DURATION_MS = 1800;
 
-const formatPlayer = (userId: string, ownUserId: string): string => {
-  if (!userId) return '-';
-  if (userId === ownUserId) return t('youSuffix');
-  return shortId(userId);
-};
+const formatMember = (displayName: string): string => displayName.trim() || t('player');
 
-const formatMember = (displayName: string, userId: string, ownUserId: string): string => {
-  if (userId === ownUserId) return `${displayName || t('youSuffix')} (${t('youSuffix')})`;
-  return displayName || shortId(userId);
-};
-
-const shortId = (id: string): string => (id.length <= 8 ? id : id.slice(0, 8));
+const formatActionLabel = (label: string, code: string): string =>
+  `${label} (${controlCodeLabel(code)})`;
 
 /**
  * HUD-оверлей для turn-based матча. Vanilla DOM, без UI-фреймворков
@@ -55,28 +56,37 @@ export class HudUiService {
 
   private readonly root: HTMLDivElement;
   private readonly leftPanel: HTMLDivElement;
+  private readonly opponentPanel: HTMLDivElement;
   private readonly rightPanel: HTMLDivElement;
+  private readonly turnStatsPanel: HTMLDivElement;
   private readonly actionsPanel: HTMLDivElement;
   private readonly statusPanel: HTMLDivElement;
   private readonly errorPanel: HTMLDivElement;
+  private readonly turnBannerPanel: HTMLDivElement;
+  private readonly selectAllBtn: HTMLButtonElement;
   private readonly continueBtn: HTMLButtonElement;
   private readonly bankBtn: HTMLButtonElement;
+  private readonly surrenderBtn: HTMLButtonElement;
   private readonly unsubscribeLanguage: () => void;
 
   private state: MatchStatePayload | null = null;
   private roomState: RoomStatePayload | null = null;
+  private controls: ControlBindings;
   private selectedCount = 0;
   private selectionValid = false;
   private selectedPoints = 0;
+  private remoteSelectionPreview: MatchSelectionPreviewPayload | null = null;
+  private actionsBlocked = false;
   private errorTimer: number | null = null;
   private statusTimer: number | null = null;
-  /** Что выпало в последнем броске (из MATCH_ROLL_RESULT). Чистится при смене фазы с SELECTING. */
-  private lastRolledFaces: number[] = [];
-
+  private turnBannerTimer: number | null = null;
+  private queuedTurnBannerUserId = '';
+  private lastAnnouncedTurnPlayer = '';
   private readonly ownUserId: string;
 
-  constructor(ownUserId: string) {
+  constructor(ownUserId: string, controls: ControlBindings = DEFAULT_PLAYER_SETTINGS.controls) {
     this.ownUserId = ownUserId;
+    this.controls = { ...controls };
     this.root = document.createElement('div');
     this.root.id = 'hud';
     Object.assign(this.root.style, {
@@ -87,16 +97,22 @@ export class HudUiService {
       fontFamily: FONT_FAMILY.ui,
     } satisfies Partial<CSSStyleDeclaration>);
 
-    // top:60px — чтобы не наезжать на room badge (см. main.ts:showRoomCode,
-    // который висит в top:12px left:12px). Бэйдж ~36px высотой + воздух.
-    this.leftPanel = this.makePanel({ top: '60px', left: '12px' });
+    this.leftPanel = this.makePanel({ top: '12px', left: '12px' });
     this.leftPanel.id = 'hud-left';
     Object.assign(this.leftPanel.style, {
       minWidth: '180px',
       whiteSpace: 'pre-line',
     } satisfies Partial<CSSStyleDeclaration>);
 
-    this.rightPanel = this.makePanel({ top: '60px', right: '12px' });
+    this.opponentPanel = this.makePanel({ bottom: '12px', left: '12px' });
+    this.opponentPanel.id = 'hud-opponent';
+    Object.assign(this.opponentPanel.style, {
+      minWidth: '180px',
+      whiteSpace: 'pre-line',
+      display: 'none',
+    } satisfies Partial<CSSStyleDeclaration>);
+
+    this.rightPanel = this.makePanel({ top: '12px', right: '12px' });
     this.rightPanel.id = 'hud-right';
     Object.assign(this.rightPanel.style, {
       minWidth: '180px',
@@ -104,28 +120,53 @@ export class HudUiService {
       textAlign: 'right',
     } satisfies Partial<CSSStyleDeclaration>);
 
+    this.turnStatsPanel = document.createElement('div');
+    this.turnStatsPanel.id = 'hud-turn-stats';
+    Object.assign(this.turnStatsPanel.style, {
+      position: 'fixed',
+      top: '12px',
+      left: '50%',
+      transform: 'translateX(-50%)',
+      display: 'grid',
+      gridTemplateColumns: '1fr 1fr',
+      gap: '8px',
+      minWidth: '260px',
+      pointerEvents: 'none',
+    } satisfies Partial<CSSStyleDeclaration>);
+
     this.actionsPanel = document.createElement('div');
     this.actionsPanel.id = 'hud-actions';
     Object.assign(this.actionsPanel.style, {
       position: 'fixed',
-      bottom: '70px',
-      left: '50%',
-      transform: 'translateX(-50%)',
+      right: '12px',
+      bottom: '12px',
       display: 'none',
-      gap: '12px',
+      flexDirection: 'column',
+      gap: '8px',
+      width: 'min(360px, calc(100vw - 24px))',
       pointerEvents: 'auto',
     } satisfies Partial<CSSStyleDeclaration>);
 
-    this.continueBtn = this.makeButton(t('continue'), () => {
+    this.selectAllBtn = this.makeButton('', () => {
+      if (this.selectAllBtn.disabled) return;
+      this.events.emit('select-all-clicked');
+    });
+    this.continueBtn = this.makeButton('', () => {
       if (this.continueBtn.disabled) return;
       this.events.emit('continue-clicked');
     });
-    this.bankBtn = this.makeButton(t('bank'), () => {
+    this.bankBtn = this.makeButton('', () => {
       if (this.bankBtn.disabled) return;
       this.events.emit('bank-clicked');
     });
+    this.surrenderBtn = this.makeButton('', () => {
+      if (this.surrenderBtn.disabled) return;
+      this.events.emit('surrender-clicked');
+    });
+    this.actionsPanel.appendChild(this.selectAllBtn);
     this.actionsPanel.appendChild(this.continueBtn);
     this.actionsPanel.appendChild(this.bankBtn);
+    this.actionsPanel.appendChild(this.surrenderBtn);
 
     this.statusPanel = document.createElement('div');
     this.statusPanel.id = 'hud-status';
@@ -152,43 +193,70 @@ export class HudUiService {
       top: '50%',
       left: '50%',
       transform: 'translate(-50%, -50%)',
-      padding: '14px 28px',
+      padding: '18px 34px',
       background: 'rgba(180,40,40,0.85)',
       color: '#fff',
       fontFamily: FONT_FAMILY.ui,
-      fontSize: FONT_SIZE.overlay,
+      fontSize: 'clamp(42px, 8vw, 92px)',
       fontWeight: 'bold',
-      borderRadius: PANEL_RADIUS,
+      borderRadius: '0',
       pointerEvents: 'none',
       display: 'none',
       letterSpacing: '0.05em',
     } satisfies Partial<CSSStyleDeclaration>);
 
+    this.turnBannerPanel = document.createElement('div');
+    this.turnBannerPanel.id = 'hud-turn-banner';
+    Object.assign(this.turnBannerPanel.style, {
+      position: 'fixed',
+      top: '50%',
+      left: '50%',
+      transform: 'translate(-50%, -50%)',
+      color: '#fff',
+      fontFamily: FONT_FAMILY.title,
+      fontSize: 'clamp(46px, 9vw, 104px)',
+      fontWeight: '700',
+      textAlign: 'center',
+      textShadow: '0 8px 28px rgba(0,0,0,0.7)',
+      pointerEvents: 'none',
+      display: 'none',
+      letterSpacing: '0',
+    } satisfies Partial<CSSStyleDeclaration>);
+
     this.root.appendChild(this.leftPanel);
+    this.root.appendChild(this.opponentPanel);
     this.root.appendChild(this.rightPanel);
+    this.root.appendChild(this.turnStatsPanel);
     document.body.appendChild(this.root);
     document.body.appendChild(this.actionsPanel);
     document.body.appendChild(this.statusPanel);
     document.body.appendChild(this.errorPanel);
+    document.body.appendChild(this.turnBannerPanel);
 
     this.unsubscribeLanguage = onLanguageChange(() => {
-      this.continueBtn.textContent = t('continue');
-      this.bankBtn.textContent = t('bank');
+      this.renderButtonLabels();
       this.render();
     });
+    this.renderButtonLabels();
     this.render();
   }
 
   setMatchState(state: MatchStatePayload): void {
-    // Если фаза ушла из SELECTING — последний бросок больше не релевантен,
-    // подсказка в HUD должна исчезнуть (новый бросок придёт через setRollResult).
     if (state.phase !== MATCH_PHASE.SELECTING) {
-      this.lastRolledFaces = [];
       this.selectedCount = 0;
       this.selectionValid = false;
       this.selectedPoints = 0;
+      this.remoteSelectionPreview = null;
     }
     this.state = state;
+    if (
+      state.phase !== MATCH_PHASE.FINISHED &&
+      state.currentPlayer &&
+      state.currentPlayer !== this.lastAnnouncedTurnPlayer
+    ) {
+      this.lastAnnouncedTurnPlayer = state.currentPlayer;
+      this.queueOrShowTurnBanner(state.currentPlayer);
+    }
     this.updateStatusTimer();
     this.render();
   }
@@ -199,12 +267,12 @@ export class HudUiService {
     this.render();
   }
 
-  /**
-   * Уведомление о результате последнего броска. Сохраняем faces для HUD-подсказки
-   * «что можно брать» — игроку не нужно держать в голове правила Farkle.
-   */
-  setRollResult(rolledFaces: number[]): void {
-    this.lastRolledFaces = [...rolledFaces];
+  setControls(controls: ControlBindings): void {
+    this.controls = { ...controls };
+    this.renderButtonLabels();
+  }
+
+  setRollResult(_rolledFaces: number[]): void {
     this.render();
   }
 
@@ -214,131 +282,222 @@ export class HudUiService {
     this.selectedPoints = points;
     this.renderActions();
     this.renderLeft();
+    this.renderTurnStats();
+  }
+
+  setSelectionPreview(payload: MatchSelectionPreviewPayload | null): void {
+    this.remoteSelectionPreview = payload;
+    this.renderTurnStats();
   }
 
   showError(message: string): void {
-    this.errorPanel.textContent = message;
+    const isFarkle = message.toUpperCase() === 'BUST';
+    this.errorPanel.textContent = isFarkle ? t('farkle') : message;
     this.errorPanel.style.display = 'block';
+    if (isFarkle) {
+      this.actionsBlocked = true;
+      this.turnBannerPanel.style.display = 'none';
+      this.renderActions();
+    }
     if (this.errorTimer !== null) clearTimeout(this.errorTimer);
     this.errorTimer = window.setTimeout(() => {
       this.errorPanel.style.display = 'none';
+      if (isFarkle) {
+        this.actionsBlocked = false;
+        this.renderActions();
+        if (this.queuedTurnBannerUserId) {
+          const userId = this.queuedTurnBannerUserId;
+          this.queuedTurnBannerUserId = '';
+          this.showTurnBanner(userId);
+        }
+      }
       this.errorTimer = null;
-    }, ERROR_DURATION_MS);
+    }, isFarkle ? FARKLE_DURATION_MS : ERROR_DURATION_MS);
   }
 
   destroy(): void {
     if (this.errorTimer !== null) clearTimeout(this.errorTimer);
     if (this.statusTimer !== null) clearInterval(this.statusTimer);
+    if (this.turnBannerTimer !== null) clearTimeout(this.turnBannerTimer);
     this.errorTimer = null;
     this.statusTimer = null;
+    this.turnBannerTimer = null;
+    this.queuedTurnBannerUserId = '';
     this.unsubscribeLanguage();
     this.root.remove();
     this.actionsPanel.remove();
     this.statusPanel.remove();
     this.errorPanel.remove();
+    this.turnBannerPanel.remove();
   }
 
   private render(): void {
     this.renderLeft();
-    this.renderRight();
+    this.renderTurnStats();
     this.renderActions();
     this.renderStatus();
+  }
+
+  private renderButtonLabels(): void {
+    this.selectAllBtn.textContent = formatActionLabel(
+      t('selectAllAction'),
+      this.controls.selectAll,
+    );
+    this.continueBtn.textContent = formatActionLabel(
+      t('continueAction'),
+      this.controls.continueTurn,
+    );
+    this.bankBtn.textContent = formatActionLabel(t('bankAction'), this.controls.bankTurn);
+    this.surrenderBtn.textContent = formatActionLabel(
+      t('surrenderAction'),
+      this.controls.surrender,
+    );
   }
 
   private renderLeft(): void {
     const s = this.state;
     if (!s) {
       this.leftPanel.textContent = t('connecting');
+      this.opponentPanel.style.display = 'none';
+      this.rightPanel.style.display = 'none';
+      this.turnStatsPanel.style.display = 'none';
       return;
     }
-    const turnLabel = formatPlayer(s.currentPlayer, this.ownUserId);
-    const benchLabel = s.bench.length > 0 ? s.bench.join(', ') : '-';
-    const minBank = this.roomState?.options.minBank ?? DEFAULT_ROOM_OPTIONS.minBank;
-    const lines = [
-      `${t('turnOwner')}: ${turnLabel}`,
-      `${t('turnPoints')}: ${s.turnPoints}`,
-      `${t('bench')}: ${benchLabel}`,
-      minBank > 0 ? `${t('minBank')}: ${minBank}` : `${t('minBank')}: -`,
-    ];
-
-    const isMyTurn = s.currentPlayer === this.ownUserId;
-    if (
-      isMyTurn &&
-      s.phase === MATCH_PHASE.SELECTING &&
-      this.lastRolledFaces.length > 0 &&
-      !this.isRanked()
-    ) {
-      lines.push('');
-      lines.push(`${t('rolled')}: ${this.lastRolledFaces.join(', ')}`);
-      const opts = scoreRoll(this.lastRolledFaces);
-      if (opts.length === 0) {
-        lines.push(t('scoringNone'));
-      } else {
-        lines.push(t('availableScoring'));
-        for (const o of opts) {
-          const positions = o.dieIndices.map((i) => i + 1).join(',');
-          lines.push(`• ${o.label} (поз. ${positions}) → ${o.points}`);
-        }
-      }
+    if (this.isDuel()) {
+      this.renderDuelLeft();
+      return;
     }
 
-    if (isMyTurn && s.phase === MATCH_PHASE.SELECTING && this.selectedCount > 0) {
-      lines.push('');
-      lines.push(
-        `${t('selected')}: ${this.selectedCount}${
-          this.selectionValid ? '' : ` (${t('incompleteSet')})`
-        }`,
-      );
-    }
-
-    this.leftPanel.textContent = lines.join('\n');
-  }
-
-  private renderRight(): void {
-    const s = this.state;
+    this.opponentPanel.style.display = 'none';
+    this.leftPanel.style.top = '12px';
     const room = this.roomState;
     const targetScore = room?.options.targetScore ?? DEFAULT_ROOM_OPTIONS.targetScore;
-    if (!room) {
-      if (!s || s.totals.length === 0) {
-        this.rightPanel.textContent = '—';
-        return;
-      }
-      const lines = s.totals.map((t) => {
-        const label = formatPlayer(t.userId, this.ownUserId);
-        return `${label}: ${t.total} / ${targetScore}`;
-      });
-      this.rightPanel.textContent = lines.join('\n');
+    const totalByUser = new Map(s.totals.map((total) => [total.userId, total.total]));
+    const players = room?.members.filter((m) => m.role === ROOM_ROLE.PLAYER) ?? [];
+
+    if (players.length === 0) {
+      const ownTotal = s.totals.find((total) => total.userId === this.ownUserId);
+      this.leftPanel.textContent = `${t('player')}\n${ownTotal?.total ?? 0} / ${targetScore}`;
+      this.stylePlayerPanel(this.leftPanel, null, s.currentPlayer === this.ownUserId);
       return;
     }
 
-    const totalByUser = new Map((s?.totals ?? []).map((t) => [t.userId, t.total]));
-    const lines: string[] = [t('players')];
+    const ownPlayer = players.find((m) => m.userId === this.ownUserId) ?? players[0]!;
+    const others = players.filter((m) => m.userId !== ownPlayer.userId);
+    this.leftPanel.textContent = this.formatScorePanel(ownPlayer, totalByUser, targetScore);
+    this.stylePlayerPanel(this.leftPanel, ownPlayer, s.currentPlayer === ownPlayer.userId);
+
+    if (others.length === 0) {
+      this.rightPanel.style.display = 'none';
+      return;
+    }
+
+    this.rightPanel.style.display = 'block';
+    this.rightPanel.textContent = others
+      .map((member) => this.formatScorePanel(member, totalByUser, targetScore))
+      .join('\n\n');
+    this.stylePlayerPanel(
+      this.rightPanel,
+      others.find((member) => s.currentPlayer === member.userId) ?? others[0]!,
+      others.some((member) => s.currentPlayer === member.userId),
+    );
+  }
+
+  private renderTurnStats(): void {
+    const s = this.state;
+    if (!s || s.phase === MATCH_PHASE.FINISHED) {
+      this.turnStatsPanel.style.display = 'none';
+      return;
+    }
+
+    this.turnStatsPanel.style.display = 'grid';
+    const remoteSelected =
+      s.currentPlayer !== this.ownUserId &&
+      this.remoteSelectionPreview?.userId === s.currentPlayer &&
+      this.remoteSelectionPreview.valid
+        ? this.remoteSelectionPreview.points
+        : 0;
+    const selected = s.currentPlayer === this.ownUserId
+      ? this.selectionValid
+        ? this.selectedPoints
+        : 0
+      : remoteSelected;
+    this.turnStatsPanel.replaceChildren(
+      this.makeStatTile(t('bankedTurn'), String(s.turnPoints)),
+      this.makeStatTile(t('selectedPoints'), String(selected)),
+    );
+  }
+
+  private makeStatTile(label: string, value: string): HTMLDivElement {
+    const tile = document.createElement('div');
+    Object.assign(tile.style, {
+      padding: '8px 14px',
+      background: PANEL_BG,
+      color: PANEL_FG,
+      border: '1px solid rgba(255,255,255,0.12)',
+      borderRadius: PANEL_RADIUS,
+      textAlign: 'center',
+      minWidth: '120px',
+      boxSizing: 'border-box',
+    } satisfies Partial<CSSStyleDeclaration>);
+
+    const labelEl = document.createElement('div');
+    labelEl.textContent = label;
+    Object.assign(labelEl.style, {
+      fontSize: FONT_SIZE.label,
+      color: '#b8b8c8',
+      lineHeight: '1.1',
+    } satisfies Partial<CSSStyleDeclaration>);
+
+    const valueEl = document.createElement('div');
+    valueEl.textContent = value;
+    Object.assign(valueEl.style, {
+      marginTop: '4px',
+      fontSize: FONT_SIZE.title,
+      lineHeight: '1',
+      fontWeight: '700',
+    } satisfies Partial<CSSStyleDeclaration>);
+
+    tile.append(labelEl, valueEl);
+    return tile;
+  }
+
+  private renderDuelLeft(): void {
+    const s = this.state;
+    const room = this.roomState;
+    if (!s || !room) return;
+
     const players = room.members.filter((m) => m.role === ROOM_ROLE.PLAYER);
-    if (players.length === 0) {
-      lines.push('—');
-    } else {
-      for (const m of players) {
-        const label = formatMember(m.displayName, m.userId, this.ownUserId);
-        const total = totalByUser.get(m.userId) ?? 0;
-        const turn = s?.currentPlayer === m.userId ? ` · ${t('turn')}` : '';
-        const online = m.online ? t('online') : t('offline');
-        lines.push(`${label}: ${total} / ${targetScore} · ${online}${turn}`);
-      }
-    }
+    const ownPlayer = players.find((m) => m.userId === this.ownUserId) ?? players[0]!;
+    const opponent = players.find((m) => m.userId !== ownPlayer.userId) ?? players[1]!;
+    const targetScore = room.options.targetScore ?? DEFAULT_ROOM_OPTIONS.targetScore;
+    const totalByUser = new Map(s.totals.map((t) => [t.userId, t.total]));
 
-    const spectators = room.members.filter((m) => m.role === ROOM_ROLE.SPECTATOR);
-    lines.push('');
-    lines.push(t('spectators'));
-    if (spectators.length === 0) {
-      lines.push('—');
-    } else {
-      for (const m of spectators) {
-        const label = formatMember(m.displayName, m.userId, this.ownUserId);
-        lines.push(`${label} · ${m.online ? t('online') : t('offline')}`);
-      }
-    }
+    this.leftPanel.style.top = '12px';
+    this.leftPanel.textContent = this.formatScorePanel(opponent, totalByUser, targetScore);
+    this.stylePlayerPanel(this.leftPanel, opponent, s.currentPlayer === opponent.userId);
+    this.opponentPanel.style.display = 'block';
+    this.opponentPanel.textContent = this.formatScorePanel(ownPlayer, totalByUser, targetScore);
+    this.stylePlayerPanel(this.opponentPanel, ownPlayer, s.currentPlayer === ownPlayer.userId);
+  }
 
-    this.rightPanel.textContent = lines.join('\n');
+  private formatScorePanel(
+    member: NonNullable<RoomStatePayload['members'][number]>,
+    totalByUser: Map<string, number>,
+    targetScore: number,
+  ): string {
+    const label = formatMember(member.displayName);
+    const total = totalByUser.get(member.userId) ?? 0;
+    return `${label}\n${total} / ${targetScore}`;
+  }
+
+  private stylePlayerPanel(
+    panel: HTMLDivElement,
+    member: NonNullable<RoomStatePayload['members'][number]> | null,
+    active: boolean,
+  ): void {
+    panel.style.color = member?.online === false ? PANEL_OFFLINE_FG : PANEL_FG;
+    panel.style.border = active ? `1px solid ${PANEL_ACTIVE_BORDER}` : '1px solid transparent';
   }
 
   private getOwnRole(): number | null {
@@ -348,19 +507,28 @@ export class HudUiService {
 
   private renderActions(): void {
     const s = this.state;
-    const showButtons =
+    const showPanel =
       s !== null &&
-      !s.paused &&
       this.getOwnRole() !== ROOM_ROLE.SPECTATOR &&
+      s.phase !== MATCH_PHASE.FINISHED;
+    this.actionsPanel.style.display = showPanel ? 'flex' : 'none';
+    this.selectAllBtn.style.display = this.isRanked() ? 'none' : 'inline-flex';
+
+    const canUseSelection =
+      s !== null &&
+      showPanel &&
+      !this.actionsBlocked &&
+      !s.paused &&
       s.phase === MATCH_PHASE.SELECTING &&
       s.currentPlayer === this.ownUserId;
-    this.actionsPanel.style.display = showButtons ? 'flex' : 'none';
-    const canSubmit = showButtons && this.selectedCount > 0 && this.selectionValid;
+    const canSubmit = canUseSelection && this.selectedCount > 0 && this.selectionValid;
     const minBank = this.roomState?.options.minBank ?? DEFAULT_ROOM_OPTIONS.minBank;
     const canBank =
       canSubmit && s !== null && s.turnPoints + this.selectedPoints >= minBank;
+    this.setButtonEnabled(this.selectAllBtn, canUseSelection && !this.isRanked());
     this.setButtonEnabled(this.continueBtn, canSubmit);
     this.setButtonEnabled(this.bankBtn, canBank);
+    this.setButtonEnabled(this.surrenderBtn, showPanel && !this.actionsBlocked);
   }
 
   private renderStatus(): void {
@@ -381,21 +549,19 @@ export class HudUiService {
       this.statusPanel.style.display = 'block';
       return;
     }
-    const isMyTurn = s.currentPlayer === this.ownUserId;
-    const opponent = s.currentPlayer ? formatPlayer(s.currentPlayer, this.ownUserId) : '-';
     let text = '';
     switch (s.phase as MatchPhase) {
       case MATCH_PHASE.WAITING:
-        text = isMyTurn ? t('yourTurnRoll') : `${t('waitingFor')} ${opponent}`;
+        text = '';
         break;
       case MATCH_PHASE.ROLLING:
         text = t('rolling');
         break;
       case MATCH_PHASE.SELECTING:
-        text = isMyTurn ? '' : `${t('turnOwner')}: ${opponent}, ${t('selectingDice')}`;
+        text = '';
         break;
       case MATCH_PHASE.FINISHED: {
-        const winner = s.winner ? formatPlayer(s.winner, this.ownUserId) : '-';
+        const winner = s.winner ? this.displayNameForUser(s.winner) : '-';
         text = `${t('won')}: ${winner}`;
         break;
       }
@@ -410,6 +576,38 @@ export class HudUiService {
 
   private isRanked(): boolean {
     return this.roomState?.mode === ROOM_MODE.RANKED;
+  }
+
+  private isDuel(): boolean {
+    const players = this.roomState?.members.filter((m) => m.role === ROOM_ROLE.PLAYER) ?? [];
+    return players.length === 2;
+  }
+
+  private displayNameForUser(userId: string): string {
+    const member = this.roomState?.members.find((m) => m.userId === userId);
+    return member?.displayName.trim() || t('player');
+  }
+
+  private showTurnBanner(userId: string): void {
+    if (this.turnBannerTimer !== null) clearTimeout(this.turnBannerTimer);
+    const text =
+      userId === this.ownUserId
+        ? t('yourTurnBanner')
+        : `${t('playerTurnPrefix')}: ${this.displayNameForUser(userId)}`;
+    this.turnBannerPanel.textContent = text.toLocaleUpperCase();
+    this.turnBannerPanel.style.display = 'block';
+    this.turnBannerTimer = window.setTimeout(() => {
+      this.turnBannerPanel.style.display = 'none';
+      this.turnBannerTimer = null;
+    }, TURN_BANNER_DURATION_MS);
+  }
+
+  private queueOrShowTurnBanner(userId: string): void {
+    if (this.actionsBlocked || this.errorPanel.style.display === 'block') {
+      this.queuedTurnBannerUserId = userId;
+      return;
+    }
+    this.showTurnBanner(userId);
   }
 
   private formatTurnTimer(): string {
@@ -446,6 +644,7 @@ export class HudUiService {
       fontFamily: FONT_FAMILY.ui,
       fontSize: FONT_SIZE.hud,
       borderRadius: PANEL_RADIUS,
+      border: '1px solid transparent',
       pointerEvents: 'none',
       lineHeight: '1.5',
     } satisfies Partial<CSSStyleDeclaration>);
@@ -461,17 +660,18 @@ export class HudUiService {
       background: BTN_BG,
       color: BTN_FG,
       border: 'none',
-      borderRadius: PANEL_RADIUS,
+      borderRadius: '6px',
       fontFamily: FONT_FAMILY.ui,
       fontSize: FONT_SIZE.hud,
-      width: UI_SIZE.hudButtonWidth,
-      height: UI_SIZE.hudButtonHeight,
+      width: '100%',
+      minHeight: UI_SIZE.hudButtonHeight,
       boxSizing: 'border-box',
       display: 'inline-flex',
       alignItems: 'center',
       justifyContent: 'center',
-      lineHeight: '1',
-      whiteSpace: 'nowrap',
+      textAlign: 'center',
+      lineHeight: '1.15',
+      whiteSpace: 'normal',
       cursor: 'pointer',
       pointerEvents: 'auto',
     } satisfies Partial<CSSStyleDeclaration>);

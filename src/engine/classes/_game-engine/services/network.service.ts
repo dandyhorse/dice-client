@@ -5,15 +5,20 @@ import { EventEmitter } from '../../event-emitter.class';
 
 import {
   packMatchBank,
+  packMatchForfeit,
+  packMatchSelectionPreviewCmd,
   packMatchSelectDice,
   packRelease,
   packRoomCreate,
   packRoomJoin,
+  packRoomLeave,
   packRoomListRequest,
+  packRoomQuickMatch,
   packRoomStart,
   unpackAckError,
   unpackAckOk,
   unpackMatchRollResult,
+  unpackMatchSelectionPreview,
   unpackMatchState,
   unpackMatchTurnResult,
   unpackRoomList,
@@ -22,12 +27,13 @@ import {
   unpackSnapshot,
 } from '../../../../network/protocol/codecs';
 import { OP } from '../../../../network/protocol/opcodes';
-import { ROOM_MODE } from '../../../../network/protocol/types';
+import { DEFAULT_ROOM_OPTIONS, ROOM_MODE } from '../../../../network/protocol/types';
 
 import type {
   DieRestStateBin,
   DieStateBin,
   MatchRollResultPayload,
+  MatchSelectionPreviewPayload,
   MatchStatePayload,
   MatchTurnResultPayload,
   RoomMode,
@@ -43,6 +49,7 @@ export type { RestPayload, RoomMember, SnapshotPayload } from '../../../../netwo
 export type {
   MatchPhase,
   MatchRollResultPayload,
+  MatchSelectionPreviewPayload,
   MatchStatePayload,
   MatchTotal,
   MatchTurnResultPayload,
@@ -72,6 +79,9 @@ export type RoomListItem = RoomListItemPayload;
 
 const RECONNECT_INITIAL_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
+const REQUEST_TIMEOUT_MS = 8000;
+const QUICK_REQUEST_TIMEOUT_MS = 1500;
+const QUICK_FALLBACK_ROOM_NAME = 'Quick game';
 
 const wsUrlFor = (userId: string, displayName: string, accessToken?: string): string => {
   const base = SERVER_URL.replace(/^http/, 'ws');
@@ -85,6 +95,7 @@ interface PendingRequest {
   /** Тело ack (для ROOM_CREATE/JOIN — packed RoomState; для select/bank — undefined). */
   resolve: (body: Uint8Array | undefined) => void;
   reject: (err: Error) => void;
+  timeoutId: number;
 }
 
 /**
@@ -136,7 +147,10 @@ export class NetworkService {
     this.displayName = 'Player';
     this.accessToken = undefined;
     // Реджектим висящие — иначе UI промисы зависнут навсегда.
-    for (const p of this.pending.values()) p.reject(new Error('disconnected'));
+    for (const p of this.pending.values()) {
+      clearTimeout(p.timeoutId);
+      p.reject(new Error('disconnected'));
+    }
     this.pending.clear();
   };
 
@@ -148,9 +162,10 @@ export class NetworkService {
     mode: RoomMode = ROOM_MODE.MATCH,
     options?: Partial<RoomOptionsPayload>,
     gameName?: string,
+    password?: string,
   ): Promise<RoomState> => {
     return this.sendCommand((requestId) =>
-      packRoomCreate({ requestId, mode, options, gameName }),
+      packRoomCreate({ requestId, mode, options, gameName, password }),
     ).then((body) => {
       if (!body) throw new Error('empty ROOM_CREATE response');
       const state = unpackRoomState(body);
@@ -161,6 +176,23 @@ export class NetworkService {
     });
   };
 
+  quickMatch = (): Promise<RoomState> => {
+    return this.sendCommand(
+      (requestId) => packRoomQuickMatch({ requestId }),
+      QUICK_REQUEST_TIMEOUT_MS,
+    ).then((body) => {
+      if (!body) throw new Error('empty ROOM_QUICK_MATCH response');
+      const state = unpackRoomState(body);
+      this.currentRoomId = state.id;
+      this.currentRoomCode = state.code;
+      this.currentRoomState = state;
+      return state;
+    }).catch((error: Error) => {
+      if (error.message !== 'request timed out') throw error;
+      return this.quickMatchFallback();
+    });
+  };
+
   listRooms = (): Promise<RoomListItem[]> => {
     return this.sendCommand((requestId) => packRoomListRequest({ requestId })).then((body) => {
       if (!body) throw new Error('empty ROOM_LIST response');
@@ -168,14 +200,24 @@ export class NetworkService {
     });
   };
 
-  joinRoom = (code: string): Promise<RoomState> => {
-    return this.sendCommand((requestId) => packRoomJoin({ requestId, code })).then((body) => {
+  joinRoom = (code: string, password?: string): Promise<RoomState> => {
+    return this.sendCommand((requestId) => packRoomJoin({ requestId, code, password })).then((body) => {
       if (!body) throw new Error('empty ROOM_JOIN response');
       const state = unpackRoomState(body);
       this.currentRoomId = state.id;
       this.currentRoomCode = state.code;
       this.currentRoomState = state;
       return state;
+    });
+  };
+
+  leaveRoom = (): Promise<void> => {
+    const roomId = this.currentRoomId;
+    if (!roomId) return Promise.resolve();
+    return this.sendCommand((requestId) => packRoomLeave({ requestId, roomId })).then(() => {
+      this.currentRoomId = null;
+      this.currentRoomCode = null;
+      this.currentRoomState = null;
     });
   };
 
@@ -229,12 +271,34 @@ export class NetworkService {
     ).then(() => undefined);
   };
 
+  sendForfeit = (): Promise<void> => {
+    const roomId = this.currentRoomId;
+    if (!roomId) return Promise.reject(new Error('not in a room'));
+    return this.sendCommand((requestId) =>
+      packMatchForfeit({ requestId, roomId }),
+    ).then(() => undefined);
+  };
+
+  /**
+   * Realtime preview локального выбора. Это fire-and-forget UI signal:
+   * сервер всё равно валидирует финальный выбор в sendSelectDice/sendBank.
+   */
+  sendSelectionPreview = (indices: number[]): void => {
+    const sock = this.ws;
+    const roomId = this.currentRoomId;
+    if (!sock || sock.readyState !== WebSocket.OPEN || !roomId) return;
+    sock.send(
+      packMatchSelectionPreviewCmd({ roomId, indices }) as Uint8Array<ArrayBuffer>,
+    );
+  };
+
   // ──────────────────────────────────────────────────────────────
   // Внутренние
   // ──────────────────────────────────────────────────────────────
 
   private sendCommand = (
     build: (requestId: number) => Uint8Array,
+    timeoutMs = REQUEST_TIMEOUT_MS,
   ): Promise<Uint8Array | undefined> => {
     const sock = this.ws;
     if (!sock || sock.readyState !== WebSocket.OPEN) {
@@ -242,10 +306,29 @@ export class NetworkService {
     }
     const requestId = this.requestSeq++;
     return new Promise<Uint8Array | undefined>((resolve, reject) => {
-      this.pending.set(requestId, { resolve, reject });
+      const timeoutId = window.setTimeout(() => {
+        const pending = this.pending.get(requestId);
+        if (!pending) return;
+        this.pending.delete(requestId);
+        pending.reject(new Error('request timed out'));
+      }, timeoutMs);
+      this.pending.set(requestId, { resolve, reject, timeoutId });
       sock.send(build(requestId) as Uint8Array<ArrayBuffer>);
     });
   };
+
+  private quickMatchFallback(): Promise<RoomState> {
+    return this.listRooms().then((rooms) => {
+      const quickRoom = rooms.find(
+        (room) =>
+          room.canJoinAsPlayer &&
+          room.gameName.trim().toLocaleLowerCase() ===
+            QUICK_FALLBACK_ROOM_NAME.toLocaleLowerCase(),
+      );
+      if (quickRoom) return this.joinRoom(quickRoom.code);
+      return this.createRoom(ROOM_MODE.MATCH, DEFAULT_ROOM_OPTIONS, QUICK_FALLBACK_ROOM_NAME);
+    });
+  }
 
   private openSocket = (
     initialResolve?: () => void,
@@ -281,7 +364,10 @@ export class NetworkService {
     ws.onclose = () => {
       this.ws = null;
       // Все висящие requests становятся undelivered — реджектим.
-      for (const p of this.pending.values()) p.reject(new Error('socket closed'));
+      for (const p of this.pending.values()) {
+        clearTimeout(p.timeoutId);
+        p.reject(new Error('socket closed'));
+      }
       this.pending.clear();
       if (this.autoReconnect) this.scheduleReconnect();
     };
@@ -347,11 +433,17 @@ export class NetworkService {
         this.events.emit('match-turn-result', payload);
         return;
       }
+      case OP.MATCH_SELECTION_PREVIEW: {
+        const payload: MatchSelectionPreviewPayload = unpackMatchSelectionPreview(buf);
+        this.events.emit('match-selection-preview', payload);
+        return;
+      }
       case OP.ACK_OK: {
         const ack = unpackAckOk(buf);
         const pending = this.pending.get(ack.requestId);
         this.pending.delete(ack.requestId);
         if (!pending) return;
+        clearTimeout(pending.timeoutId);
         // Тело ack — opaque, парсит вызывающий (createRoom/joinRoom разворачивают
         // RoomState; select/bank ничего не ждут в body).
         pending.resolve(ack.body && ack.body.length > 0 ? ack.body : undefined);
@@ -361,6 +453,7 @@ export class NetworkService {
         const err = unpackAckError(buf);
         const pending = this.pending.get(err.requestId);
         this.pending.delete(err.requestId);
+        if (pending) clearTimeout(pending.timeoutId);
         pending?.reject(new Error(`${err.code}: ${err.message}`));
         return;
       }

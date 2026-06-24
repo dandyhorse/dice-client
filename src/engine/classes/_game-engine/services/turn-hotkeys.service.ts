@@ -43,10 +43,11 @@ export class TurnHotkeysService {
     this.events.emit(action);
   };
 
-  private actionForCode(code: string): 'select-all' | 'continue' | 'bank' | null {
+  private actionForCode(code: string): 'select-all' | 'continue' | 'bank' | 'surrender' | null {
     if (code === this.bindings.selectAll) return 'select-all';
     if (code === this.bindings.continueTurn) return 'continue';
     if (code === this.bindings.bankTurn) return 'bank';
+    if (code === this.bindings.surrender) return 'surrender';
     return null;
   }
 }

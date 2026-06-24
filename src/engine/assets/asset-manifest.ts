@@ -9,6 +9,7 @@ export const TABLE_TEXTURE_BASE_URL = '/assets/table/wood-cabinet-worn-long-1k/'
 export const TABLE_COLOR_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_long_diff_1k.jpg`;
 export const TABLE_NORMAL_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_long_nor_gl_1k.png`;
 export const TABLE_ROUGHNESS_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_long_rough_1k.png`;
+export const BACKGROUND_TEXTURE_URL = '/assets/background/background_texture_2.png';
 
 export interface AssetGroupManifest {
   images: string[];
@@ -30,6 +31,7 @@ export const ASSET_GROUPS: Record<AssetGroup, AssetGroupManifest> = {
       TABLE_COLOR_MAP_URL,
       TABLE_NORMAL_MAP_URL,
       TABLE_ROUGHNESS_MAP_URL,
+      BACKGROUND_TEXTURE_URL,
     ],
     models: [],
   },

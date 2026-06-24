@@ -4,15 +4,20 @@ import { EventEmitter } from '../../event-emitter.class';
 import { DiceService } from './dice.service';
 import { validateSelection, type ScoringOption } from '../../../../domain/scorer';
 
-const NO_HIGHLIGHT = { color: 0x000000, intensity: 0 };
-
-const HIGHLIGHTS = {
-  straight: { color: 0x38c172, intensity: 0.18, selectedColor: 0x76f0a0, selectedIntensity: 0.55 },
-  kind: { color: 0x4488ff, intensity: 0.2, selectedColor: 0x6aa6ff, selectedIntensity: 0.58 },
-  single: { color: 0xf2b84b, intensity: 0.18, selectedColor: 0xffd166, selectedIntensity: 0.52 },
+const HIGHLIGHT_PRIORITY = {
+  straight: 3,
+  kind: 2,
+  single: 1,
 } as const;
 
-type HighlightKind = keyof typeof HIGHLIGHTS;
+const MARKER_COLOR = 0xffd166;
+const MARKER_Y = 0.018;
+const MARKER_INNER_RADIUS = 0.31;
+const MARKER_OUTER_RADIUS = 0.398;
+const MARKER_HINT_OPACITY = 0.18;
+const MARKER_SELECTED_OPACITY = 0.78;
+
+type HighlightKind = keyof typeof HIGHLIGHT_PRIORITY;
 
 interface DieHighlight {
   kind: HighlightKind;
@@ -22,17 +27,13 @@ interface DieHighlight {
 /**
  * Click-to-select для костей. Включается только в фазе SELECTING своего хода.
  *
- * Слушает `mouseup` (а не `mousedown`) на canvas — чтобы не конфликтовать
- * с hold/release ShakeInputService (который сам выключен в SELECTING, но
- * слушать одно и то же событие — лишний риск). Левая кнопка только.
- *
  * Индексы выбора — snapshot-id кости (`remoteDice[]` index). `rolledFaces`
  * приходит в порядке активных видимых костей, поэтому scoring-позиции
  * переводятся в snapshot-id перед подсветкой, а выбранные snapshot-id — обратно
  * в позиции `rolledFaces` для локальной проверки.
  *
- * Подсветка — emissive на материалах граней. Каждая кость имеет 6
- * MeshStandardMaterial (по числу faces); меняем emissive на всех 6.
+ * Подсветка не меняет материалы куба: выбранные/доступные кости отмечаются
+ * плоскими кругами на поверхности стола под текущей позицией mesh.
  */
 export class SelectionService {
   readonly events = new EventEmitter();
@@ -40,28 +41,42 @@ export class SelectionService {
   private readonly raycaster = new THREE.Raycaster();
   private readonly ndc = new THREE.Vector2();
   private readonly selected = new Set<number>();
+  private readonly externalSelected = new Set<number>();
   /** Порядок выбора (для UX-стабильности возвращаем индексы в порядке кликов). */
   private readonly orderedSelection: number[] = [];
   private readonly selectable = new Set<number>();
   private readonly highlights = new Map<number, DieHighlight>();
   private readonly rollIndexBySnapshotIndex = new Map<number, number>();
+  private readonly markers = new Map<number, THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>>();
+  private readonly markerGeometry = new THREE.RingGeometry(
+    MARKER_INNER_RADIUS,
+    MARKER_OUTER_RADIUS,
+    40,
+  );
   private rolledFaces: number[] = [];
   private enabled = false;
 
   private readonly canvas: HTMLCanvasElement;
   private readonly camera: THREE.PerspectiveCamera;
   private readonly dice: DiceService;
+  private readonly scene: THREE.Scene;
 
-  constructor(canvas: HTMLCanvasElement, camera: THREE.PerspectiveCamera, dice: DiceService) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    camera: THREE.PerspectiveCamera,
+    dice: DiceService,
+    scene: THREE.Scene,
+  ) {
     this.canvas = canvas;
     this.camera = camera;
     this.dice = dice;
+    this.scene = scene;
     canvas.addEventListener('mouseup', this.onMouseUp);
   }
 
   enable(): void {
     this.enabled = true;
-    this.applyAllHighlights();
+    this.updateMarkers();
   }
 
   disable(): void {
@@ -80,7 +95,7 @@ export class SelectionService {
   clear(): void {
     this.selected.clear();
     this.orderedSelection.length = 0;
-    this.applyAllHighlights();
+    this.updateMarkers();
     this.emitSelectionChanged();
   }
 
@@ -95,7 +110,7 @@ export class SelectionService {
       this.orderedSelection.push(entry.index);
     }
 
-    this.applyAllHighlights();
+    this.updateMarkers();
     this.emitSelectionChanged();
   }
 
@@ -110,7 +125,7 @@ export class SelectionService {
 
     for (const option of options) {
       const kind = this.kindForOption(option);
-      const priority = this.priorityForKind(kind);
+      const priority = HIGHLIGHT_PRIORITY[kind];
       for (const rollIndex of option.dieIndices) {
         const snapshotIndex = active[rollIndex]?.index ?? rollIndex;
         this.selectable.add(snapshotIndex);
@@ -121,7 +136,7 @@ export class SelectionService {
       }
     }
 
-    this.applyAllHighlights();
+    this.updateMarkers();
     this.emitSelectionChanged();
   }
 
@@ -132,14 +147,62 @@ export class SelectionService {
     this.highlights.clear();
     this.rollIndexBySnapshotIndex.clear();
     this.rolledFaces = [];
-    this.clearAllHighlights();
+    this.updateMarkers();
     if (emit) this.emitSelectionChanged();
+  }
+
+  setExternalSelection(indices: number[]): void {
+    this.externalSelected.clear();
+    for (const index of indices) {
+      if (Number.isInteger(index) && index >= 0) this.externalSelected.add(index);
+    }
+    this.updateMarkers();
+  }
+
+  clearExternalSelection(): void {
+    if (this.externalSelected.size === 0) return;
+    this.externalSelected.clear();
+    this.updateMarkers();
+  }
+
+  updateMarkers(): void {
+    const dice = this.dice.getDiceMeshes();
+    const present = new Set<number>();
+
+    for (const entry of dice) {
+      present.add(entry.index);
+      const marker = this.ensureMarker(entry.index);
+      const visible = entry.mesh.visible;
+      const isSelected = this.selected.has(entry.index);
+      const isExternal = this.externalSelected.has(entry.index);
+      const isHint = this.enabled && this.highlights.has(entry.index);
+      const shouldShow = visible && (isSelected || isExternal || isHint);
+
+      marker.visible = shouldShow;
+      if (!shouldShow) continue;
+
+      marker.position.set(entry.mesh.position.x, MARKER_Y, entry.mesh.position.z);
+      marker.material.opacity =
+        isSelected || isExternal ? MARKER_SELECTED_OPACITY : MARKER_HINT_OPACITY;
+    }
+
+    for (const [index, marker] of this.markers) {
+      if (present.has(index)) continue;
+      marker.visible = false;
+    }
   }
 
   destroy(): void {
     this.enabled = false;
     this.canvas.removeEventListener('mouseup', this.onMouseUp);
     this.clearScoringOptions(false);
+    this.clearExternalSelection();
+    for (const marker of this.markers.values()) {
+      marker.removeFromParent();
+      marker.material.dispose();
+    }
+    this.markers.clear();
+    this.markerGeometry.dispose();
   }
 
   private onMouseUp = (event: MouseEvent): void => {
@@ -163,10 +226,10 @@ export class SelectionService {
     if (!entry) return;
     if (!this.selectable.has(entry.index)) return;
 
-    this.toggle(entry.index, hitMesh);
+    this.toggle(entry.index);
   };
 
-  private toggle(index: number, mesh: THREE.Mesh): void {
+  private toggle(index: number): void {
     if (this.selected.has(index)) {
       this.selected.delete(index);
       const pos = this.orderedSelection.indexOf(index);
@@ -175,47 +238,29 @@ export class SelectionService {
       this.selected.add(index);
       this.orderedSelection.push(index);
     }
-    this.applyHighlight(index, mesh);
+    this.updateMarkers();
     this.emitSelectionChanged();
   }
 
-  private applyAllHighlights(): void {
-    for (const entry of this.dice.getDiceMeshes()) {
-      this.applyHighlight(entry.index, entry.mesh);
-    }
-  }
+  private ensureMarker(index: number): THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial> {
+    const existing = this.markers.get(index);
+    if (existing) return existing;
 
-  private clearAllHighlights(): void {
-    for (const entry of this.dice.getDiceMeshes()) {
-      this.applyMaterialHighlight(entry.mesh, NO_HIGHLIGHT.color, NO_HIGHLIGHT.intensity);
-    }
-  }
-
-  private applyHighlight(index: number, mesh: THREE.Mesh): void {
-    const info = this.highlights.get(index);
-    if (!info) {
-      this.applyMaterialHighlight(mesh, NO_HIGHLIGHT.color, NO_HIGHLIGHT.intensity);
-      return;
-    }
-
-    const palette = HIGHLIGHTS[info.kind];
-    const selected = this.selected.has(index);
-    this.applyMaterialHighlight(
-      mesh,
-      selected ? palette.selectedColor : palette.color,
-      selected ? palette.selectedIntensity : palette.intensity,
-    );
-  }
-
-  private applyMaterialHighlight(mesh: THREE.Mesh, color: number, intensity: number): void {
-    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    for (const m of materials) {
-      const std = m as THREE.MeshStandardMaterial;
-      if (!std.emissive) continue;
-      std.emissive.setHex(color);
-      std.emissiveIntensity = intensity;
-      std.needsUpdate = true;
-    }
+    const material = new THREE.MeshBasicMaterial({
+      color: MARKER_COLOR,
+      transparent: true,
+      opacity: MARKER_HINT_OPACITY,
+      depthWrite: false,
+      depthTest: true,
+      side: THREE.DoubleSide,
+    });
+    const marker = new THREE.Mesh(this.markerGeometry, material);
+    marker.rotation.x = -Math.PI / 2;
+    marker.visible = false;
+    marker.renderOrder = 2;
+    this.scene.add(marker);
+    this.markers.set(index, marker);
+    return marker;
   }
 
   private emitSelectionChanged(): void {
@@ -233,18 +278,4 @@ export class SelectionService {
     if (option.label.includes('of-a-kind')) return 'kind';
     return 'single';
   }
-
-  private priorityForKind(kind: HighlightKind): number {
-    switch (kind) {
-      case 'straight':
-        return 3;
-      case 'kind':
-        return 2;
-      case 'single':
-        return 1;
-      default:
-        return 0;
-    }
-  }
-
 }

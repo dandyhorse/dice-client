@@ -18,11 +18,13 @@ import {
 } from '../../config';
 import { assetPreloader } from '../../assets/asset-preloader';
 import {
+  BACKGROUND_TEXTURE_URL,
   TABLE_COLOR_MAP_URL,
   TABLE_NORMAL_MAP_URL,
   TABLE_ROUGHNESS_MAP_URL,
 } from '../../assets/asset-manifest';
 import { audioService } from '../../audio/audio.service';
+import { BenchDiceService } from './services/bench-dice.service';
 import { DiceService } from './services/dice.service';
 import { HudUiService } from './services/hud-ui.service';
 import { NetworkService } from './services/network.service';
@@ -40,6 +42,7 @@ import { t } from '../../../ui/i18n';
 import { DEFAULT_PLAYER_SETTINGS, type PlayerSettings } from '../../../player-settings';
 import type {
   MatchRollResultPayload,
+  MatchSelectionPreviewPayload,
   MatchStatePayload,
   MatchTurnResultPayload,
   RestPayload,
@@ -66,6 +69,7 @@ export interface GameEngineOptions {
   network?: NetworkService;
   soloConfig?: SoloModeConfig;
   playerSettings?: PlayerSettings;
+  onSurrender?: () => void;
 }
 
 interface PerfStats {
@@ -82,7 +86,10 @@ interface PerfStats {
 }
 
 const PERF_UPDATE_INTERVAL_MS = 500;
-const TABLE_VISUAL_OVERSCAN = 1.04;
+const TABLE_VIEWPORT_FILL = 0.72;
+const TABLE_RIM_THICKNESS = 0.16;
+const TABLE_RIM_HEIGHT = 0.08;
+const TABLE_RIM_COLOR = 0x2f1b12;
 const DIRECTIONAL_LIGHT_Y = 9.5;
 const CEILING_LIGHT_Y_OFFSET = 1.1;
 const LIGHT_FORWARD_Z = -5.8;
@@ -94,6 +101,8 @@ const PS1_RENDER_SCALE = 0.48;
 const TABLE_PS1_TEXTURE_SIZE = 256;
 const TABLE_PS1_DITHER_STRENGTH = 2;
 const TABLE_PS1_COLOR_STEP = 24;
+const BACKGROUND_PLANE_SCALE = 2.35;
+const FARKLE_ACTION_BLOCK_MS = 1200;
 const PERF_DEBUG_ENABLED = (): boolean => {
   const params = new URLSearchParams(window.location.search);
   if (params.has('perf')) return true;
@@ -126,6 +135,7 @@ export class GameEngine {
   private readonly turnHotkeys: TurnHotkeysService;
   private readonly network: NetworkService | null;
   private readonly selection: SelectionService | null;
+  private readonly benchDice: BenchDiceService | null;
   private readonly hud: HudUiService | null;
   private readonly soloConfig: SoloModeConfig | null;
   private readonly soloHud: SoloUiService | null;
@@ -136,7 +146,15 @@ export class GameEngine {
   private localRestCorrectionPasses = 0;
   private localLastRolledFaces: number[] = [];
   private networkLastRolledFaces: number[] = [];
+  private pendingSelectionPreview: MatchSelectionPreviewPayload | null = null;
+  private pendingNetworkAutoRoll = false;
+  private networkActionsBlockedUntil = 0;
+  private networkActionsBlockTimer: number | null = null;
+  private readonly onSurrender?: () => void;
   private tableVisualMesh: THREE.Mesh | null = null;
+  private backgroundMesh: THREE.Mesh | null = null;
+  private backgroundTexture: THREE.Texture | null = null;
+  private readonly tableRimMeshes: THREE.Mesh[] = [];
   private readonly tableTextures: THREE.Texture[] = [];
   private readonly networkCollisionVelocities = new Map<number, THREE.Vector3>();
   private readonly networkCollisionLastPlayedMs = new Map<number, number>();
@@ -149,6 +167,7 @@ export class GameEngine {
     this.mode = options.mode ?? 'local';
     this.network = options.network ?? null;
     this.soloConfig = this.mode === 'local' ? (options.soloConfig ?? DEFAULT_SOLO_MODE) : null;
+    this.onSurrender = options.onSurrender;
 
     this.scene = this.createScene();
     this.camera = this.createCamera();
@@ -185,6 +204,7 @@ export class GameEngine {
     this.turnHotkeys.events.on('select-all', this.handleHotkeySelectAll);
     this.turnHotkeys.events.on('continue', this.handleHotkeyContinue);
     this.turnHotkeys.events.on('bank', this.handleHotkeyBank);
+    this.turnHotkeys.events.on('surrender', this.handleHotkeySurrender);
     this.input.events.on('hold-start', () => {
       audioService.play('dice-pickup');
       this.dice.pickup();
@@ -245,8 +265,9 @@ export class GameEngine {
       const isTestRoom = this.currentRoomState?.mode === ROOM_MODE.TEST;
       this.selection = isTestRoom
         ? null
-        : new SelectionService(this.renderer.domElement, this.camera, this.dice);
-      this.hud = isTestRoom ? null : new HudUiService(ownUserId);
+        : new SelectionService(this.renderer.domElement, this.camera, this.dice, this.scene);
+      this.benchDice = isTestRoom ? null : new BenchDiceService(this.scene);
+      this.hud = isTestRoom ? null : new HudUiService(ownUserId, playerSettings.controls);
       if (this.currentRoomState) this.hud?.setRoomState(this.currentRoomState);
 
       net.events.on('room-state', (state: RoomState) => {
@@ -269,12 +290,19 @@ export class GameEngine {
         net.events.on('match-state', (state: MatchStatePayload) => {
           this.currentMatchState = state;
           if (state.phase !== MATCH_PHASE.SELECTING) this.networkLastRolledFaces = [];
+          if (state.phase !== MATCH_PHASE.SELECTING || state.currentPlayer === ownUserId) {
+            this.selection?.clearExternalSelection();
+            this.pendingSelectionPreview = null;
+            this.hud?.setSelectionPreview(null);
+          }
+          this.benchDice?.setFaces(state.bench);
           this.hud?.setMatchState(state);
+          this.applyPendingSelectionPreview();
           const isOwnPlayer = this.isOwnPlayer(ownUserId);
           const isMyTurn = state.currentPlayer === ownUserId;
           const isSelecting = state.phase === MATCH_PHASE.SELECTING;
           const isWaiting = state.phase === MATCH_PHASE.WAITING;
-          if (!isOwnPlayer || state.paused) {
+          if (!isOwnPlayer || state.paused || this.areNetworkActionsBlocked()) {
             this.input.setEnabled(false);
             this.selection?.disable();
           } else if (isMyTurn && isSelecting) {
@@ -288,6 +316,7 @@ export class GameEngine {
             this.selection?.disable();
           }
           this.syncTurnHotkeysEnabled();
+          this.tryNetworkAutoRoll();
         });
 
         // Casual показывает scoring-подсказки; ranked только блокирует
@@ -296,19 +325,21 @@ export class GameEngine {
           if (r.bust) {
             this.networkLastRolledFaces = [];
             this.selection?.clearScoringOptions();
-            if (!this.isRankedRoom()) this.hud?.showError('BUST');
+            if (!this.isRankedRoom()) {
+              this.blockNetworkActions(FARKLE_ACTION_BLOCK_MS);
+              this.hud?.showError('BUST');
+            }
           } else {
             const canSelectRoll =
               this.currentMatchState?.currentPlayer === ownUserId && this.isOwnPlayer(ownUserId);
+            this.networkLastRolledFaces = [...r.rolledFaces];
             if (canSelectRoll) {
-              this.networkLastRolledFaces = [...r.rolledFaces];
               this.selection?.setScoringOptions(
                 r.rolledFaces,
                 scoreRoll(r.rolledFaces),
                 !this.isRankedRoom(),
               );
             } else {
-              this.networkLastRolledFaces = [];
               this.selection?.clearScoringOptions();
             }
             this.hud?.setRollResult(this.isRankedRoom() ? [] : r.rolledFaces);
@@ -317,18 +348,35 @@ export class GameEngine {
         });
 
         net.events.on('match-turn-result', (r: MatchTurnResultPayload) => {
-          if (this.isRankedRoom() && r.bust) this.hud?.showError('BUST');
+          if (this.isRankedRoom() && r.bust) {
+            this.blockNetworkActions(FARKLE_ACTION_BLOCK_MS);
+            this.hud?.showError('BUST');
+          }
+        });
+
+        net.events.on('match-selection-preview', (payload: MatchSelectionPreviewPayload) => {
+          if (!this.selection) return;
+          if (payload.userId === ownUserId) return;
+          const preview = this.withSelectionPreviewPoints(payload);
+          this.hud?.setSelectionPreview(preview);
+          this.pendingSelectionPreview = preview;
+          this.applyPendingSelectionPreview();
         });
 
         this.selection?.events.on(
           'selection-changed',
           (indices: number[], valid: boolean, points: number) => {
             this.hud?.setSelectionState(indices.length, valid, points);
+            if (this.canUseNetworkSelectionControls()) {
+              this.network?.sendSelectionPreview(indices);
+            }
           },
         );
 
+        this.hud?.events.on('select-all-clicked', this.handleHotkeySelectAll);
         this.hud?.events.on('continue-clicked', this.handleNetworkContinue);
         this.hud?.events.on('bank-clicked', this.handleNetworkBank);
+        this.hud?.events.on('surrender-clicked', this.handleNetworkSurrender);
 
         // До получения первого MATCH_STATE: shake-input выключен, чтобы игрок
         // не успел отправить release в неподтверждённой фазе. Включится в
@@ -337,10 +385,11 @@ export class GameEngine {
       }
     } else if (this.mode === 'local' && this.soloConfig) {
       this.hud = null;
-      this.selection = new SelectionService(this.renderer.domElement, this.camera, this.dice);
+      this.benchDice = null;
+      this.selection = new SelectionService(this.renderer.domElement, this.camera, this.dice, this.scene);
       this.selection.disable();
       this.soloState = createSoloRun(this.soloConfig);
-      this.soloHud = new SoloUiService(this.soloConfig, this.soloState);
+      this.soloHud = new SoloUiService(this.soloConfig, this.soloState, playerSettings.controls);
       this.input.setEnabled(true);
 
       this.selection.events.on(
@@ -349,12 +398,16 @@ export class GameEngine {
           this.soloHud?.setSelectionState(indices.length, valid, points);
         },
       );
+      this.soloHud.events.on('select-all-clicked', this.handleHotkeySelectAll);
       this.soloHud.events.on('continue-clicked', this.handleSoloContinue);
       this.soloHud.events.on('bank-clicked', this.handleSoloBank);
+      this.soloHud.events.on('surrender-clicked', this.handleHotkeySurrender);
       this.soloHud.events.on('reset-clicked', this.resetSoloRun);
       this.soloHud.setStatus(t('readyToRoll'));
+      this.syncTurnHotkeysEnabled();
     } else {
       this.selection = null;
+      this.benchDice = null;
       this.hud = null;
       this.soloHud = null;
     }
@@ -455,6 +508,7 @@ export class GameEngine {
     this.soloHud?.setState(this.soloState);
     this.soloHud?.clearRollResult();
     this.setSoloWaitingState();
+    this.input.triggerKeyboardThrow();
   };
 
   private handleSoloBank = (): void => {
@@ -529,6 +583,7 @@ export class GameEngine {
 
   private handleHotkeySelectAll = (): void => {
     if (!this.canUseTurnHotkeys()) return;
+    if (this.mode === 'network' && this.isRankedRoom()) return;
     const selection = this.selection;
     if (!selection) return;
     if (selection.getSelectedIndices().length > 0) {
@@ -560,6 +615,15 @@ export class GameEngine {
     this.handleNetworkBank();
   };
 
+  private handleHotkeySurrender = (): void => {
+    if (!this.canUseSurrender()) return;
+    if (this.mode === 'network') {
+      this.handleNetworkSurrender();
+      return;
+    }
+    this.onSurrender?.();
+  };
+
   private handleNetworkContinue = (): void => {
     const selection = this.selection;
     const network = this.network;
@@ -568,9 +632,13 @@ export class GameEngine {
     network
       .sendSelectDice(indices)
       .then(() => {
+        this.pendingNetworkAutoRoll = true;
         this.networkLastRolledFaces = [];
+        this.pendingSelectionPreview = null;
+        selection.clearExternalSelection();
         selection.clear();
         this.syncTurnHotkeysEnabled();
+        this.tryNetworkAutoRoll();
       })
       .catch((e: Error) => this.hud?.showError(e.message));
   };
@@ -583,20 +651,116 @@ export class GameEngine {
     network
       .sendBank(indices)
       .then(() => {
+        this.pendingNetworkAutoRoll = false;
         this.networkLastRolledFaces = [];
+        this.pendingSelectionPreview = null;
+        selection.clearExternalSelection();
         selection.clear();
         this.syncTurnHotkeysEnabled();
       })
       .catch((e: Error) => this.hud?.showError(e.message));
   };
 
+  private handleNetworkSurrender = (): void => {
+    const network = this.network;
+    if (!network || !this.canUseSurrender()) return;
+    this.pendingNetworkAutoRoll = false;
+    network.sendForfeit().catch((e: Error) => this.hud?.showError(e.message));
+  };
+
   private syncTurnHotkeysEnabled(): void {
-    this.turnHotkeys.setEnabled(this.canUseTurnHotkeys());
+    this.turnHotkeys.setEnabled(this.canUseTurnHotkeys() || this.canUseSurrender());
   }
 
   private canUseTurnHotkeys(): boolean {
     if (this.mode === 'local') return this.canUseSoloHotkeys();
     return this.canUseNetworkHotkeys();
+  }
+
+  private canUseSurrender(): boolean {
+    if (this.mode === 'local') {
+      return this.soloState !== null && !isSoloRunEnded(this.soloState);
+    }
+
+    const state = this.currentMatchState;
+    const ownUserId = this.network?.getUserId() ?? '';
+    return (
+      state !== null &&
+      state.phase !== MATCH_PHASE.FINISHED &&
+      ownUserId.length > 0 &&
+      !this.areNetworkActionsBlocked() &&
+      this.isOwnPlayer(ownUserId)
+    );
+  }
+
+  private canUseNetworkAutoRoll(): boolean {
+    const state = this.currentMatchState;
+    const ownUserId = this.network?.getUserId() ?? '';
+    return (
+      this.mode === 'network' &&
+      state !== null &&
+      !state.paused &&
+      !this.areNetworkActionsBlocked() &&
+      state.phase === MATCH_PHASE.WAITING &&
+      state.currentPlayer === ownUserId &&
+      this.isOwnPlayer(ownUserId)
+    );
+  }
+
+  private tryNetworkAutoRoll(): void {
+    if (!this.pendingNetworkAutoRoll) return;
+    if (!this.canUseNetworkAutoRoll()) return;
+    this.pendingNetworkAutoRoll = false;
+    this.input.triggerKeyboardThrow();
+    this.syncTurnHotkeysEnabled();
+  }
+
+  private blockNetworkActions(durationMs: number): void {
+    if (this.mode !== 'network') return;
+    const until = performance.now() + durationMs;
+    this.networkActionsBlockedUntil = Math.max(this.networkActionsBlockedUntil, until);
+    this.input.setEnabled(false);
+    this.selection?.disable();
+    this.syncTurnHotkeysEnabled();
+    if (this.networkActionsBlockTimer !== null) clearTimeout(this.networkActionsBlockTimer);
+    this.networkActionsBlockTimer = window.setTimeout(() => {
+      this.networkActionsBlockTimer = null;
+      this.syncNetworkInputState();
+      this.syncTurnHotkeysEnabled();
+      this.tryNetworkAutoRoll();
+    }, durationMs);
+  }
+
+  private areNetworkActionsBlocked(): boolean {
+    return this.mode === 'network' && performance.now() < this.networkActionsBlockedUntil;
+  }
+
+  private syncNetworkInputState(): void {
+    const state = this.currentMatchState;
+    const ownUserId = this.network?.getUserId() ?? '';
+    if (this.mode !== 'network' || !state || !this.selection) {
+      this.input.setEnabled(false);
+      this.selection?.disable();
+      return;
+    }
+
+    const isOwnPlayer = this.isOwnPlayer(ownUserId);
+    const isMyTurn = state.currentPlayer === ownUserId;
+    const isSelecting = state.phase === MATCH_PHASE.SELECTING;
+    const isWaiting = state.phase === MATCH_PHASE.WAITING;
+    if (!isOwnPlayer || state.paused || this.areNetworkActionsBlocked()) {
+      this.input.setEnabled(false);
+      this.selection.disable();
+    } else if (isMyTurn && isSelecting) {
+      this.input.setEnabled(false);
+      this.selection.enable();
+    } else if (isMyTurn && isWaiting) {
+      this.input.setEnabled(true);
+      this.selection.disable();
+    } else {
+      this.input.setEnabled(false);
+      this.selection.disable();
+    }
   }
 
   private canUseSoloHotkeys(): boolean {
@@ -619,6 +783,7 @@ export class GameEngine {
       this.selection !== null &&
       state !== null &&
       !state.paused &&
+      !this.areNetworkActionsBlocked() &&
       state.phase === MATCH_PHASE.SELECTING &&
       state.currentPlayer === ownUserId &&
       this.isOwnPlayer(ownUserId) &&
@@ -627,7 +792,7 @@ export class GameEngine {
   }
 
   private canUseNetworkHotkeys(): boolean {
-    return this.canUseNetworkSelectionControls() && !this.isRankedRoom();
+    return this.canUseNetworkSelectionControls();
   }
 
   private getSoloSelectionPoints(): number | null {
@@ -682,6 +847,45 @@ export class GameEngine {
     return this.currentRoomState?.mode === ROOM_MODE.RANKED;
   }
 
+  private withSelectionPreviewPoints(
+    payload: MatchSelectionPreviewPayload,
+  ): MatchSelectionPreviewPayload {
+    if (payload.points > 0 || payload.indices.length === 0 || this.networkLastRolledFaces.length === 0) {
+      return payload;
+    }
+
+    const rollIndexByDieIndex = new Map<number, number>();
+    this.dice.getActiveDiceMeshes().forEach((entry, rollIndex) => {
+      rollIndexByDieIndex.set(entry.index, rollIndex);
+    });
+    const rollIndices = payload.indices.map((index) => rollIndexByDieIndex.get(index) ?? -1);
+    const validation = validateSelection(this.networkLastRolledFaces, rollIndices);
+    return {
+      ...payload,
+      valid: validation.valid === true,
+      points: validation.valid === true ? validation.points : 0,
+    };
+  }
+
+  private applyPendingSelectionPreview(): void {
+    const payload = this.pendingSelectionPreview;
+    const state = this.currentMatchState;
+    if (!payload || !this.selection || !state) return;
+
+    if (state.phase !== MATCH_PHASE.SELECTING || state.currentPlayer !== payload.userId) {
+      if (payload.indices.length === 0) this.selection.clearExternalSelection();
+      this.pendingSelectionPreview = null;
+      return;
+    }
+
+    if (payload.indices.length === 0) {
+      this.selection.clearExternalSelection();
+      this.pendingSelectionPreview = null;
+    } else {
+      this.selection.setExternalSelection(payload.indices);
+    }
+  }
+
   private canUseTestInput(ownUserId: string): boolean {
     const member = this.currentRoomState?.members.find((m) => m.userId === ownUserId);
     const roomActive = this.currentRoomState?.status === ROOM_STATUS.ACTIVE;
@@ -704,13 +908,31 @@ export class GameEngine {
 
   destroy(): void {
     this.stop();
+    if (this.networkActionsBlockTimer !== null) clearTimeout(this.networkActionsBlockTimer);
+    this.networkActionsBlockTimer = null;
     window.removeEventListener('resize', this.onResize);
     this.turnHotkeys.destroy();
     this.input.destroy();
     this.selection?.destroy();
+    this.benchDice?.destroy();
     this.hud?.destroy();
     this.soloHud?.destroy();
     this.perf?.el.remove();
+    const rimMaterials = new Set<THREE.Material>();
+    for (const mesh of this.tableRimMeshes) {
+      mesh.geometry.dispose();
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const material of materials) rimMaterials.add(material);
+    }
+    for (const material of rimMaterials) material.dispose();
+    if (this.backgroundMesh) {
+      this.backgroundMesh.geometry.dispose();
+      const materials = Array.isArray(this.backgroundMesh.material)
+        ? this.backgroundMesh.material
+        : [this.backgroundMesh.material];
+      for (const material of materials) material.dispose();
+    }
+    this.backgroundTexture?.dispose();
     this.renderer.domElement.remove();
     this.renderer.dispose();
   }
@@ -718,6 +940,8 @@ export class GameEngine {
   setPlayerSettings(settings: PlayerSettings): void {
     this.input.setThrowKeyCode(settings.controls.throwDice);
     this.turnHotkeys.setBindings(settings.controls);
+    this.hud?.setControls(settings.controls);
+    this.soloHud?.setControls(settings.controls);
   }
 
   private areShadowsEnabled(): boolean {
@@ -825,13 +1049,41 @@ export class GameEngine {
     const tanHalf = Math.tan((CAMERA_FOV * Math.PI) / 360);
     const hForDepth = TABLE_DEPTH / 2 / tanHalf;
     const hForWidth = TABLE_WIDTH / 2 / (tanHalf * aspect);
-    return Math.max(hForDepth, hForWidth);
+    return Math.max(hForDepth, hForWidth) / TABLE_VIEWPORT_FILL;
   }
 
   private createPlayArea(withBodies: boolean): void {
+    this.createBackgroundPlane();
     this.createTable(withBodies);
+    this.createTableRim();
     this.createWalls(withBodies);
     if (withBodies) this.createCeiling();
+  }
+
+  private createBackgroundPlane(): void {
+    const texture = this.createBackgroundTexture();
+    this.backgroundTexture = texture;
+    const size = Math.max(TABLE_WIDTH, TABLE_DEPTH) * BACKGROUND_PLANE_SCALE;
+    const geometry = new THREE.PlaneGeometry(size, size);
+    const material = new THREE.MeshBasicMaterial({
+      map: texture,
+      depthWrite: false,
+      depthTest: true,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.y = -TABLE_THICKNESS - 0.03;
+    mesh.renderOrder = -10;
+    this.scene.add(mesh);
+    this.backgroundMesh = mesh;
+  }
+
+  private createBackgroundTexture(): THREE.Texture {
+    const texture = assetPreloader.getTextureClone(BACKGROUND_TEXTURE_URL);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    return texture;
   }
 
   private createTable(withBody: boolean): void {
@@ -929,14 +1181,50 @@ export class GameEngine {
 
   private updateVisualTableSize(): void {
     if (!this.tableVisualMesh) return;
-    const tanHalf = Math.tan((CAMERA_FOV * Math.PI) / 360);
-    const viewDepth = this.camera.position.y * 2 * tanHalf;
-    const viewWidth = viewDepth * this.camera.aspect;
-    const visualWidth = Math.max(TABLE_WIDTH, viewWidth) * TABLE_VISUAL_OVERSCAN;
-    const visualDepth = Math.max(TABLE_DEPTH, viewDepth) * TABLE_VISUAL_OVERSCAN;
+    const visualWidth = TABLE_WIDTH;
+    const visualDepth = TABLE_DEPTH;
     this.tableVisualMesh.scale.set(visualWidth, 1, visualDepth);
     for (const texture of this.tableTextures) {
       texture.repeat.set(visualWidth / TABLE_WIDTH, visualDepth / TABLE_DEPTH);
+    }
+  }
+
+  private createTableRim(): void {
+    const material = new THREE.MeshStandardMaterial({
+      color: TABLE_RIM_COLOR,
+      roughness: 1,
+      metalness: 0,
+      flatShading: true,
+    });
+    const halfW = TABLE_WIDTH / 2;
+    const halfD = TABLE_DEPTH / 2;
+    const y = TABLE_RIM_HEIGHT / 2;
+    const bars: { size: [number, number, number]; pos: [number, number, number] }[] = [
+      {
+        size: [TABLE_WIDTH, TABLE_RIM_HEIGHT, TABLE_RIM_THICKNESS],
+        pos: [0, y, -halfD + TABLE_RIM_THICKNESS / 2],
+      },
+      {
+        size: [TABLE_WIDTH, TABLE_RIM_HEIGHT, TABLE_RIM_THICKNESS],
+        pos: [0, y, halfD - TABLE_RIM_THICKNESS / 2],
+      },
+      {
+        size: [TABLE_RIM_THICKNESS, TABLE_RIM_HEIGHT, TABLE_DEPTH - TABLE_RIM_THICKNESS * 2],
+        pos: [-halfW + TABLE_RIM_THICKNESS / 2, y, 0],
+      },
+      {
+        size: [TABLE_RIM_THICKNESS, TABLE_RIM_HEIGHT, TABLE_DEPTH - TABLE_RIM_THICKNESS * 2],
+        pos: [halfW - TABLE_RIM_THICKNESS / 2, y, 0],
+      },
+    ];
+
+    for (const bar of bars) {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(...bar.size), material);
+      mesh.position.set(...bar.pos);
+      mesh.castShadow = this.areShadowsEnabled();
+      mesh.receiveShadow = this.areShadowsEnabled();
+      this.scene.add(mesh);
+      this.tableRimMeshes.push(mesh);
     }
   }
 
@@ -1014,6 +1302,7 @@ export class GameEngine {
       // network: interpolation buffer + короткий extrapolation fallback.
       this.dice.extrapolate(currentTime);
     }
+    this.selection?.updateMarkers();
     const simMs = performance.now() - simStartMs;
 
     const renderStartMs = performance.now();
