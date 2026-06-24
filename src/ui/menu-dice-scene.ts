@@ -1,9 +1,11 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 import { createDiceMesh } from '../engine/assets/dice-visual.factory';
 
 const CAMERA_Z = 6.2;
 const DICE_SIZE = 1.18;
+const MENU_DICE_MODEL_URL = '/assets/dice/dice-stone-2/dice-stone.glb';
 const POINTER_EASE = 0.08;
 
 export class MenuDiceScene {
@@ -14,11 +16,12 @@ export class MenuDiceScene {
     alpha: true,
     powerPreference: 'high-performance',
   });
-  private readonly dice: THREE.Mesh[] = [];
+  private readonly dice: THREE.Object3D[] = [];
   private readonly pointerTarget = new THREE.Vector2();
   private readonly pointer = new THREE.Vector2();
   private rafId: number | null = null;
   private lastTime = 0;
+  private destroyed = false;
 
   constructor() {
     this.renderer.setPixelRatio(1);
@@ -44,16 +47,8 @@ export class MenuDiceScene {
     rim.position.set(-3.4, -0.8, 3.6);
     this.scene.add(ambient, key, rim);
 
-    const left = createDiceMesh(DICE_SIZE);
-    left.position.set(-1.35, -0.25, 0);
-    left.rotation.set(0.34, -0.66, 0.18);
-
-    const right = createDiceMesh(DICE_SIZE);
-    right.position.set(1.35, 0.18, -0.25);
-    right.rotation.set(-0.22, 0.52, -0.12);
-
-    this.dice.push(left, right);
-    this.scene.add(left, right);
+    this.addFallbackDice();
+    void this.loadModelDice();
     this.onResize();
   }
 
@@ -67,6 +62,7 @@ export class MenuDiceScene {
   }
 
   destroy(): void {
+    this.destroyed = true;
     if (this.rafId !== null) cancelAnimationFrame(this.rafId);
     this.rafId = null;
     window.removeEventListener('resize', this.onResize);
@@ -74,6 +70,59 @@ export class MenuDiceScene {
     window.removeEventListener('pointermove', this.onPointerMove);
     this.renderer.domElement.remove();
     this.renderer.dispose();
+  }
+
+  private addFallbackDice(): void {
+    const left = createDiceMesh(DICE_SIZE);
+    const right = createDiceMesh(DICE_SIZE);
+    this.addDicePair(left, right);
+  }
+
+  private async loadModelDice(): Promise<void> {
+    const loader = new GLTFLoader();
+    const gltf = await loader.loadAsync(MENU_DICE_MODEL_URL).catch(() => null);
+    if (!gltf || this.destroyed) return;
+
+    const template = this.createNormalizedModelTemplate(gltf.scene);
+    const left = template.clone(true);
+    const right = template.clone(true);
+    this.clearDice();
+    this.addDicePair(left, right);
+  }
+
+  private createNormalizedModelTemplate(model: THREE.Object3D): THREE.Group {
+    model.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(model);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const maxAxis = Math.max(size.x, size.y, size.z) || 1;
+    const wrap = new THREE.Group();
+
+    model.position.sub(center);
+    model.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      child.castShadow = false;
+      child.receiveShadow = false;
+    });
+
+    wrap.add(model);
+    wrap.scale.setScalar(DICE_SIZE / maxAxis);
+    return wrap;
+  }
+
+  private addDicePair(left: THREE.Object3D, right: THREE.Object3D): void {
+    left.position.set(-1.35, -0.25, 0);
+    left.rotation.set(0.34, -0.66, 0.18);
+    right.position.set(1.35, 0.18, -0.25);
+    right.rotation.set(-0.22, 0.52, -0.12);
+
+    this.dice.push(left, right);
+    this.scene.add(left, right);
+  }
+
+  private clearDice(): void {
+    for (const die of this.dice) this.scene.remove(die);
+    this.dice.length = 0;
   }
 
   private loop = (now: number): void => {
