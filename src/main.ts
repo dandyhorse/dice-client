@@ -277,6 +277,13 @@ const startQuickMatch = async (): Promise<void> => {
     quickSearchNetwork = network;
     quickSearchConnecting = false;
     renderHome();
+    await Promise.all([
+      assetPreloader.preloadGroup('gameplay'),
+      audioService.preloadGroup('gameplay'),
+    ]);
+    if (quickSearchToken !== token || activeNetwork !== network || quickSearchNetwork !== network) {
+      return;
+    }
     state = await network.quickMatch();
   } catch (err) {
     const searchStillCurrent =
@@ -293,6 +300,8 @@ const startQuickMatch = async (): Promise<void> => {
   if (quickSearchToken !== token || activeNetwork !== network || quickSearchNetwork !== network) {
     return;
   }
+  clearAuthControls();
+  clearAuthModal();
   handleRoomState(network, state);
 };
 

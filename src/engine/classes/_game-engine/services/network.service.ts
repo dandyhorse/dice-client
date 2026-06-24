@@ -41,7 +41,6 @@ import type {
   RoomListItemPayload,
   RestPayload,
   RoomStatePayload,
-  SnapshotPayload,
 } from '../../../../network/protocol/types';
 
 // Reexport под старыми именами — потребители (DiceService, GameEngine, main)
@@ -109,8 +108,6 @@ export class NetworkService {
   private currentRoomId: string | null = null;
   private currentRoomCode: string | null = null;
   private currentRoomState: RoomStatePayload | null = null;
-  private latestDiceSpawn: SnapshotPayload | null = null;
-  private latestMatchState: MatchStatePayload | null = null;
   private userId: string | null = null;
   private displayName = 'Player';
   private accessToken: string | undefined;
@@ -144,8 +141,6 @@ export class NetworkService {
     this.currentRoomId = null;
     this.currentRoomCode = null;
     this.currentRoomState = null;
-    this.latestDiceSpawn = null;
-    this.latestMatchState = null;
     this.userId = null;
     this.displayName = 'Player';
     this.accessToken = undefined;
@@ -160,8 +155,6 @@ export class NetworkService {
   getUserId = (): string | null => this.userId;
   getRoomId = (): string | null => this.currentRoomId;
   getRoomState = (): RoomStatePayload | null => this.currentRoomState;
-  getLatestDiceSpawn = (): SnapshotPayload | null => this.latestDiceSpawn;
-  getLatestMatchState = (): MatchStatePayload | null => this.latestMatchState;
 
   createRoom = (
     mode: RoomMode = ROOM_MODE.MATCH,
@@ -174,7 +167,6 @@ export class NetworkService {
     ).then((body) => {
       if (!body) throw new Error('empty ROOM_CREATE response');
       const state = unpackRoomState(body);
-      if (this.currentRoomId !== state.id) this.clearRealtimeCache();
       this.currentRoomId = state.id;
       this.currentRoomCode = state.code;
       this.currentRoomState = state;
@@ -186,7 +178,6 @@ export class NetworkService {
     return this.sendCommand((requestId) => packRoomQuickMatch({ requestId }), null).then((body) => {
       if (!body) throw new Error('empty ROOM_QUICK_MATCH response');
       const state = unpackRoomState(body);
-      if (this.currentRoomId !== state.id) this.clearRealtimeCache();
       this.currentRoomId = state.id;
       this.currentRoomCode = state.code;
       this.currentRoomState = state;
@@ -205,7 +196,6 @@ export class NetworkService {
     return this.sendCommand((requestId) => packRoomJoin({ requestId, code, password })).then((body) => {
       if (!body) throw new Error('empty ROOM_JOIN response');
       const state = unpackRoomState(body);
-      if (this.currentRoomId !== state.id) this.clearRealtimeCache();
       this.currentRoomId = state.id;
       this.currentRoomCode = state.code;
       this.currentRoomState = state;
@@ -220,7 +210,6 @@ export class NetworkService {
       this.currentRoomId = null;
       this.currentRoomCode = null;
       this.currentRoomState = null;
-      this.clearRealtimeCache();
     });
   };
 
@@ -230,7 +219,6 @@ export class NetworkService {
     return this.sendCommand((requestId) => packRoomStart({ requestId, roomId })).then((body) => {
       if (!body) throw new Error('empty ROOM_START response');
       const state = unpackRoomState(body);
-      if (this.currentRoomId !== state.id) this.clearRealtimeCache();
       this.currentRoomId = state.id;
       this.currentRoomCode = state.code;
       this.currentRoomState = state;
@@ -300,11 +288,6 @@ export class NetworkService {
   // Внутренние
   // ──────────────────────────────────────────────────────────────
 
-  private clearRealtimeCache = (): void => {
-    this.latestDiceSpawn = null;
-    this.latestMatchState = null;
-  };
-
   private sendCommand = (
     build: (requestId: number) => Uint8Array,
     timeoutMs: number | null = REQUEST_TIMEOUT_MS,
@@ -352,7 +335,6 @@ export class NetworkService {
           // Комнаты могло уже не быть — переходим в "лобби-state".
           this.currentRoomId = null;
           this.currentRoomCode = null;
-          this.clearRealtimeCache();
         });
       }
     };
@@ -397,7 +379,6 @@ export class NetworkService {
     switch (op) {
       case OP.ROOM_STATE: {
         const state = unpackRoomState(buf);
-        if (this.currentRoomId !== state.id) this.clearRealtimeCache();
         this.currentRoomId = state.id;
         this.currentRoomCode = state.code;
         this.currentRoomState = state;
@@ -406,7 +387,6 @@ export class NetworkService {
       }
       case OP.MATCH_DICE_SPAWN: {
         const snap = unpackSnapshot(buf);
-        this.latestDiceSpawn = snap;
         this.events.emit('dice-spawn', snap);
         return;
       }
@@ -422,7 +402,6 @@ export class NetworkService {
       }
       case OP.MATCH_STATE: {
         const state: MatchStatePayload = unpackMatchState(buf);
-        this.latestMatchState = state;
         this.events.emit('match-state', state);
         return;
       }

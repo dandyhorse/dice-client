@@ -236,13 +236,11 @@ export class GameEngine {
     if (this.mode === 'network' && this.network) {
       this.soloHud = null;
       const net = this.network;
-      const applyDiceSpawn = (snap: SnapshotPayload): void => {
-        const now = performance.now();
-        this.recordSnapshot(now);
+      net.events.on('dice-spawn', (snap: SnapshotPayload) => {
+        this.recordSnapshot(performance.now());
         this.networkCollisionVelocities.clear();
-        this.dice.applySnapshot(snap.dice, now, { immediate: true });
-      };
-      net.events.on('dice-spawn', applyDiceSpawn);
+        this.dice.applySnapshot(snap.dice, performance.now());
+      });
       net.events.on('dice-snapshot', (snap: SnapshotPayload) => {
         const now = performance.now();
         this.recordSnapshot(now);
@@ -263,8 +261,6 @@ export class GameEngine {
         );
         this.networkCollisionVelocities.clear();
       });
-      const cachedDiceSpawn = net.getLatestDiceSpawn();
-      if (cachedDiceSpawn) applyDiceSpawn(cachedDiceSpawn);
 
       this.currentRoomState = net.getRoomState();
       const ownUserId = net.getUserId() ?? '';
@@ -284,19 +280,16 @@ export class GameEngine {
       });
 
       if (isTestRoom) {
-        const applyMatchState = (state: MatchStatePayload): void => {
+        net.events.on('match-state', (state: MatchStatePayload) => {
           this.currentMatchState = state;
           this.input.setEnabled(this.canUseTestInput(ownUserId));
-        };
-        net.events.on('match-state', applyMatchState);
-        const cachedMatchState = net.getLatestMatchState();
-        if (cachedMatchState) applyMatchState(cachedMatchState);
+        });
         this.input.setEnabled(this.canUseTestInput(ownUserId));
       } else {
         // Координация input vs selection: SELECTING на своём ходу включает клик
         // по костям и выключает hold/release; всё остальное — инверсно.
         // Без этого pickup() прячет кости как раз когда игрок хочет в них кликать.
-        const applyMatchState = (state: MatchStatePayload): void => {
+        net.events.on('match-state', (state: MatchStatePayload) => {
           this.currentMatchState = state;
           if (state.phase !== MATCH_PHASE.SELECTING) this.networkLastRolledFaces = [];
           if (state.phase !== MATCH_PHASE.SELECTING || state.currentPlayer === ownUserId) {
@@ -326,10 +319,7 @@ export class GameEngine {
           }
           this.syncTurnHotkeysEnabled();
           this.tryNetworkAutoRoll();
-        };
-        net.events.on('match-state', applyMatchState);
-        const cachedMatchState = net.getLatestMatchState();
-        if (cachedMatchState) applyMatchState(cachedMatchState);
+        });
 
         // Casual показывает scoring-подсказки; ranked только блокирует
         // невалидные клики через SelectionService без текстовых комбинаций/подсветки.
