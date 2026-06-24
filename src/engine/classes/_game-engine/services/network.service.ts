@@ -27,7 +27,7 @@ import {
   unpackSnapshot,
 } from '../../../../network/protocol/codecs';
 import { OP } from '../../../../network/protocol/opcodes';
-import { DEFAULT_ROOM_OPTIONS, ROOM_MODE } from '../../../../network/protocol/types';
+import { ROOM_MODE } from '../../../../network/protocol/types';
 
 import type {
   DieRestStateBin,
@@ -41,6 +41,7 @@ import type {
   RoomListItemPayload,
   RestPayload,
   RoomStatePayload,
+  SnapshotPayload,
 } from '../../../../network/protocol/types';
 
 // Reexport под старыми именами — потребители (DiceService, GameEngine, main)
@@ -80,8 +81,6 @@ export type RoomListItem = RoomListItemPayload;
 const RECONNECT_INITIAL_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 const REQUEST_TIMEOUT_MS = 8000;
-const QUICK_REQUEST_TIMEOUT_MS = 1500;
-const QUICK_FALLBACK_ROOM_NAME = 'Quick game';
 
 const wsUrlFor = (userId: string, displayName: string, accessToken?: string): string => {
   const base = SERVER_URL.replace(/^http/, 'ws');
@@ -95,7 +94,7 @@ interface PendingRequest {
   /** Тело ack (для ROOM_CREATE/JOIN — packed RoomState; для select/bank — undefined). */
   resolve: (body: Uint8Array | undefined) => void;
   reject: (err: Error) => void;
-  timeoutId: number;
+  timeoutId: number | null;
 }
 
 /**
@@ -110,6 +109,8 @@ export class NetworkService {
   private currentRoomId: string | null = null;
   private currentRoomCode: string | null = null;
   private currentRoomState: RoomStatePayload | null = null;
+  private latestDiceSpawn: SnapshotPayload | null = null;
+  private latestMatchState: MatchStatePayload | null = null;
   private userId: string | null = null;
   private displayName = 'Player';
   private accessToken: string | undefined;
@@ -143,12 +144,14 @@ export class NetworkService {
     this.currentRoomId = null;
     this.currentRoomCode = null;
     this.currentRoomState = null;
+    this.latestDiceSpawn = null;
+    this.latestMatchState = null;
     this.userId = null;
     this.displayName = 'Player';
     this.accessToken = undefined;
     // Реджектим висящие — иначе UI промисы зависнут навсегда.
     for (const p of this.pending.values()) {
-      clearTimeout(p.timeoutId);
+      if (p.timeoutId !== null) clearTimeout(p.timeoutId);
       p.reject(new Error('disconnected'));
     }
     this.pending.clear();
@@ -157,6 +160,8 @@ export class NetworkService {
   getUserId = (): string | null => this.userId;
   getRoomId = (): string | null => this.currentRoomId;
   getRoomState = (): RoomStatePayload | null => this.currentRoomState;
+  getLatestDiceSpawn = (): SnapshotPayload | null => this.latestDiceSpawn;
+  getLatestMatchState = (): MatchStatePayload | null => this.latestMatchState;
 
   createRoom = (
     mode: RoomMode = ROOM_MODE.MATCH,
@@ -169,6 +174,7 @@ export class NetworkService {
     ).then((body) => {
       if (!body) throw new Error('empty ROOM_CREATE response');
       const state = unpackRoomState(body);
+      if (this.currentRoomId !== state.id) this.clearRealtimeCache();
       this.currentRoomId = state.id;
       this.currentRoomCode = state.code;
       this.currentRoomState = state;
@@ -177,19 +183,14 @@ export class NetworkService {
   };
 
   quickMatch = (): Promise<RoomState> => {
-    return this.sendCommand(
-      (requestId) => packRoomQuickMatch({ requestId }),
-      QUICK_REQUEST_TIMEOUT_MS,
-    ).then((body) => {
+    return this.sendCommand((requestId) => packRoomQuickMatch({ requestId }), null).then((body) => {
       if (!body) throw new Error('empty ROOM_QUICK_MATCH response');
       const state = unpackRoomState(body);
+      if (this.currentRoomId !== state.id) this.clearRealtimeCache();
       this.currentRoomId = state.id;
       this.currentRoomCode = state.code;
       this.currentRoomState = state;
       return state;
-    }).catch((error: Error) => {
-      if (error.message !== 'request timed out') throw error;
-      return this.quickMatchFallback();
     });
   };
 
@@ -204,6 +205,7 @@ export class NetworkService {
     return this.sendCommand((requestId) => packRoomJoin({ requestId, code, password })).then((body) => {
       if (!body) throw new Error('empty ROOM_JOIN response');
       const state = unpackRoomState(body);
+      if (this.currentRoomId !== state.id) this.clearRealtimeCache();
       this.currentRoomId = state.id;
       this.currentRoomCode = state.code;
       this.currentRoomState = state;
@@ -218,6 +220,7 @@ export class NetworkService {
       this.currentRoomId = null;
       this.currentRoomCode = null;
       this.currentRoomState = null;
+      this.clearRealtimeCache();
     });
   };
 
@@ -227,6 +230,7 @@ export class NetworkService {
     return this.sendCommand((requestId) => packRoomStart({ requestId, roomId })).then((body) => {
       if (!body) throw new Error('empty ROOM_START response');
       const state = unpackRoomState(body);
+      if (this.currentRoomId !== state.id) this.clearRealtimeCache();
       this.currentRoomId = state.id;
       this.currentRoomCode = state.code;
       this.currentRoomState = state;
@@ -296,9 +300,14 @@ export class NetworkService {
   // Внутренние
   // ──────────────────────────────────────────────────────────────
 
+  private clearRealtimeCache = (): void => {
+    this.latestDiceSpawn = null;
+    this.latestMatchState = null;
+  };
+
   private sendCommand = (
     build: (requestId: number) => Uint8Array,
-    timeoutMs = REQUEST_TIMEOUT_MS,
+    timeoutMs: number | null = REQUEST_TIMEOUT_MS,
   ): Promise<Uint8Array | undefined> => {
     const sock = this.ws;
     if (!sock || sock.readyState !== WebSocket.OPEN) {
@@ -306,29 +315,19 @@ export class NetworkService {
     }
     const requestId = this.requestSeq++;
     return new Promise<Uint8Array | undefined>((resolve, reject) => {
-      const timeoutId = window.setTimeout(() => {
-        const pending = this.pending.get(requestId);
-        if (!pending) return;
-        this.pending.delete(requestId);
-        pending.reject(new Error('request timed out'));
-      }, timeoutMs);
+      const timeoutId =
+        timeoutMs === null
+          ? null
+          : window.setTimeout(() => {
+              const pending = this.pending.get(requestId);
+              if (!pending) return;
+              this.pending.delete(requestId);
+              pending.reject(new Error('request timed out'));
+            }, timeoutMs);
       this.pending.set(requestId, { resolve, reject, timeoutId });
       sock.send(build(requestId) as Uint8Array<ArrayBuffer>);
     });
   };
-
-  private quickMatchFallback(): Promise<RoomState> {
-    return this.listRooms().then((rooms) => {
-      const quickRoom = rooms.find(
-        (room) =>
-          room.canJoinAsPlayer &&
-          room.gameName.trim().toLocaleLowerCase() ===
-            QUICK_FALLBACK_ROOM_NAME.toLocaleLowerCase(),
-      );
-      if (quickRoom) return this.joinRoom(quickRoom.code);
-      return this.createRoom(ROOM_MODE.MATCH, DEFAULT_ROOM_OPTIONS, QUICK_FALLBACK_ROOM_NAME);
-    });
-  }
 
   private openSocket = (
     initialResolve?: () => void,
@@ -353,6 +352,7 @@ export class NetworkService {
           // Комнаты могло уже не быть — переходим в "лобби-state".
           this.currentRoomId = null;
           this.currentRoomCode = null;
+          this.clearRealtimeCache();
         });
       }
     };
@@ -365,7 +365,7 @@ export class NetworkService {
       this.ws = null;
       // Все висящие requests становятся undelivered — реджектим.
       for (const p of this.pending.values()) {
-        clearTimeout(p.timeoutId);
+        if (p.timeoutId !== null) clearTimeout(p.timeoutId);
         p.reject(new Error('socket closed'));
       }
       this.pending.clear();
@@ -397,6 +397,7 @@ export class NetworkService {
     switch (op) {
       case OP.ROOM_STATE: {
         const state = unpackRoomState(buf);
+        if (this.currentRoomId !== state.id) this.clearRealtimeCache();
         this.currentRoomId = state.id;
         this.currentRoomCode = state.code;
         this.currentRoomState = state;
@@ -405,6 +406,7 @@ export class NetworkService {
       }
       case OP.MATCH_DICE_SPAWN: {
         const snap = unpackSnapshot(buf);
+        this.latestDiceSpawn = snap;
         this.events.emit('dice-spawn', snap);
         return;
       }
@@ -420,6 +422,7 @@ export class NetworkService {
       }
       case OP.MATCH_STATE: {
         const state: MatchStatePayload = unpackMatchState(buf);
+        this.latestMatchState = state;
         this.events.emit('match-state', state);
         return;
       }
@@ -443,7 +446,7 @@ export class NetworkService {
         const pending = this.pending.get(ack.requestId);
         this.pending.delete(ack.requestId);
         if (!pending) return;
-        clearTimeout(pending.timeoutId);
+        if (pending.timeoutId !== null) clearTimeout(pending.timeoutId);
         // Тело ack — opaque, парсит вызывающий (createRoom/joinRoom разворачивают
         // RoomState; select/bank ничего не ждут в body).
         pending.resolve(ack.body && ack.body.length > 0 ? ack.body : undefined);
@@ -453,8 +456,10 @@ export class NetworkService {
         const err = unpackAckError(buf);
         const pending = this.pending.get(err.requestId);
         this.pending.delete(err.requestId);
-        if (pending) clearTimeout(pending.timeoutId);
-        pending?.reject(new Error(`${err.code}: ${err.message}`));
+        if (pending) {
+          if (pending.timeoutId !== null) clearTimeout(pending.timeoutId);
+          pending.reject(new Error(`${err.code}: ${err.message}`));
+        }
         return;
       }
       default:

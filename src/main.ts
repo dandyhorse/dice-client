@@ -184,7 +184,11 @@ let menuDiceSceneLoading: Promise<void> | null = null;
 let networkGameMounting: Promise<void> | null = null;
 let lobbyListNetwork: NetworkService | null = null;
 let quickSearchNetwork: NetworkService | null = null;
+let quickSearchConnecting = false;
+let quickSearchToken = 0;
 let finishedRoomReturnQueued = false;
+
+const isQuickSearchActive = (): boolean => quickSearchConnecting || quickSearchNetwork !== null;
 
 audioService.bindUnlockListeners();
 
@@ -257,44 +261,52 @@ const startNetwork = async (
 };
 
 const startQuickMatch = async (): Promise<void> => {
-  const network = await connectNetwork();
-  activeNetwork = network;
-  quickSearchNetwork = network;
+  if (quickSearchConnecting || quickSearchNetwork) return;
+  const token = ++quickSearchToken;
+  quickSearchConnecting = true;
+  renderHome();
+  let network: NetworkService | null = null;
   let state: RoomState;
-  showLoadingOverlay();
   try {
-    await Promise.all([
-      assetPreloader.preloadGroup('gameplay'),
-      audioService.preloadGroup('gameplay'),
-    ]);
+    network = await connectNetwork();
+    if (quickSearchToken !== token || !quickSearchConnecting) {
+      network.disconnect();
+      return;
+    }
+    activeNetwork = network;
+    quickSearchNetwork = network;
+    quickSearchConnecting = false;
+    renderHome();
     state = await network.quickMatch();
   } catch (err) {
-    const searchStillCurrent = activeNetwork === network || quickSearchNetwork === network;
-    if (quickSearchNetwork === network) quickSearchNetwork = null;
-    if (activeNetwork === network) activeNetwork = null;
-    network.disconnect();
+    const searchStillCurrent =
+      quickSearchToken === token &&
+      (quickSearchConnecting || activeNetwork === network || quickSearchNetwork === network);
+    if (quickSearchToken === token) quickSearchConnecting = false;
+    if (network && quickSearchNetwork === network) quickSearchNetwork = null;
+    if (network && activeNetwork === network) activeNetwork = null;
+    network?.disconnect();
     if (!searchStillCurrent) return;
+    renderHome();
     throw err;
-  } finally {
-    if (quickSearchNetwork !== network) hideLoadingOverlay();
   }
-  if (activeNetwork !== network) return;
-  clearLobby();
-  clearAuthControls();
-  clearAuthModal();
+  if (quickSearchToken !== token || activeNetwork !== network || quickSearchNetwork !== network) {
+    return;
+  }
   handleRoomState(network, state);
 };
 
 const cancelQuickSearch = (): void => {
+  if (!quickSearchConnecting && !quickSearchNetwork) return;
+  quickSearchToken += 1;
+  quickSearchConnecting = false;
   const network = quickSearchNetwork;
-  if (!network) return;
   quickSearchNetwork = null;
-  if (activeNetwork === network) activeNetwork = null;
-  network
-    .leaveRoom()
-    .catch(() => undefined)
-    .finally(() => network.disconnect());
-  hideLoadingOverlay();
+  if (network) {
+    if (activeNetwork === network) activeNetwork = null;
+    network.leaveRoom().catch(() => undefined);
+    network.disconnect();
+  }
   renderHome();
 };
 
@@ -688,18 +700,13 @@ const handleRoomState = (network: NetworkService, state: RoomState): void => {
   }
 
   if (network === quickSearchNetwork && state.status === ROOM_STATUS.WAITING) {
-    clearLobby();
     clearRoomScreen();
-    clearRoomBadge();
-    clearBackButton();
-    renderLanguageControls();
-    showLoadingOverlay();
+    renderHome();
     return;
   }
 
   if (network === quickSearchNetwork) {
     quickSearchNetwork = null;
-    hideLoadingOverlay();
   }
 
   if (state.status === ROOM_STATUS.WAITING) {
@@ -1269,6 +1276,16 @@ const appendBrand = (card: HTMLElement): void => {
   card.parentElement?.insertBefore(brand, card);
 };
 
+const applyLoadingDotsLabel = (el: HTMLElement, label: string): void => {
+  el.classList.add('loading-dots');
+  el.replaceChildren(document.createTextNode(label));
+  for (let i = 0; i < 3; i += 1) {
+    const dot = document.createElement('span');
+    dot.textContent = '.';
+    el.appendChild(dot);
+  }
+};
+
 const appendTitle = (card: HTMLElement, text: string): void => {
   const title = document.createElement('h2');
   title.textContent = text;
@@ -1531,7 +1548,16 @@ const renderLobby = (): void => {
   appendBrand(card);
   ensureMenuDiceScene();
 
-  appendMenuButton(card, t('quickGame'), () => startQuickMatch().catch(showError), '#0f766e');
+  const quickSearching = isQuickSearchActive();
+  const quickBtn = appendMenuButton(
+    card,
+    quickSearching ? t('quickSearchCancel') : t('quickGame'),
+    quickSearching ? cancelQuickSearch : () => startQuickMatch().catch(showError),
+    quickSearching ? '#b91c1c' : '#0f766e',
+  );
+  if (quickSearching) {
+    applyLoadingDotsLabel(quickBtn, t('quickSearchCancel'));
+  }
   appendMenuButton(card, t('createRoomMenu'), renderCreateRoomMenu);
   appendMenuButton(card, t('joinRoom'), renderMultiplayerJoin, '#52525b');
 };
@@ -2011,7 +2037,7 @@ const showError = (err: unknown): void => {
 onLanguageChange(rerenderCurrentShell);
 window.addEventListener('keydown', (event) => {
   if (event.code !== 'Escape' || event.repeat || event.defaultPrevented) return;
-  if (quickSearchNetwork) {
+  if (isQuickSearchActive()) {
     event.preventDefault();
     cancelQuickSearch();
     return;

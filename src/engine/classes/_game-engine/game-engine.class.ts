@@ -101,7 +101,9 @@ const PS1_RENDER_SCALE = 0.48;
 const TABLE_PS1_TEXTURE_SIZE = 256;
 const TABLE_PS1_DITHER_STRENGTH = 2;
 const TABLE_PS1_COLOR_STEP = 24;
-const BACKGROUND_PLANE_SCALE = 2.35;
+const BACKGROUND_PLANE_Y = -TABLE_THICKNESS - 0.03;
+const BACKGROUND_VIEWPORT_OVERSCAN = 1.04;
+const BACKGROUND_DARKEN_COLOR = 0x5a5a5a;
 const FARKLE_ACTION_BLOCK_MS = 1200;
 const PERF_DEBUG_ENABLED = (): boolean => {
   const params = new URLSearchParams(window.location.search);
@@ -234,11 +236,13 @@ export class GameEngine {
     if (this.mode === 'network' && this.network) {
       this.soloHud = null;
       const net = this.network;
-      net.events.on('dice-spawn', (snap: SnapshotPayload) => {
-        this.recordSnapshot(performance.now());
+      const applyDiceSpawn = (snap: SnapshotPayload): void => {
+        const now = performance.now();
+        this.recordSnapshot(now);
         this.networkCollisionVelocities.clear();
-        this.dice.applySnapshot(snap.dice, performance.now());
-      });
+        this.dice.applySnapshot(snap.dice, now, { immediate: true });
+      };
+      net.events.on('dice-spawn', applyDiceSpawn);
       net.events.on('dice-snapshot', (snap: SnapshotPayload) => {
         const now = performance.now();
         this.recordSnapshot(now);
@@ -259,6 +263,8 @@ export class GameEngine {
         );
         this.networkCollisionVelocities.clear();
       });
+      const cachedDiceSpawn = net.getLatestDiceSpawn();
+      if (cachedDiceSpawn) applyDiceSpawn(cachedDiceSpawn);
 
       this.currentRoomState = net.getRoomState();
       const ownUserId = net.getUserId() ?? '';
@@ -278,16 +284,19 @@ export class GameEngine {
       });
 
       if (isTestRoom) {
-        net.events.on('match-state', (state: MatchStatePayload) => {
+        const applyMatchState = (state: MatchStatePayload): void => {
           this.currentMatchState = state;
           this.input.setEnabled(this.canUseTestInput(ownUserId));
-        });
+        };
+        net.events.on('match-state', applyMatchState);
+        const cachedMatchState = net.getLatestMatchState();
+        if (cachedMatchState) applyMatchState(cachedMatchState);
         this.input.setEnabled(this.canUseTestInput(ownUserId));
       } else {
         // Координация input vs selection: SELECTING на своём ходу включает клик
         // по костям и выключает hold/release; всё остальное — инверсно.
         // Без этого pickup() прячет кости как раз когда игрок хочет в них кликать.
-        net.events.on('match-state', (state: MatchStatePayload) => {
+        const applyMatchState = (state: MatchStatePayload): void => {
           this.currentMatchState = state;
           if (state.phase !== MATCH_PHASE.SELECTING) this.networkLastRolledFaces = [];
           if (state.phase !== MATCH_PHASE.SELECTING || state.currentPlayer === ownUserId) {
@@ -317,7 +326,10 @@ export class GameEngine {
           }
           this.syncTurnHotkeysEnabled();
           this.tryNetworkAutoRoll();
-        });
+        };
+        net.events.on('match-state', applyMatchState);
+        const cachedMatchState = net.getLatestMatchState();
+        if (cachedMatchState) applyMatchState(cachedMatchState);
 
         // Casual показывает scoring-подсказки; ranked только блокирует
         // невалидные клики через SelectionService без текстовых комбинаций/подсветки.
@@ -1063,19 +1075,33 @@ export class GameEngine {
   private createBackgroundPlane(): void {
     const texture = this.createBackgroundTexture();
     this.backgroundTexture = texture;
-    const size = Math.max(TABLE_WIDTH, TABLE_DEPTH) * BACKGROUND_PLANE_SCALE;
-    const geometry = new THREE.PlaneGeometry(size, size);
+    const geometry = new THREE.PlaneGeometry(1, 1);
     const material = new THREE.MeshBasicMaterial({
+      color: BACKGROUND_DARKEN_COLOR,
       map: texture,
       depthWrite: false,
       depthTest: true,
     });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.rotation.x = -Math.PI / 2;
-    mesh.position.y = -TABLE_THICKNESS - 0.03;
+    mesh.position.y = BACKGROUND_PLANE_Y;
     mesh.renderOrder = -10;
     this.scene.add(mesh);
     this.backgroundMesh = mesh;
+    this.updateBackgroundPlaneSize();
+  }
+
+  private updateBackgroundPlaneSize(): void {
+    if (!this.backgroundMesh) return;
+    const distance = this.camera.position.y - BACKGROUND_PLANE_Y;
+    const visibleDepth =
+      2 * distance * Math.tan(THREE.MathUtils.degToRad(this.camera.fov) / 2);
+    const visibleWidth = visibleDepth * this.camera.aspect;
+    this.backgroundMesh.scale.set(
+      visibleWidth * BACKGROUND_VIEWPORT_OVERSCAN,
+      visibleDepth * BACKGROUND_VIEWPORT_OVERSCAN,
+      1,
+    );
   }
 
   private createBackgroundTexture(): THREE.Texture {
@@ -1276,6 +1302,7 @@ export class GameEngine {
     this.camera.lookAt(...CAMERA_TARGET);
     this.camera.updateProjectionMatrix();
     this.setRendererPixelSize(this.renderer);
+    this.updateBackgroundPlaneSize();
     this.updateVisualTableSize();
   };
 
