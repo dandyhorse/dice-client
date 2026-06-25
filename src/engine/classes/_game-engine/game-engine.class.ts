@@ -62,6 +62,7 @@ import {
 import { SelectionService } from './services/selection.service';
 import { ShakeInputService } from './services/shake-input.service';
 import { TurnHotkeysService } from './services/turn-hotkeys.service';
+import { UI_RADIUS } from '../../../ui/theme';
 
 export type GameMode = 'local' | 'network';
 
@@ -156,6 +157,7 @@ export class GameEngine {
   private networkActionsBlockTimer: number | null = null;
   private readonly onSurrender?: () => void;
   private readonly onExit?: () => void;
+  private playerSettings: PlayerSettings;
   private networkRematchRequestedBy: string[] = [];
   private tableVisualMesh: THREE.Mesh | null = null;
   private backgroundMesh: THREE.Mesh | null = null;
@@ -201,7 +203,8 @@ export class GameEngine {
     this.dice.spawn();
     this.perf = this.createPerfStats();
 
-    const playerSettings = options.playerSettings ?? DEFAULT_PLAYER_SETTINGS;
+    this.playerSettings = options.playerSettings ?? DEFAULT_PLAYER_SETTINGS;
+    const playerSettings = this.playerSettings;
     this.input = new ShakeInputService(
       this.renderer.domElement,
       this.camera,
@@ -535,7 +538,9 @@ export class GameEngine {
     this.soloHud?.setState(this.soloState);
     this.soloHud?.clearRollResult();
     this.setSoloWaitingState();
-    this.input.triggerKeyboardThrow();
+    if (this.playerSettings.gameplay.autoRollAfterContinue) {
+      this.input.triggerKeyboardThrow();
+    }
   };
 
   private handleSoloBank = (): void => {
@@ -659,7 +664,7 @@ export class GameEngine {
     network
       .sendSelectDice(indices)
       .then(() => {
-        this.pendingNetworkAutoRoll = true;
+        this.pendingNetworkAutoRoll = this.playerSettings.gameplay.autoRollAfterContinue;
         this.networkLastRolledFaces = [];
         this.pendingSelectionPreview = null;
         selection.clearExternalSelection();
@@ -1010,6 +1015,7 @@ export class GameEngine {
   }
 
   setPlayerSettings(settings: PlayerSettings): void {
+    this.playerSettings = settings;
     this.input.setThrowKeyCode(settings.controls.throwDice);
     this.turnHotkeys.setBindings(settings.controls);
     this.hud?.setControls(settings.controls);
@@ -1408,7 +1414,7 @@ export class GameEngine {
       'bottom:8px',
       'z-index:50',
       'padding:6px 8px',
-      'border-radius:6px',
+      `border-radius:${UI_RADIUS}`,
       'background:rgba(0,0,0,.72)',
       'color:#dfffe0',
       'font:12px/1.35 monospace',

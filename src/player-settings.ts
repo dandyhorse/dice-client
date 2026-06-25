@@ -12,9 +12,14 @@ export const CONTROL_ACTIONS = [
 export type ControlAction = (typeof CONTROL_ACTIONS)[number];
 export type ControlBindings = Record<ControlAction, string>;
 
+export interface GameplaySettings {
+  autoRollAfterContinue: boolean;
+}
+
 export interface PlayerSettings {
   version: 1;
   controls: ControlBindings;
+  gameplay: GameplaySettings;
 }
 
 export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
@@ -25,6 +30,9 @@ export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
     continueTurn: 'KeyQ',
     bankTurn: 'KeyE',
     surrender: 'Escape',
+  },
+  gameplay: {
+    autoRollAfterContinue: true,
   },
 };
 
@@ -43,6 +51,7 @@ function cloneSettings(settings: PlayerSettings): PlayerSettings {
   return {
     version: 1,
     controls: { ...settings.controls },
+    gameplay: { ...settings.gameplay },
   };
 }
 
@@ -74,9 +83,17 @@ export const normalizePlayerSettings = (value: unknown): PlayerSettings => {
     controls[action] = code;
   }
 
+  const gameplay = { ...DEFAULT_PLAYER_SETTINGS.gameplay };
+  if (isObject(value.gameplay)) {
+    const autoRollAfterContinue = value.gameplay.autoRollAfterContinue;
+    if (typeof autoRollAfterContinue === 'boolean') {
+      gameplay.autoRollAfterContinue = autoRollAfterContinue;
+    }
+  }
+
   return hasDuplicateBindings(controls)
     ? cloneSettings(DEFAULT_PLAYER_SETTINGS)
-    : { version: 1, controls };
+    : { version: 1, controls, gameplay };
 };
 
 export const validatePlayerSettings = (
@@ -89,6 +106,9 @@ export const validatePlayerSettings = (
   }
   if (hasDuplicateBindings(settings.controls)) {
     return { valid: false, message: 'Keys must be unique' };
+  }
+  if (!isObject(settings.gameplay) || typeof settings.gameplay.autoRollAfterContinue !== 'boolean') {
+    return { valid: false, message: 'Invalid gameplay settings' };
   }
   return { valid: true };
 };

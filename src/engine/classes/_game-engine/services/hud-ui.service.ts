@@ -6,7 +6,7 @@ import {
 } from '../../../../player-settings';
 import { onLanguageChange, t } from '../../../../ui/i18n';
 import { bindMouseOnlyClick } from '../../../../ui/mouse-only-button';
-import { FONT_FAMILY, FONT_SIZE, UI_SIZE } from '../../../../ui/theme';
+import { FONT_FAMILY, FONT_SIZE, UI_RADIUS, UI_SIZE } from '../../../../ui/theme';
 
 import {
   DEFAULT_ROOM_OPTIONS,
@@ -20,7 +20,7 @@ import type { MatchSelectionPreviewPayload } from '../../../../network/protocol/
 const PANEL_BG = 'rgba(0,0,0,0.6)';
 const PANEL_FG = '#eee';
 const PANEL_OFFLINE_FG = '#8e8e9d';
-const PANEL_RADIUS = '6px';
+const PANEL_RADIUS = UI_RADIUS;
 const PANEL_PAD = '10px 12px';
 const PANEL_ACTIVE_BORDER = '#22c55e';
 
@@ -204,7 +204,7 @@ export class HudUiService {
       fontFamily: FONT_FAMILY.ui,
       fontSize: 'clamp(42px, 8vw, 92px)',
       fontWeight: 'bold',
-      borderRadius: '0',
+      borderRadius: PANEL_RADIUS,
       pointerEvents: 'none',
       display: 'none',
       letterSpacing: '0.05em',
@@ -727,7 +727,7 @@ export class HudUiService {
       background: BTN_BG,
       color: BTN_FG,
       border: 'none',
-      borderRadius: '6px',
+      borderRadius: PANEL_RADIUS,
       fontFamily: FONT_FAMILY.ui,
       fontSize: FONT_SIZE.hud,
       width: '100%',

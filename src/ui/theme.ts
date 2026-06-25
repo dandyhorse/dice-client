@@ -41,3 +41,7 @@ export const UI_SIZE = {
   hudButtonWidth: scaledPx(120),
   hudButtonHeight: scaledPx(42),
 } as const;
+
+export const UI_RADIUS = '2px';
+export const MENU_BUTTON_BG = '#3b82f6';
+export const SETTINGS_BUTTON_BG = '#52525b';
