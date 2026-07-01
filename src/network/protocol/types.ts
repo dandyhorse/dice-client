@@ -230,6 +230,16 @@ export const MATCH_PHASE = {
 
 export type MatchPhase = (typeof MATCH_PHASE)[keyof typeof MATCH_PHASE];
 
+export const MATCH_FINISH_REASON = {
+  NONE: 0,
+  SCORE: 1,
+  FORFEIT: 2,
+  DISCONNECT: 3,
+  EXIT: 4,
+} as const;
+
+export type MatchFinishReason = (typeof MATCH_FINISH_REASON)[keyof typeof MATCH_FINISH_REASON];
+
 /** C→S: отложить указанные кости и перебросить остальные. */
 export interface MatchSelectDiceCmd {
   requestId: number;
@@ -303,6 +313,8 @@ export interface MatchStatePayload {
   totals: MatchTotal[];
   /** userId победителя; пустая строка если ещё нет. */
   winner: string;
+  /** Почему матч завершён; NONE если победителя ещё нет. */
+  finishReason: MatchFinishReason;
   /** Unix timestamp ms for ranked SELECTING timeout; 0 when no timer is active. */
   turnDeadlineAt: number;
 }

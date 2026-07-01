@@ -1,9 +1,9 @@
-import * as THREE from 'three';
+import type * as THREE from 'three';
 
 import { ASSET_GROUPS, type AssetGroup } from './asset-manifest';
 
 class AssetPreloader {
-  private readonly textureLoader = new THREE.TextureLoader();
+  private textureLoader: THREE.TextureLoader | null = null;
   private readonly images = new Map<string, HTMLImageElement>();
   private readonly textures = new Map<string, THREE.Texture>();
   private readonly groupPromises = new Map<AssetGroup, Promise<void>>();
@@ -52,14 +52,21 @@ class AssetPreloader {
     return clone;
   }
 
-  private loadTexture(url: string): Promise<THREE.Texture> {
+  private async loadTexture(url: string): Promise<THREE.Texture> {
     const cached = this.textures.get(url);
-    if (cached) return Promise.resolve(cached);
+    if (cached) return cached;
 
-    return this.textureLoader.loadAsync(url).then((texture) => {
-      this.textures.set(url, texture);
-      return texture;
-    });
+    const loader = await this.getTextureLoader();
+    const texture = await loader.loadAsync(url);
+    this.textures.set(url, texture);
+    return texture;
+  }
+
+  private async getTextureLoader(): Promise<THREE.TextureLoader> {
+    if (this.textureLoader) return this.textureLoader;
+    const { TextureLoader } = await import('three');
+    this.textureLoader = new TextureLoader();
+    return this.textureLoader;
   }
 
   private loadImage(url: string): Promise<HTMLImageElement> {

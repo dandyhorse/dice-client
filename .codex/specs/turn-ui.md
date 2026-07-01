@@ -49,6 +49,10 @@ class SelectionService {
 
 `hud-ui.service.ts`. Vanilla DOM (no React/Vue), стиль через `Object.assign(elem.style, {...})` — как `main.ts:renderLobby` / `showRoomCode`.
 
+Singleplayer uses this same HUD. `GameEngine` local mode adapts the client-only bot match into
+synthetic `RoomStatePayload` / `MatchStatePayload` values (`local-human` vs `local-bot`) instead of
+owning a separate UI service.
+
 ### Структура DOM
 
 5 фиксированных оверлеев поверх canvas (`pointer-events: none` где можно, чтобы не блокировать клики по сцене):
@@ -60,6 +64,7 @@ class SelectionService {
 | `#hud-actions` | bottom-center | кнопки `[Continue]` `[Bank]` (только в SELECTING + own turn) |
 | `#hud-status` | bottom-center (под actions) | строка по фазе («Бросаем...», «Ждём X», «Победил X!»...) |
 | `#hud-error` | center | временный флэш — BUST или ACK_ERROR, исчезает через 2.5s |
+| `#hud-final-actions` | center | финальные кнопки `Выйти` / `Реванш`; реванш скрыт для `DISCONNECT` и `EXIT` |
 
 ### API
 
@@ -81,6 +86,9 @@ class HudUiService {
 - **Статус-строка** по фазе (см. таблицу в `match-rules.md`).
 - **Player labels**: `userId === ownUserId` → «Ты», иначе — первые 8 символов userId (UUID длинный, urлять не хочется).
 - **BUST**: на `match-roll-result.bust=true` показываем флэш «BUST» (через showError).
+- **WIN/FARKLE**: на `MATCH_STATE.phase=FINISHED` показываем финальный экран. Кнопка реванша скрыта только если `MATCH_STATE.finishReason = DISCONNECT | EXIT`.
+- **Закрытая комната**: когда приходит `ROOM_STATUS.FINISHED` со всеми `members.online=false`, клиент не возвращает игрока в меню автоматически; он отключает действия, скрывает реванш и ждёт ручного `Выйти`.
+- **Сдаться**: действие surrender из HUD или hotkey (`Esc` по умолчанию) сначала открывает подтверждение «Уверен, что хочешь сдаться?» с кнопками `Да` / `Нет`.
 
 ## Координация Input ↔ Selection
 

@@ -26,7 +26,8 @@ interface Die {
 
 Создаёт `DICE_COUNT` костей **DYNAMIC, лежащих на столе**:
 - `BoxGeometry(1, 1, 1)`, 6 материалов (`roughness 0.9, metalness 0`, plastered-stone base + pips)
-- Тело: `Box(half=0.5)`, `mass = DICE_MASS`, `linearDamping/angularDamping = 0.1`
+- Тело: `Box(half=DICE_HALF_SIZE)`, `mass = DICE_MASS`,
+  `linearDamping = DICE_LINEAR_DAMPING`, `angularDamping = DICE_ANGULAR_DAMPING`
 - **Стартовый тип: DYNAMIC** (не KINEMATIC). Кости лежат на столе и спят.
 - `allowSleep = true`, `sleepSpeedLimit = 0.25`, `sleepTimeLimit = 0.2`
 - `spawnOffset.x = (i - (count-1)/2) * DICE_SPACING` — расстановка по X

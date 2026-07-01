@@ -82,26 +82,29 @@ camera.y  = max(hForDepth, hForWidth)   // contain — берём большую
 
 | Константа | Значение | Назначение |
 |-----------|----------|------------|
-| `WORLD_GRAVITY` | -25 | Сильнее реальной — кости резче падают |
-| `TABLE_WIDTH` | 16 | Ширина стола в world-units (по X) |
+| `WORLD_GRAVITY` | -34 | Сильнее реальной — кости резче падают |
+| `TABLE_WIDTH` | 9 | Ширина стола в world-units (по X) |
 | `TABLE_DEPTH` | 9 | Глубина стола в world-units (по Z), 16:9 |
 | `TABLE_THICKNESS` | 0.4 | Толщина стола |
 | `WALL_HEIGHT` | 4 | Высота стен (и потолка) |
-| `WALL_THICKNESS` | 0.5 | Толщина стен и потолка (страховка от tunneling) |
-| `WALL_INSET` | 0.5 | Сдвиг внутренней грани стены от кромки стола; равен WALL_THICKNESS — внешняя грань ровно на кромке |
+| `WALL_THICKNESS` | 0.22 | Толщина стен и потолка (страховка от tunneling) |
+| `WALL_INSET` | 0.22 | Сдвиг внутренней грани стены от кромки стола; равен WALL_THICKNESS — внешняя грань ровно на кромке |
 | `DICE_COUNT` | 6 | Сколько костей спавнить |
-| `DICE_HALF_SIZE` | 0.22 | Полуразмер ребра кости (куб 0.44×0.44×0.44) |
+| `DICE_HALF_SIZE` | 0.273 | Полуразмер ребра кости (куб 0.546×0.546×0.546) |
 | `DICE_MASS` | 0.6 | Масса кости |
-| `DICE_SPACING` | 0.6 | Разнос костей по X при release |
+| `DICE_SPACING` | 0.746 | Разнос костей по X при release |
+| `DICE_LINEAR_DAMPING` / `DICE_ANGULAR_DAMPING` | 0.16 / 0.14 | Торможение полёта и вращения |
+| `DICE_TABLE_FRICTION` / `DICE_TABLE_RESTITUTION` | 0.72 / 0.18 | Трение и отскок кости от стола |
+| `DICE_DICE_FRICTION` / `DICE_DICE_RESTITUTION` | 0.46 / 0.08 | Трение и отскок кость ↔ кость |
 | `HOLD_HEIGHT` | 2.5 | Y-уровень hold-плоскости (куда проецируется мышь) |
 | `HOLD_JITTER_SCALE` | 0.04 | (legacy, не используется в новом флоу pickup/release) |
 | `VELOCITY_BUFFER_MS` | 90 | Окно сэмплов для расчёта скорости броска |
 | `THROW_LINEAR_SCALE` | 0.8 | Масштаб линейной скорости броска (мышь → мир) |
-| `THROW_DOWNWARD_BIAS` | -1.8 | Принудительная Y-составляющая вниз при release |
+| `THROW_DOWNWARD_BIAS` | -3.2 | Принудительная Y-составляющая вниз при release |
 | `THROW_MIN_SPEED` | 0.4 | Минимальная скорость, иначе добавляется forward камеры |
 | `THROW_POSITION_PADDING` | 0.2 | Запас от внутренней грани стены при clamp release-позиции |
 | `THROW_MAX_SPEED` | 12 | Жёсткий потолок |velocity| перед emit — гарантия отсутствия tunneling сквозь стены |
-| `THROW_ANGULAR_RANDOM` | 5 | Диапазон случайной угловой скорости при release |
+| `THROW_ANGULAR_RANDOM` | 5.8 | Диапазон случайной угловой скорости при release |
 | `CAMERA_FOV` | 45 | Vertical FOV перспективной камеры |
 | `CAMERA_X`, `CAMERA_Z` | 0, 0 | Горизонтальная позиция камеры (по центру стола) |
 | `CAMERA_TARGET` | `[0, 0, 0]` | Куда смотрит камера |

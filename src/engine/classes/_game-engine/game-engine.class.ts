@@ -6,7 +6,13 @@ import {
   CAMERA_UP,
   CAMERA_X,
   CAMERA_Z,
+  DICE_DICE_FRICTION,
+  DICE_DICE_RESTITUTION,
   DICE_HALF_SIZE,
+  DICE_TABLE_CONTACT_RELAXATION,
+  DICE_TABLE_CONTACT_STIFFNESS,
+  DICE_TABLE_FRICTION,
+  DICE_TABLE_RESTITUTION,
   REST_CORRECTION_MAX_PASSES,
   TABLE_DEPTH,
   TABLE_THICKNESS,
@@ -28,19 +34,19 @@ import { BenchDiceService } from './services/bench-dice.service';
 import { DiceService } from './services/dice.service';
 import { HudUiService } from './services/hud-ui.service';
 import { NetworkService } from './services/network.service';
-import { isBust, scoreRoll, validateSelection } from '../../../domain/scorer';
+import { chooseFarkleBotMove, type FarkleBotDecision } from '../../../domain/farkle-bot';
 import {
-  DEFAULT_SOLO_MODE,
-  createSoloRun,
-  isSoloRunEnded,
-  recordSoloBank,
-  recordSoloBust,
-  recordSoloContinue,
-} from '../../../domain/solo-run';
-import { SoloUiService } from './services/solo-ui.service';
+  createLocalMatch,
+  isLocalMatchEnded,
+  recordLocalMatchBank,
+  recordLocalMatchBust,
+  recordLocalMatchContinue,
+} from '../../../domain/local-match';
+import { isBust, scoreRoll, validateSelection } from '../../../domain/scorer';
 import { t } from '../../../ui/i18n';
 import { DEFAULT_PLAYER_SETTINGS, type PlayerSettings } from '../../../player-settings';
 import type {
+  MatchPhase,
   MatchRollResultPayload,
   MatchRematchStatePayload,
   MatchSelectionPreviewPayload,
@@ -51,9 +57,10 @@ import type {
   SnapshotPayload,
   DieStateFull,
 } from './services/network.service';
-import type { SoloModeConfig, SoloRunState } from '../../../domain/solo-run';
+import type { LocalMatchConfig, LocalMatchState } from '../../../domain/local-match';
 import {
   DEFAULT_ROOM_OPTIONS,
+  MATCH_FINISH_REASON,
   MATCH_PHASE,
   ROOM_MODE,
   ROOM_ROLE,
@@ -69,7 +76,7 @@ export type GameMode = 'local' | 'network';
 export interface GameEngineOptions {
   mode?: GameMode;
   network?: NetworkService;
-  soloConfig?: SoloModeConfig;
+  localMatchConfig?: LocalMatchConfig;
   playerSettings?: PlayerSettings;
   onSurrender?: () => void;
   onExit?: () => void;
@@ -108,6 +115,12 @@ const BACKGROUND_PLANE_Y = -TABLE_THICKNESS - 0.03;
 const BACKGROUND_VIEWPORT_OVERSCAN = 1.04;
 const BACKGROUND_DARKEN_COLOR = 0x5a5a5a;
 const FARKLE_ACTION_BLOCK_MS = 1200;
+const LOCAL_BOT_ROLL_DELAY_MS = 700;
+const LOCAL_BOT_DECISION_DELAY_MS = 800;
+const LOCAL_ROOM_ID = 'local-singleplayer';
+const LOCAL_ROOM_CODE = 'SOLO';
+const LOCAL_HUMAN_USER_ID = 'local-human';
+const LOCAL_BOT_USER_ID = 'local-bot';
 const PERF_DEBUG_ENABLED = (): boolean => {
   const params = new URLSearchParams(window.location.search);
   if (params.has('perf')) return true;
@@ -142,14 +155,16 @@ export class GameEngine {
   private readonly selection: SelectionService | null;
   private readonly benchDice: BenchDiceService | null;
   private readonly hud: HudUiService | null;
-  private readonly soloConfig: SoloModeConfig | null;
-  private readonly soloHud: SoloUiService | null;
+  private readonly localMatchConfig: LocalMatchConfig | null;
   private currentRoomState: RoomState | null = null;
   private currentMatchState: MatchStatePayload | null = null;
-  private soloState: SoloRunState | null = null;
+  private localMatchState: LocalMatchState | null = null;
   private localRolling = false;
   private localRestCorrectionPasses = 0;
   private localLastRolledFaces: number[] = [];
+  private localBotDecision: FarkleBotDecision | null = null;
+  private localBotSelectedDiceIndices: number[] = [];
+  private localBotActionTimer: number | null = null;
   private networkLastRolledFaces: number[] = [];
   private pendingSelectionPreview: MatchSelectionPreviewPayload | null = null;
   private pendingNetworkAutoRoll = false;
@@ -159,6 +174,8 @@ export class GameEngine {
   private readonly onExit?: () => void;
   private playerSettings: PlayerSettings;
   private networkRematchRequestedBy: string[] = [];
+  private networkRoomClosed = false;
+  private surrenderConfirmEl: HTMLDivElement | null = null;
   private tableVisualMesh: THREE.Mesh | null = null;
   private backgroundMesh: THREE.Mesh | null = null;
   private backgroundTexture: THREE.Texture | null = null;
@@ -174,7 +191,7 @@ export class GameEngine {
   constructor(options: GameEngineOptions = {}) {
     this.mode = options.mode ?? 'local';
     this.network = options.network ?? null;
-    this.soloConfig = this.mode === 'local' ? (options.soloConfig ?? DEFAULT_SOLO_MODE) : null;
+    this.localMatchConfig = this.mode === 'local' ? (options.localMatchConfig ?? null) : null;
     this.onSurrender = options.onSurrender;
     this.onExit = options.onExit;
 
@@ -229,20 +246,25 @@ export class GameEngine {
         // Чистый state-sync: отправляем инпут серверу, локально ничего не крутим.
         // Сервер вернёт стрим снапшотов, с первым — кости появятся и полетят.
         this.network.sendRelease(velocity, position);
-      } else if (this.mode === 'local' && this.soloState && !isSoloRunEnded(this.soloState)) {
-        this.localRolling = true;
-        this.localRestCorrectionPasses = 0;
-        this.localLastRolledFaces = [];
-        this.selection?.disable();
-        this.input.setEnabled(false);
-        this.syncTurnHotkeysEnabled();
-        this.soloHud?.clearRollResult();
-        this.soloHud?.setStatus(t('rolling'));
+      } else if (this.mode === 'local') {
+        if (this.localMatchState && !isLocalMatchEnded(this.localMatchState)) {
+          this.localRolling = true;
+          this.localRestCorrectionPasses = 0;
+          this.localLastRolledFaces = [];
+          this.localBotDecision = null;
+          this.localBotSelectedDiceIndices = [];
+          this.selection?.clearExternalSelection();
+          this.selection?.disable();
+          this.input.setEnabled(false);
+          this.syncTurnHotkeysEnabled();
+          this.hud?.setSelectionPreview(null);
+          this.hud?.setSelectionState(0, false, 0);
+          this.syncLocalMatchHud(MATCH_PHASE.ROLLING);
+        }
       }
     });
 
     if (this.mode === 'network' && this.network) {
-      this.soloHud = null;
       const net = this.network;
       net.events.on('dice-spawn', (snap: SnapshotPayload) => {
         this.recordSnapshot(performance.now());
@@ -282,6 +304,11 @@ export class GameEngine {
 
       net.events.on('room-state', (state: RoomState) => {
         this.currentRoomState = state;
+        if (this.isClosedNetworkRoomState(state)) {
+          this.hud?.setRoomState(state);
+          this.handleNetworkRoomClosed();
+          return;
+        }
         this.hud?.setRoomState(state);
         if (isTestRoom) this.input.setEnabled(this.canUseTestInput(ownUserId));
         this.syncTurnHotkeysEnabled();
@@ -330,11 +357,15 @@ export class GameEngine {
             this.selection?.disable();
           }
           if (state.phase === MATCH_PHASE.FINISHED) {
+            this.closeSurrenderConfirm();
             this.pendingNetworkAutoRoll = false;
             this.clearNetworkTurnDice();
+            const rematchAvailable = this.isNetworkFinalRematchAvailable(state);
+            if (!rematchAvailable) this.networkRematchRequestedBy = [];
             this.hud?.showFinalResult(
               state.winner === ownUserId ? 'WIN' : 'FARKLE',
               this.networkRematchRequestedBy,
+              rematchAvailable,
             );
           }
           this.syncTurnHotkeysEnabled();
@@ -413,33 +444,31 @@ export class GameEngine {
         // обработчике выше, когда придёт состояние "WAITING + own turn".
         this.input.setEnabled(false);
       }
-    } else if (this.mode === 'local' && this.soloConfig) {
-      this.hud = null;
+    } else if (this.mode === 'local' && this.localMatchConfig) {
       this.benchDice = null;
       this.selection = new SelectionService(this.renderer.domElement, this.camera, this.dice, this.scene);
       this.selection.disable();
-      this.soloState = createSoloRun(this.soloConfig);
-      this.soloHud = new SoloUiService(this.soloConfig, this.soloState, playerSettings.controls);
-      this.input.setEnabled(true);
+      this.localMatchState = createLocalMatch();
+      this.hud = new HudUiService(LOCAL_HUMAN_USER_ID, playerSettings.controls);
+      this.syncLocalMatchHud(MATCH_PHASE.WAITING);
 
       this.selection.events.on(
         'selection-changed',
         (indices: number[], valid: boolean, points: number) => {
-          this.soloHud?.setSelectionState(indices.length, valid, points);
+          if (this.localMatchState?.currentPlayer !== 'human') return;
+          this.hud?.setSelectionState(indices.length, valid, points);
         },
       );
-      this.soloHud.events.on('select-all-clicked', this.handleHotkeySelectAll);
-      this.soloHud.events.on('continue-clicked', this.handleSoloContinue);
-      this.soloHud.events.on('bank-clicked', this.handleSoloBank);
-      this.soloHud.events.on('surrender-clicked', this.handleHotkeySurrender);
-      this.soloHud.events.on('reset-clicked', this.resetSoloRun);
-      this.soloHud.setStatus(t('readyToRoll'));
-      this.syncTurnHotkeysEnabled();
+      this.hud.events.on('select-all-clicked', this.handleHotkeySelectAll);
+      this.hud.events.on('continue-clicked', this.handleLocalMatchContinue);
+      this.hud.events.on('bank-clicked', this.handleLocalMatchBank);
+      this.hud.events.on('surrender-clicked', this.handleHotkeySurrender);
+      this.hud.events.on('final-exit-clicked', () => this.onSurrender?.());
+      this.enterLocalMatchTurn();
     } else {
       this.selection = null;
       this.benchDice = null;
       this.hud = null;
-      this.soloHud = null;
     }
 
     window.addEventListener('resize', this.onResize);
@@ -481,124 +510,311 @@ export class GameEngine {
     }
   }
 
-  private finishSoloRoll(): void {
-    const state = this.soloState;
-    const config = this.soloConfig;
-    if (!state || !config || isSoloRunEnded(state)) return;
+  private localPlayerUserId(player: LocalMatchState['currentPlayer']): string {
+    return player === 'human' ? LOCAL_HUMAN_USER_ID : LOCAL_BOT_USER_ID;
+  }
+
+  private createLocalRoomState(): RoomState | null {
+    const state = this.localMatchState;
+    const config = this.localMatchConfig;
+    if (!state || !config) return null;
+
+    return {
+      id: LOCAL_ROOM_ID,
+      code: LOCAL_ROOM_CODE,
+      gameName: t('singleplayerGame'),
+      hasPassword: false,
+      ownerId: LOCAL_HUMAN_USER_ID,
+      status: isLocalMatchEnded(state) ? ROOM_STATUS.FINISHED : ROOM_STATUS.ACTIVE,
+      mode: ROOM_MODE.MATCH,
+      options: {
+        ...DEFAULT_ROOM_OPTIONS,
+        targetScore: config.targetScore,
+        minBank: config.minBank,
+        allowHotDice: config.allowHotDice,
+      },
+      members: [
+        {
+          userId: LOCAL_HUMAN_USER_ID,
+          socketId: LOCAL_HUMAN_USER_ID,
+          displayName: t('youPlayer'),
+          role: ROOM_ROLE.PLAYER,
+          online: true,
+        },
+        {
+          userId: LOCAL_BOT_USER_ID,
+          socketId: LOCAL_BOT_USER_ID,
+          displayName: t('botPlayer'),
+          role: ROOM_ROLE.PLAYER,
+          online: true,
+        },
+      ],
+    };
+  }
+
+  private createLocalMatchPayload(phase: MatchPhase): MatchStatePayload | null {
+    const state = this.localMatchState;
+    if (!state) return null;
+
+    const winner =
+      state.status === 'human-won'
+        ? LOCAL_HUMAN_USER_ID
+        : state.status === 'bot-won'
+          ? LOCAL_BOT_USER_ID
+          : '';
+
+    return {
+      phase,
+      currentPlayer: this.localPlayerUserId(state.currentPlayer),
+      paused: false,
+      pauseReason: '',
+      onlinePlayers: [LOCAL_HUMAN_USER_ID, LOCAL_BOT_USER_ID],
+      turnPoints: state.turnPoints,
+      remainingDice: state.activeDiceCount,
+      bench: [],
+      totals: [
+        { userId: LOCAL_HUMAN_USER_ID, total: state.players.human.totalScore },
+        { userId: LOCAL_BOT_USER_ID, total: state.players.bot.totalScore },
+      ],
+      winner,
+      finishReason: winner ? MATCH_FINISH_REASON.SCORE : MATCH_FINISH_REASON.NONE,
+      turnDeadlineAt: 0,
+    };
+  }
+
+  private syncLocalMatchHud(phase: MatchPhase): void {
+    if (this.mode !== 'local') return;
+    const roomState = this.createLocalRoomState();
+    const state = this.localMatchState;
+    if (!roomState || !state) return;
+
+    const matchState = this.createLocalMatchPayload(
+      isLocalMatchEnded(state) ? MATCH_PHASE.FINISHED : phase,
+    );
+    if (!matchState) return;
+
+    this.currentRoomState = roomState;
+    this.currentMatchState = matchState;
+    this.hud?.setRoomState(roomState);
+    this.hud?.setMatchState(matchState);
+  }
+
+  private finishLocalMatchRoll(): void {
+    const state = this.localMatchState;
+    const config = this.localMatchConfig;
+    if (!state || !config || isLocalMatchEnded(state)) return;
     this.localRolling = false;
     this.localRestCorrectionPasses = 0;
     const rolledFaces = this.dice.getLocalActiveFaces();
     this.localLastRolledFaces = rolledFaces;
 
     if (isBust(rolledFaces)) {
-      this.soloState = recordSoloBust(state, config);
+      this.localMatchState = recordLocalMatchBust(state);
       this.dice.resetLocalForNewTurn();
+      this.selection?.clearExternalSelection();
       this.selection?.disable();
-      this.soloHud?.setState(this.soloState);
-      this.soloHud?.clearRollResult();
-      this.soloHud?.showError('BUST');
-      this.setSoloWaitingState();
+      this.hud?.setSelectionPreview(null);
+      this.hud?.setSelectionState(0, false, 0);
+      this.hud?.showError('BUST');
+      this.enterLocalMatchTurn();
       return;
     }
 
-    this.selection?.setScoringOptions(rolledFaces, scoreRoll(rolledFaces));
-    this.selection?.enable();
-    this.syncTurnHotkeysEnabled();
-    this.soloHud?.setRollResult(rolledFaces);
-    this.soloHud?.setStatus(t('chooseScoringDice'));
-  }
-
-  private handleSoloContinue = (): void => {
-    const state = this.soloState;
-    const config = this.soloConfig;
-    const selection = this.selection;
-    if (!state || !config || !selection || isSoloRunEnded(state)) return;
-    const validation = validateSelection(this.localLastRolledFaces, selection.getSelectedRollIndices());
-    if (validation.valid !== true) {
-      this.soloHud?.showError(validation.reason);
-      return;
-    }
-
-    const selected = new Set(selection.getSelectedIndices());
-    const remaining = this.dice.getLocalActiveIndices().filter((index) => !selected.has(index));
-    this.soloState = recordSoloContinue(
-      state,
-      config,
-      validation.points,
-      selection.getSelectedIndices().length,
+    this.hud?.setRollResult(rolledFaces);
+    this.selection?.setScoringOptions(
+      rolledFaces,
+      scoreRoll(rolledFaces),
+      state.currentPlayer === 'human',
     );
 
-    if (remaining.length === 0) {
+    if (state.currentPlayer === 'human') {
+      this.selection?.enable();
+      this.syncLocalMatchHud(MATCH_PHASE.SELECTING);
+      this.syncTurnHotkeysEnabled();
+      return;
+    }
+
+    this.selection?.disable();
+    this.hud?.setSelectionState(0, false, 0);
+    this.syncLocalMatchHud(MATCH_PHASE.SELECTING);
+    this.prepareLocalBotDecision(rolledFaces);
+  }
+
+  private prepareLocalBotDecision(rolledFaces: number[]): void {
+    const state = this.localMatchState;
+    const config = this.localMatchConfig;
+    if (!state || !config || state.currentPlayer !== 'bot') return;
+
+    const decision = chooseFarkleBotMove({
+      rolledFaces,
+      activeDiceCount: state.activeDiceCount,
+      turnPoints: state.turnPoints,
+      botTotal: state.players.bot.totalScore,
+      humanTotal: state.players.human.totalScore,
+      targetScore: config.targetScore,
+      minBank: config.minBank,
+      allowHotDice: config.allowHotDice,
+    });
+    if (!decision) {
+      this.localMatchState = recordLocalMatchBust(state);
+      this.dice.resetLocalForNewTurn();
+      this.hud?.setSelectionPreview(null);
+      this.hud?.setSelectionState(0, false, 0);
+      this.hud?.showError('BUST');
+      this.enterLocalMatchTurn();
+      return;
+    }
+
+    const activeIndices = this.dice.getLocalActiveIndices();
+    const selectedDiceIndices = decision.rollIndices
+      .map((rollIndex) => activeIndices[rollIndex])
+      .filter((index): index is number => index !== undefined);
+
+    this.localBotDecision = decision;
+    this.localBotSelectedDiceIndices = selectedDiceIndices;
+    this.selection?.setExternalSelection(selectedDiceIndices);
+    this.hud?.setSelectionPreview({
+      userId: LOCAL_BOT_USER_ID,
+      indices: selectedDiceIndices,
+      valid: true,
+      points: decision.points,
+    });
+    this.clearLocalBotActionTimer();
+    this.localBotActionTimer = window.setTimeout(() => {
+      this.localBotActionTimer = null;
+      this.applyLocalBotDecision();
+    }, LOCAL_BOT_DECISION_DELAY_MS);
+  }
+
+  private applyLocalBotDecision(): void {
+    const decision = this.localBotDecision;
+    const state = this.localMatchState;
+    if (!decision || !state || state.currentPlayer !== 'bot' || isLocalMatchEnded(state)) return;
+    const selected = [...this.localBotSelectedDiceIndices];
+    this.localBotDecision = null;
+    this.localBotSelectedDiceIndices = [];
+    if (decision.action === 'bank') {
+      this.applyLocalMatchBank(decision.points, decision.rollIndices.length);
+    } else {
+      this.applyLocalMatchContinue(decision.points, selected, decision.rollIndices.length);
+    }
+  }
+
+  private handleLocalMatchContinue = (): void => {
+    const validation = this.getLocalMatchSelectionValidation();
+    const selection = this.selection;
+    if (!selection || validation === null || validation.valid !== true) {
+      if (validation?.valid === false) this.hud?.showError(validation.reason);
+      return;
+    }
+    this.applyLocalMatchContinue(
+      validation.points,
+      selection.getSelectedIndices(),
+      selection.getSelectedIndices().length,
+    );
+  };
+
+  private handleLocalMatchBank = (): void => {
+    const validation = this.getLocalMatchSelectionValidation();
+    const selection = this.selection;
+    const state = this.localMatchState;
+    const config = this.localMatchConfig;
+    if (!selection || !state || !config || validation === null || validation.valid !== true) {
+      if (validation?.valid === false) this.hud?.showError(validation.reason);
+      return;
+    }
+    if (state.turnPoints + validation.points < config.minBank) {
+      this.hud?.showError(`${t('minBank')}: ${config.minBank}`);
+      return;
+    }
+    this.applyLocalMatchBank(validation.points, selection.getSelectedIndices().length);
+  };
+
+  private applyLocalMatchContinue(
+    points: number,
+    selectedDiceIndices: number[],
+    diceUsed: number,
+  ): void {
+    const state = this.localMatchState;
+    const config = this.localMatchConfig;
+    if (!state || !config || isLocalMatchEnded(state)) return;
+
+    const selected = new Set(selectedDiceIndices);
+    const remaining = this.dice.getLocalActiveIndices().filter((index) => !selected.has(index));
+    this.localMatchState = recordLocalMatchContinue(state, config, points, diceUsed);
+    if (remaining.length === 0 || this.localMatchState.activeDiceCount === 6) {
       this.dice.resetLocalForNewTurn();
     } else {
       this.dice.setLocalActiveIndices(remaining);
     }
-    this.localLastRolledFaces = [];
-    selection.disable();
-    this.soloHud?.setState(this.soloState);
-    this.soloHud?.clearRollResult();
-    this.setSoloWaitingState();
-    if (this.playerSettings.gameplay.autoRollAfterContinue) {
-      this.input.triggerKeyboardThrow();
-    }
-  };
+    this.clearLocalMatchRollUi();
+    this.enterLocalMatchTurn();
+  }
 
-  private handleSoloBank = (): void => {
-    const state = this.soloState;
-    const config = this.soloConfig;
-    const selection = this.selection;
-    if (!state || !config || !selection || isSoloRunEnded(state)) return;
-    const validation = validateSelection(this.localLastRolledFaces, selection.getSelectedRollIndices());
-    if (validation.valid !== true) {
-      this.soloHud?.showError(validation.reason);
-      return;
-    }
-    const minBank = config.minBank ?? 0;
-    if (state.turnScore + validation.points < minBank) {
-      this.soloHud?.showError(`${t('minBank')}: ${minBank}`);
-      return;
-    }
-
-    this.soloState = recordSoloBank(
-      state,
-      config,
-      validation.points,
-      selection.getSelectedIndices().length,
-    );
+  private applyLocalMatchBank(points: number, diceUsed: number): void {
+    const state = this.localMatchState;
+    const config = this.localMatchConfig;
+    if (!state || !config || isLocalMatchEnded(state)) return;
+    this.localMatchState = recordLocalMatchBank(state, config, points, diceUsed);
     this.dice.resetLocalForNewTurn();
-    this.localLastRolledFaces = [];
-    selection.disable();
-    this.soloHud?.setState(this.soloState);
-    this.soloHud?.clearRollResult();
-    this.setSoloWaitingState();
-  };
+    this.clearLocalMatchRollUi();
+    this.enterLocalMatchTurn();
+  }
 
-  private resetSoloRun = (): void => {
-    const config = this.soloConfig;
-    if (!config) return;
-    this.localRolling = false;
-    this.localRestCorrectionPasses = 0;
+  private clearLocalMatchRollUi(): void {
     this.localLastRolledFaces = [];
-    this.networkLastRolledFaces = [];
-    this.soloState = createSoloRun(config);
-    this.dice.resetLocalForNewTurn();
+    this.localBotDecision = null;
+    this.localBotSelectedDiceIndices = [];
+    this.selection?.clearExternalSelection();
     this.selection?.disable();
-    this.soloHud?.setState(this.soloState);
-    this.soloHud?.clearRollResult();
-    this.setSoloWaitingState();
-  };
+    this.hud?.setSelectionPreview(null);
+    this.hud?.setSelectionState(0, false, 0);
+  }
 
-  private setSoloWaitingState(): void {
-    const state = this.soloState;
+  private enterLocalMatchTurn(): void {
+    const state = this.localMatchState;
     if (!state) return;
-    const active = !isSoloRunEnded(state);
-    this.input.setEnabled(active);
-    this.syncTurnHotkeysEnabled();
-    if (active) {
-      this.soloHud?.setStatus(t('readyToRoll'));
-    } else {
-      this.soloHud?.setStatus('');
+    this.clearLocalBotActionTimer();
+
+    if (isLocalMatchEnded(state)) {
+      this.localRolling = false;
+      this.closeSurrenderConfirm();
+      this.input.setEnabled(false);
+      this.selection?.disable();
+      this.syncLocalMatchHud(MATCH_PHASE.FINISHED);
+      this.hud?.showFinalResult(state.status === 'human-won' ? 'WIN' : 'FARKLE', [], false);
+      this.syncTurnHotkeysEnabled();
+      return;
     }
+
+    this.selection?.disable();
+    this.syncLocalMatchHud(MATCH_PHASE.WAITING);
+    if (state.currentPlayer === 'human') {
+      this.input.setEnabled(true);
+    } else {
+      this.input.setEnabled(false);
+      this.scheduleLocalBotRoll();
+    }
+    this.syncTurnHotkeysEnabled();
+  }
+
+  private scheduleLocalBotRoll(): void {
+    this.clearLocalBotActionTimer();
+    this.localBotActionTimer = window.setTimeout(() => {
+      this.localBotActionTimer = null;
+      const state = this.localMatchState;
+      if (!state || state.currentPlayer !== 'bot' || isLocalMatchEnded(state) || this.localRolling) {
+        return;
+      }
+      this.input.setEnabled(true);
+      this.input.triggerKeyboardThrow();
+      this.input.setEnabled(false);
+    }, LOCAL_BOT_ROLL_DELAY_MS);
+  }
+
+  private clearLocalBotActionTimer(): void {
+    if (this.localBotActionTimer !== null) clearTimeout(this.localBotActionTimer);
+    this.localBotActionTimer = null;
   }
 
   private handleLocalActiveRest(): void {
@@ -610,7 +826,7 @@ export class GameEngine {
         return;
       }
     }
-    this.finishSoloRoll();
+    if (this.localMatchState) this.finishLocalMatchRoll();
   }
 
   private handleHotkeySelectAll = (): void => {
@@ -627,8 +843,8 @@ export class GameEngine {
 
   private handleHotkeyContinue = (): void => {
     if (this.mode === 'local') {
-      if (!this.canSubmitSoloSelection()) return;
-      this.handleSoloContinue();
+      if (!this.canSubmitLocalMatchSelection()) return;
+      this.handleLocalMatchContinue();
       return;
     }
 
@@ -638,8 +854,8 @@ export class GameEngine {
 
   private handleHotkeyBank = (): void => {
     if (this.mode === 'local') {
-      if (!this.canSubmitSoloBank()) return;
-      this.handleSoloBank();
+      if (!this.canSubmitLocalMatchBank()) return;
+      this.handleLocalMatchBank();
       return;
     }
 
@@ -649,12 +865,93 @@ export class GameEngine {
 
   private handleHotkeySurrender = (): void => {
     if (!this.canUseSurrender()) return;
-    if (this.mode === 'network') {
-      this.handleNetworkSurrender();
-      return;
-    }
-    this.onSurrender?.();
+    this.showSurrenderConfirm();
   };
+
+  private showSurrenderConfirm(): void {
+    if (this.surrenderConfirmEl !== null || !this.canUseSurrender()) return;
+
+    const overlay = document.createElement('div');
+    Object.assign(overlay.style, {
+      position: 'fixed',
+      inset: '0',
+      zIndex: '40',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '24px',
+      background: 'rgba(0,0,0,0.46)',
+      pointerEvents: 'auto',
+      boxSizing: 'border-box',
+    } satisfies Partial<CSSStyleDeclaration>);
+
+    const panel = document.createElement('div');
+    Object.assign(panel.style, {
+      width: 'min(360px, calc(100vw - 48px))',
+      padding: '18px',
+      borderRadius: UI_RADIUS,
+      background: 'rgba(20,20,24,0.96)',
+      color: '#fff',
+      boxShadow: '0 18px 48px rgba(0,0,0,0.38)',
+      textAlign: 'center',
+      boxSizing: 'border-box',
+    } satisfies Partial<CSSStyleDeclaration>);
+
+    const question = document.createElement('div');
+    question.textContent = t('surrenderConfirm');
+    Object.assign(question.style, {
+      fontSize: '20px',
+      lineHeight: '1.25',
+      marginBottom: '16px',
+    } satisfies Partial<CSSStyleDeclaration>);
+
+    const actions = document.createElement('div');
+    Object.assign(actions.style, {
+      display: 'grid',
+      gridTemplateColumns: '1fr 1fr',
+      gap: '10px',
+    } satisfies Partial<CSSStyleDeclaration>);
+
+    const makeConfirmButton = (label: string, background: string): HTMLButtonElement => {
+      const btn = document.createElement('button');
+      btn.textContent = label;
+      Object.assign(btn.style, {
+        minHeight: '44px',
+        border: 'none',
+        borderRadius: UI_RADIUS,
+        background,
+        color: '#fff',
+        cursor: 'pointer',
+        fontSize: '18px',
+      } satisfies Partial<CSSStyleDeclaration>);
+      return btn;
+    };
+
+    const yesBtn = makeConfirmButton(t('confirmYes'), '#b91c1c');
+    const noBtn = makeConfirmButton(t('confirmNo'), '#374151');
+    yesBtn.addEventListener('click', () => {
+      this.closeSurrenderConfirm();
+      if (!this.canUseSurrender()) return;
+      if (this.mode === 'network') {
+        this.submitNetworkSurrender();
+        return;
+      }
+      this.onSurrender?.();
+    });
+    noBtn.addEventListener('click', () => this.closeSurrenderConfirm());
+
+    actions.append(yesBtn, noBtn);
+    panel.append(question, actions);
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    this.surrenderConfirmEl = overlay;
+    noBtn.focus();
+  }
+
+  private closeSurrenderConfirm(): void {
+    this.surrenderConfirmEl?.remove();
+    this.surrenderConfirmEl = null;
+  }
 
   private handleNetworkContinue = (): void => {
     const selection = this.selection;
@@ -694,6 +991,11 @@ export class GameEngine {
   };
 
   private handleNetworkSurrender = (): void => {
+    if (!this.canUseSurrender()) return;
+    this.showSurrenderConfirm();
+  };
+
+  private submitNetworkSurrender = (): void => {
     const network = this.network;
     if (!network || !this.canUseSurrender()) return;
     this.pendingNetworkAutoRoll = false;
@@ -717,7 +1019,14 @@ export class GameEngine {
     const network = this.network;
     const state = this.currentMatchState;
     const ownUserId = network?.getUserId() ?? '';
-    if (!network || state?.phase !== MATCH_PHASE.FINISHED || ownUserId.length === 0) return;
+    if (
+      !network ||
+      state?.phase !== MATCH_PHASE.FINISHED ||
+      !this.isNetworkFinalRematchAvailable(state) ||
+      ownUserId.length === 0
+    ) {
+      return;
+    }
     if (!this.networkRematchRequestedBy.includes(ownUserId)) {
       this.networkRematchRequestedBy = [...this.networkRematchRequestedBy, ownUserId];
       this.hud?.setFinalRematchRequestedBy(this.networkRematchRequestedBy);
@@ -736,13 +1045,13 @@ export class GameEngine {
   }
 
   private canUseTurnHotkeys(): boolean {
-    if (this.mode === 'local') return this.canUseSoloHotkeys();
+    if (this.mode === 'local') return this.canUseLocalMatchHotkeys();
     return this.canUseNetworkHotkeys();
   }
 
   private canUseSurrender(): boolean {
     if (this.mode === 'local') {
-      return this.soloState !== null && !isSoloRunEnded(this.soloState);
+      return this.localMatchState !== null && !isLocalMatchEnded(this.localMatchState);
     }
 
     const state = this.currentMatchState;
@@ -840,12 +1149,13 @@ export class GameEngine {
     }
   }
 
-  private canUseSoloHotkeys(): boolean {
-    const state = this.soloState;
+  private canUseLocalMatchHotkeys(): boolean {
+    const state = this.localMatchState;
     return (
       this.mode === 'local' &&
       state !== null &&
-      !isSoloRunEnded(state) &&
+      state.currentPlayer === 'human' &&
+      !isLocalMatchEnded(state) &&
       !this.localRolling &&
       this.selection !== null &&
       this.localLastRolledFaces.length > 0
@@ -872,25 +1182,32 @@ export class GameEngine {
     return this.canUseNetworkSelectionControls();
   }
 
-  private getSoloSelectionPoints(): number | null {
+  private getLocalMatchSelectionValidation():
+    | ReturnType<typeof validateSelection>
+    | null {
     const selection = this.selection;
-    if (!this.canUseSoloHotkeys() || !selection) return null;
-    const validation = validateSelection(
+    if (!this.canUseLocalMatchHotkeys() || !selection) return null;
+    return validateSelection(
       this.localLastRolledFaces,
       selection.getSelectedRollIndices(),
     );
-    return validation.valid === true ? validation.points : null;
   }
 
-  private canSubmitSoloSelection(): boolean {
-    return this.getSoloSelectionPoints() !== null;
+  private getLocalMatchSelectionPoints(): number | null {
+    const validation = this.getLocalMatchSelectionValidation();
+    return validation?.valid === true ? validation.points : null;
   }
 
-  private canSubmitSoloBank(): boolean {
-    const points = this.getSoloSelectionPoints();
-    const state = this.soloState;
-    if (points === null || state === null) return false;
-    return state.turnScore + points >= (this.soloConfig?.minBank ?? 0);
+  private canSubmitLocalMatchSelection(): boolean {
+    return this.getLocalMatchSelectionPoints() !== null;
+  }
+
+  private canSubmitLocalMatchBank(): boolean {
+    const points = this.getLocalMatchSelectionPoints();
+    const state = this.localMatchState;
+    const config = this.localMatchConfig;
+    if (points === null || state === null || config === null) return false;
+    return state.turnPoints + points >= config.minBank;
   }
 
   private getNetworkSelectionPoints(): number | null {
@@ -922,6 +1239,15 @@ export class GameEngine {
 
   private isRankedRoom(): boolean {
     return this.currentRoomState?.mode === ROOM_MODE.RANKED;
+  }
+
+  private isNetworkFinalRematchAvailable(state: MatchStatePayload | null): boolean {
+    return (
+      state !== null &&
+      state.phase === MATCH_PHASE.FINISHED &&
+      state.finishReason !== MATCH_FINISH_REASON.DISCONNECT &&
+      state.finishReason !== MATCH_FINISH_REASON.EXIT
+    );
   }
 
   private withSelectionPreviewPoints(
@@ -963,6 +1289,24 @@ export class GameEngine {
     }
   }
 
+  private isClosedNetworkRoomState(state: RoomState): boolean {
+    return (
+      state.status === ROOM_STATUS.FINISHED &&
+      state.members.length > 0 &&
+      state.members.every((member) => !member.online)
+    );
+  }
+
+  private handleNetworkRoomClosed(): void {
+    if (this.networkRoomClosed) return;
+    this.networkRoomClosed = true;
+    this.pendingNetworkAutoRoll = false;
+    this.closeSurrenderConfirm();
+    this.input.setEnabled(false);
+    this.selection?.disable();
+    this.hud?.setFinalRematchAvailable(false);
+  }
+
   private canUseTestInput(ownUserId: string): boolean {
     const member = this.currentRoomState?.members.find((m) => m.userId === ownUserId);
     const roomActive = this.currentRoomState?.status === ROOM_STATUS.ACTIVE;
@@ -985,6 +1329,8 @@ export class GameEngine {
 
   destroy(): void {
     this.stop();
+    this.closeSurrenderConfirm();
+    this.clearLocalBotActionTimer();
     if (this.networkActionsBlockTimer !== null) clearTimeout(this.networkActionsBlockTimer);
     this.networkActionsBlockTimer = null;
     window.removeEventListener('resize', this.onResize);
@@ -993,8 +1339,15 @@ export class GameEngine {
     this.selection?.destroy();
     this.benchDice?.destroy();
     this.hud?.destroy();
-    this.soloHud?.destroy();
+    this.dice.destroy();
     this.perf?.el.remove();
+    if (this.tableVisualMesh) {
+      this.tableVisualMesh.geometry.dispose();
+      const materials = Array.isArray(this.tableVisualMesh.material)
+        ? this.tableVisualMesh.material
+        : [this.tableVisualMesh.material];
+      for (const material of materials) material.dispose();
+    }
     const rimMaterials = new Set<THREE.Material>();
     for (const mesh of this.tableRimMeshes) {
       mesh.geometry.dispose();
@@ -1009,6 +1362,7 @@ export class GameEngine {
         : [this.backgroundMesh.material];
       for (const material of materials) material.dispose();
     }
+    for (const texture of this.tableTextures) texture.dispose();
     this.backgroundTexture?.dispose();
     this.renderer.domElement.remove();
     this.renderer.dispose();
@@ -1019,7 +1373,6 @@ export class GameEngine {
     this.input.setThrowKeyCode(settings.controls.throwDice);
     this.turnHotkeys.setBindings(settings.controls);
     this.hud?.setControls(settings.controls);
-    this.soloHud?.setControls(settings.controls);
   }
 
   private areShadowsEnabled(): boolean {
@@ -1108,17 +1461,17 @@ export class GameEngine {
     if (!this.physicsWorld || !this.diceMaterial || !this.tableMaterial) return;
     this.physicsWorld.addContactMaterial(
       new CANNON.ContactMaterial(this.diceMaterial, this.tableMaterial, {
-        friction: 0.45,
-        restitution: 0.35,
-        contactEquationStiffness: 1e8,
-        contactEquationRelaxation: 3,
+        friction: DICE_TABLE_FRICTION,
+        restitution: DICE_TABLE_RESTITUTION,
+        contactEquationStiffness: DICE_TABLE_CONTACT_STIFFNESS,
+        contactEquationRelaxation: DICE_TABLE_CONTACT_RELAXATION,
       }),
     );
 
     this.physicsWorld.addContactMaterial(
       new CANNON.ContactMaterial(this.diceMaterial, this.diceMaterial, {
-        friction: 0.35,
-        restitution: 0.12,
+        friction: DICE_DICE_FRICTION,
+        restitution: DICE_DICE_RESTITUTION,
       }),
     );
   }

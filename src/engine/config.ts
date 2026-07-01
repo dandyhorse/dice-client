@@ -1,4 +1,4 @@
-export const WORLD_GRAVITY = -25;
+export const WORLD_GRAVITY = -34;
 
 // Стол фиксированных размеров в мировых координатах. На любом аспекте экрана
 // игроки видят одинаковую физическую площадку — это требование мультиплеера.
@@ -16,9 +16,17 @@ export const WALL_THICKNESS = 0.22;
 export const WALL_INSET = 0.22;
 
 export const DICE_COUNT = 6;
-export const DICE_HALF_SIZE = 0.26;
+export const DICE_HALF_SIZE = 0.273;
 export const DICE_MASS = 0.6;
-export const DICE_SPACING = 0.71;
+export const DICE_SPACING = 0.746;
+export const DICE_LINEAR_DAMPING = 0.16;
+export const DICE_ANGULAR_DAMPING = 0.14;
+export const DICE_TABLE_FRICTION = 0.72;
+export const DICE_TABLE_RESTITUTION = 0.18;
+export const DICE_TABLE_CONTACT_STIFFNESS = 1e8;
+export const DICE_TABLE_CONTACT_RELAXATION = 2;
+export const DICE_DICE_FRICTION = 0.46;
+export const DICE_DICE_RESTITUTION = 0.08;
 
 export const REST_FACE_DOT_MIN = 0.82;
 export const REST_STACKED_CENTER_Y_MIN = DICE_HALF_SIZE * 2.2;
@@ -38,7 +46,7 @@ export const HOLD_JITTER_SCALE = 0.04;
 
 export const VELOCITY_BUFFER_MS = 90;
 export const THROW_LINEAR_SCALE = 0.8;
-export const THROW_DOWNWARD_BIAS = -1.8;
+export const THROW_DOWNWARD_BIAS = -3.2;
 export const THROW_MIN_SPEED = 0.4;
 // Дополнительный отступ от внутренней грани невидимой стены для release-position.
 export const THROW_POSITION_PADDING = 0.2;
@@ -46,7 +54,7 @@ export const THROW_POSITION_PADDING = 0.2;
 // больше WALL_THICKNESS за substep — кость туннелирует сквозь стену.
 // 12 u/s * (1/60/3 substep) = 0.067 — намного меньше WALL_THICKNESS=0.5.
 export const THROW_MAX_SPEED = 12;
-export const THROW_ANGULAR_RANDOM = 5;
+export const THROW_ANGULAR_RANDOM = 5.8;
 
 // Камера строго сверху вниз. Y вычисляется из размеров стола и аспекта viewport
 // (см. GameEngine.computeCameraY) — здесь только X/Z и FOV. Up-вектор по -Z,

@@ -7,7 +7,12 @@
 // Layout каждого пакета — см. dice-server/.claude/specs/network-physics.md.
 
 import { OP } from './opcodes';
-import { DEFAULT_ROOM_OPTIONS, ROOM_SCORING_RULESET, normalizeRoomOptions } from './types';
+import {
+  DEFAULT_ROOM_OPTIONS,
+  MATCH_FINISH_REASON,
+  ROOM_SCORING_RULESET,
+  normalizeRoomOptions,
+} from './types';
 
 import type {
   AckErrorPayload,
@@ -967,6 +972,7 @@ export const unpackMatchTurnResult = (buf: Uint8Array): MatchTurnResultPayload =
 //   totalsCount × { str16 userId, u32 total }
 //   str16 winner         (пустая строка = ещё нет)
 //   f64 turnDeadlineAt   (unix ms, 0 если таймера нет)
+//   u8  finishReason     (0 none | 1 score | 2 forfeit | 3 disconnect | 4 exit)
 // ──────────────────────────────────────────────────────────────
 
 export const packMatchState = (state: MatchStatePayload): Uint8Array => {
@@ -998,7 +1004,7 @@ export const packMatchState = (state: MatchStatePayload): Uint8Array => {
     1;
   for (const userId of onlinePlayerBytes) size += 2 + userId.length;
   for (const t of totalsBytes) size += 2 + t.userId.length + 4;
-  size += 2 + winnerBytes.length + 8;
+  size += 2 + winnerBytes.length + 8 + 1;
 
   const buf = new Uint8Array(size);
   const view = viewOf(buf);
@@ -1035,6 +1041,8 @@ export const packMatchState = (state: MatchStatePayload): Uint8Array => {
   }
   off = writeStr16(view, buf, off, winnerBytes);
   view.setFloat64(off, state.turnDeadlineAt || 0);
+  off += 8;
+  view.setUint8(off, state.finishReason & 0xff);
   return buf;
 };
 
@@ -1078,7 +1086,12 @@ export const unpackMatchState = (buf: Uint8Array): MatchStatePayload => {
   }
   const winnerR = readStr16(view, buf, off);
   off = winnerR.next;
-  const turnDeadlineAt = off + 8 <= buf.length ? view.getFloat64(off) : 0;
+  const hasTurnDeadlineAt = off + 8 <= buf.length;
+  const turnDeadlineAt = hasTurnDeadlineAt ? view.getFloat64(off) : 0;
+  if (hasTurnDeadlineAt) off += 8;
+  const finishReason = (
+    off < buf.length ? view.getUint8(off) : MATCH_FINISH_REASON.NONE
+  ) as MatchStatePayload['finishReason'];
   return {
     phase,
     currentPlayer: currentR.value,
@@ -1090,6 +1103,7 @@ export const unpackMatchState = (buf: Uint8Array): MatchStatePayload => {
     bench,
     totals,
     winner: winnerR.value,
+    finishReason,
     turnDeadlineAt,
   };
 };

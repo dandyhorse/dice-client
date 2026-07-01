@@ -2,7 +2,9 @@ import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import {
   DICE_COUNT,
+  DICE_ANGULAR_DAMPING,
   DICE_HALF_SIZE,
+  DICE_LINEAR_DAMPING,
   DICE_MASS,
   DICE_SPACING,
   HOLD_HEIGHT,
@@ -129,8 +131,8 @@ export class DiceService {
           mass: DICE_MASS,
           shape: new CANNON.Box(new CANNON.Vec3(DICE_HALF_SIZE, DICE_HALF_SIZE, DICE_HALF_SIZE)),
           material: this.material ?? undefined,
-          linearDamping: 0.1,
-          angularDamping: 0.1,
+          linearDamping: DICE_LINEAR_DAMPING,
+          angularDamping: DICE_ANGULAR_DAMPING,
         });
         body.allowSleep = true;
         // Sync с dice-server/src/engine/classes/physics-world.class.ts (0.25/0.2):
@@ -426,6 +428,22 @@ export class DiceService {
     this.interpolationRampStartMs = 0;
   }
 
+  destroy(): void {
+    this.isHeld = false;
+    for (const die of this.localDice) {
+      if (this.onCollision) die.body.removeEventListener('collide', this.handleLocalCollision);
+      this.world?.removeBody(die.body);
+      this.disposeMesh(die.mesh);
+    }
+    for (const die of this.remoteDice) {
+      this.disposeMesh(die.mesh);
+    }
+    this.localDice = [];
+    this.localActiveIndices = [];
+    this.remoteDice = [];
+    this.interpolationRampStartMs = 0;
+  }
+
   /**
    * network mode: получить mesh'и активных (не bench) костей в индексации
    * snapshot'а. Используется SelectionService для raycast'а — ему нужны как
@@ -562,6 +580,12 @@ export class DiceService {
     const s = Math.sin(halfAngle) / wLen;
     this.tmpDeltaQ.set(sample.w.x * s, sample.w.y * s, sample.w.z * s, Math.cos(halfAngle));
     die.mesh.quaternion.multiplyQuaternions(this.tmpDeltaQ, sample.q);
+  }
+
+  private disposeMesh(mesh: THREE.Mesh): void {
+    mesh.removeFromParent();
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const material of materials) material.dispose();
   }
 
   private allLocalIndices(): number[] {

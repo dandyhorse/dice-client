@@ -21,8 +21,9 @@ const PANEL_BG = 'rgba(0,0,0,0.6)';
 const PANEL_FG = '#eee';
 const PANEL_OFFLINE_FG = '#8e8e9d';
 const PANEL_RADIUS = UI_RADIUS;
-const PANEL_PAD = '10px 12px';
+const PANEL_PAD = '12px 15px';
 const PANEL_ACTIVE_BORDER = '#22c55e';
+const PLAYER_PANEL_INSET = 'clamp(44px, 6vw, 96px)';
 
 const BTN_BG = '#3b82f6';
 const BTN_FG = '#fff';
@@ -87,6 +88,7 @@ export class HudUiService {
   private lastAnnouncedTurnPlayer = '';
   private finalResult: 'WIN' | 'FARKLE' | null = null;
   private finalRematchRequestedBy: string[] = [];
+  private finalRematchAvailable = true;
   private readonly ownUserId: string;
 
   constructor(ownUserId: string, controls: ControlBindings = DEFAULT_PLAYER_SETTINGS.controls) {
@@ -102,25 +104,28 @@ export class HudUiService {
       fontFamily: FONT_FAMILY.ui,
     } satisfies Partial<CSSStyleDeclaration>);
 
-    this.leftPanel = this.makePanel({ top: '12px', left: '12px' });
+    this.leftPanel = this.makePanel({ top: PLAYER_PANEL_INSET, left: PLAYER_PANEL_INSET });
     this.leftPanel.id = 'hud-left';
     Object.assign(this.leftPanel.style, {
-      minWidth: '180px',
+      minWidth: '220px',
       whiteSpace: 'pre-line',
     } satisfies Partial<CSSStyleDeclaration>);
 
-    this.opponentPanel = this.makePanel({ bottom: '12px', left: '12px' });
+    this.opponentPanel = this.makePanel({
+      bottom: PLAYER_PANEL_INSET,
+      left: PLAYER_PANEL_INSET,
+    });
     this.opponentPanel.id = 'hud-opponent';
     Object.assign(this.opponentPanel.style, {
-      minWidth: '180px',
+      minWidth: '220px',
       whiteSpace: 'pre-line',
       display: 'none',
     } satisfies Partial<CSSStyleDeclaration>);
 
-    this.rightPanel = this.makePanel({ top: '12px', right: '12px' });
+    this.rightPanel = this.makePanel({ top: PLAYER_PANEL_INSET, right: PLAYER_PANEL_INSET });
     this.rightPanel.id = 'hud-right';
     Object.assign(this.rightPanel.style, {
-      minWidth: '180px',
+      minWidth: '220px',
       whiteSpace: 'pre-line',
       textAlign: 'right',
     } satisfies Partial<CSSStyleDeclaration>);
@@ -354,8 +359,13 @@ export class HudUiService {
     }, isFarkle ? FARKLE_DURATION_MS : ERROR_DURATION_MS);
   }
 
-  showFinalResult(result: 'WIN' | 'FARKLE', requestedBy: string[] = []): void {
+  showFinalResult(
+    result: 'WIN' | 'FARKLE',
+    requestedBy: string[] = [],
+    rematchAvailable = true,
+  ): void {
     this.finalResult = result;
+    this.finalRematchAvailable = rematchAvailable;
     this.finalRematchRequestedBy = Array.from(new Set(requestedBy));
     if (this.errorTimer !== null) clearTimeout(this.errorTimer);
     if (this.turnBannerTimer !== null) clearTimeout(this.turnBannerTimer);
@@ -376,6 +386,11 @@ export class HudUiService {
 
   setFinalRematchRequestedBy(requestedBy: string[]): void {
     this.finalRematchRequestedBy = Array.from(new Set(requestedBy));
+    if (this.finalResult !== null) this.renderFinalButtons();
+  }
+
+  setFinalRematchAvailable(available: boolean): void {
+    this.finalRematchAvailable = available;
     if (this.finalResult !== null) this.renderFinalButtons();
   }
 
@@ -435,7 +450,7 @@ export class HudUiService {
     }
 
     this.opponentPanel.style.display = 'none';
-    this.leftPanel.style.top = '12px';
+    this.leftPanel.style.top = PLAYER_PANEL_INSET;
     const room = this.roomState;
     const targetScore = room?.options.targetScore ?? DEFAULT_ROOM_OPTIONS.targetScore;
     const totalByUser = new Map(s.totals.map((total) => [total.userId, total.total]));
@@ -539,7 +554,7 @@ export class HudUiService {
     const targetScore = room.options.targetScore ?? DEFAULT_ROOM_OPTIONS.targetScore;
     const totalByUser = new Map(s.totals.map((t) => [t.userId, t.total]));
 
-    this.leftPanel.style.top = '12px';
+    this.leftPanel.style.top = PLAYER_PANEL_INSET;
     this.leftPanel.textContent = this.formatScorePanel(opponent, totalByUser, targetScore);
     this.stylePlayerPanel(this.leftPanel, opponent, s.currentPlayer === opponent.userId);
     this.opponentPanel.style.display = 'block';
@@ -754,6 +769,13 @@ export class HudUiService {
 
   private renderFinalButtons(): void {
     this.finalExitBtn.textContent = t('exitMatch');
+    this.finalRematchBtn.style.display = this.finalRematchAvailable ? 'block' : 'none';
+    this.finalExitBtn.style.flex = this.finalRematchAvailable ? '1 1 0' : '1 1 100%';
+    if (!this.finalRematchAvailable) {
+      this.setButtonEnabled(this.finalExitBtn, true);
+      this.setButtonEnabled(this.finalRematchBtn, false);
+      return;
+    }
     const requested = this.finalRematchRequestedBy;
     const ownRequested = requested.includes(this.ownUserId);
     const opponentRequested = requested.some((userId) => userId !== this.ownUserId);
@@ -769,6 +791,7 @@ export class HudUiService {
   private clearFinalResult(): void {
     this.finalResult = null;
     this.finalRematchRequestedBy = [];
+    this.finalRematchAvailable = true;
     this.actionsBlocked = false;
     this.errorPanel.style.display = 'none';
     this.errorPanel.style.background = 'rgba(180,40,40,0.85)';

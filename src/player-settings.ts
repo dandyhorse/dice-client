@@ -1,6 +1,3 @@
-import { getAuthIdentity } from './auth';
-import { SERVER_URL } from './engine/config';
-
 export const CONTROL_ACTIONS = [
   'throwDice',
   'selectAll',
@@ -41,8 +38,6 @@ const ACCEPTED_KEY_CODE_RE = /^(Escape|Space|Key[A-Z]|Digit[0-9]|Numpad[0-9])$/;
 const listeners = new Set<(settings: PlayerSettings) => void>();
 
 let currentSettings: PlayerSettings = cloneSettings(DEFAULT_PLAYER_SETTINGS);
-
-const settingsUrl = (path: string): string => `${SERVER_URL}${path}`;
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -123,18 +118,6 @@ export const onPlayerSettingsChange = (
 };
 
 export const loadPlayerSettings = async (): Promise<PlayerSettings> => {
-  const identity = await getAuthIdentity();
-  if (identity?.authenticated && identity.accessToken) {
-    const res = await fetch(settingsUrl('/auth/settings'), {
-      headers: { Authorization: `Bearer ${identity.accessToken}` },
-    });
-    const payload = (await res.json().catch(() => null)) as unknown;
-    if (!res.ok) throw new Error(readErrorMessage(payload) || `settings request failed: ${res.status}`);
-    const settings = normalizePlayerSettings(isObject(payload) ? payload.settings : null);
-    setCurrentSettings(settings);
-    return getPlayerSettings();
-  }
-
   setCurrentSettings(readGuestSettings());
   return getPlayerSettings();
 };
@@ -143,24 +126,6 @@ export const savePlayerSettings = async (settings: PlayerSettings): Promise<Play
   const validation = validatePlayerSettings(settings);
   if (!validation.valid) throw new Error(validation.message);
   const normalized = normalizePlayerSettings(settings);
-
-  const identity = await getAuthIdentity();
-  if (identity?.authenticated && identity.accessToken) {
-    const res = await fetch(settingsUrl('/auth/settings'), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${identity.accessToken}`,
-      },
-      body: JSON.stringify({ settings: normalized }),
-    });
-    const payload = (await res.json().catch(() => null)) as unknown;
-    if (!res.ok) throw new Error(readErrorMessage(payload) || `settings save failed: ${res.status}`);
-    const saved = normalizePlayerSettings(isObject(payload) ? payload.settings : null);
-    setCurrentSettings(saved);
-    return getPlayerSettings();
-  }
-
   localStorage.setItem(GUEST_SETTINGS_KEY, JSON.stringify(normalized));
   setCurrentSettings(normalized);
   return getPlayerSettings();
@@ -191,9 +156,4 @@ const hasDuplicateBindings = (controls: ControlBindings): boolean => {
     seen.add(code);
   }
   return false;
-};
-
-const readErrorMessage = (payload: unknown): string | null => {
-  if (!isObject(payload)) return null;
-  return typeof payload.message === 'string' && payload.message.length > 0 ? payload.message : null;
 };

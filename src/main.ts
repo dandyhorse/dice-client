@@ -8,7 +8,7 @@ import {
   refreshCurrentUser,
   registerAccount,
 } from './auth';
-import { GameEngine } from './engine/classes/_game-engine/game-engine.class';
+import type { GameEngine } from './engine/classes/_game-engine/game-engine.class';
 import {
   NetworkService,
   DEFAULT_ROOM_OPTIONS,
@@ -26,17 +26,11 @@ import {
   type RoomListItem,
   type RoomState,
 } from './engine/classes/_game-engine/services/network.service';
-import {
-  DEFAULT_SOLO_MODE,
-  SOLO_MODE_CONFIGS,
-  getSoloModeConfig,
-  type SoloModeConfig,
-} from './domain/solo-run';
+import { createLocalMatchConfig, type LocalMatchConfig } from './domain/local-match';
 import {
   getLanguage,
   onLanguageChange,
   setLanguage,
-  soloModeTitle,
   t,
   type Language,
 } from './ui/i18n';
@@ -67,7 +61,7 @@ import {
 } from './player-settings';
 import { assetPreloader } from './engine/assets/asset-preloader';
 import { audioService } from './engine/audio/audio.service';
-import { MenuDiceScene } from './ui/menu-dice-scene';
+import type { MenuDiceScene } from './ui/menu-dice-scene';
 import { hideLoadingOverlay, showLoadingOverlay } from './ui/loading-overlay';
 
 const USER_ID_KEY = 'dice.userId';
@@ -176,11 +170,11 @@ if (mobileRuntime) {
 
 let activeGame: GameEngine | null = null;
 let activeNetwork: NetworkService | null = null;
+let returningToLobby = false;
 type LobbyView =
   | 'player-name'
   | 'home'
   | 'create-room'
-  | 'solo'
   | 'multiplayer'
   | 'multiplayer-create'
   | 'multiplayer-join'
@@ -211,7 +205,7 @@ const cleanupSettingsUi = (): void => {
   settingsScreenCleanup = null;
 };
 
-const startLocal = async (soloConfig: SoloModeConfig = DEFAULT_SOLO_MODE): Promise<void> => {
+const startLocalMatch = async (localMatchConfig: LocalMatchConfig): Promise<void> => {
   destroyMenuDiceScene();
   audioService.stopMusic();
   showLoadingOverlay();
@@ -220,6 +214,7 @@ const startLocal = async (soloConfig: SoloModeConfig = DEFAULT_SOLO_MODE): Promi
       assetPreloader.preloadGroup('gameplay'),
       audioService.preloadGroup('gameplay'),
     ]);
+    const { GameEngine } = await import('./engine/classes/_game-engine/game-engine.class');
     clearLobby();
     clearRoomScreen();
     clearAuthControls();
@@ -227,7 +222,7 @@ const startLocal = async (soloConfig: SoloModeConfig = DEFAULT_SOLO_MODE): Promi
     clearRoomBadge();
     const game = new GameEngine({
       mode: 'local',
-      soloConfig,
+      localMatchConfig,
       playerSettings: getPlayerSettings(),
       onSurrender: returnToLobby,
     });
@@ -448,6 +443,7 @@ const ensureMenuDiceScene = (): void => {
   ])
     .then(async () => {
       if (!isMenuDiceView() || activeGame || mobileRuntime) return;
+      const { MenuDiceScene } = await import('./ui/menu-dice-scene');
       const scene = await MenuDiceScene.create();
       if (!isMenuDiceView() || activeGame || mobileRuntime) {
         scene.destroy();
@@ -465,10 +461,21 @@ const ensureMenuDiceScene = (): void => {
 };
 
 const returnToLobby = (): void => {
+  if (returningToLobby) return;
+  returningToLobby = true;
+  void returnToLobbyAsync();
+};
+
+const returnToLobbyAsync = async (): Promise<void> => {
+  const network = activeNetwork;
+  if (network) {
+    await network.leaveRoom().catch(() => undefined);
+  }
+
   activeGame?.destroy();
   activeGame = null;
-  activeNetwork?.disconnect();
-  activeNetwork = null;
+  network?.disconnect();
+  if (activeNetwork === network) activeNetwork = null;
   clearLobby();
   clearRoomScreen();
   clearRoomBadge();
@@ -478,6 +485,7 @@ const returnToLobby = (): void => {
   clearRoomListModal();
   closeLobbyListNetwork();
   renderHome();
+  returningToLobby = false;
 };
 
 const scheduleFinishedRoomReturn = (network: NetworkService): void => {
@@ -543,9 +551,6 @@ const rerenderCurrentShell = (): void => {
       break;
     case 'create-room':
       renderCreateRoomMenu();
-      break;
-    case 'solo':
-      renderSoloCreate();
       break;
     case 'multiplayer':
       renderMultiplayerMenu();
@@ -732,6 +737,12 @@ const renderLanguageControls = (): void => {
 const handleRoomState = (network: NetworkService, state: RoomState): void => {
   if (activeNetwork !== network) return;
 
+  if (isClosedRoomState(state)) {
+    if (activeGame && activeNetwork === network) return;
+    scheduleFinishedRoomReturn(network);
+    return;
+  }
+
   if (
     state.mode === ROOM_MODE.RANKED &&
     (state.status === ROOM_STATUS.ACTIVE || state.status === ROOM_STATUS.FINISHED)
@@ -773,6 +784,14 @@ const handleRoomState = (network: NetworkService, state: RoomState): void => {
   }
 };
 
+const isClosedRoomState = (state: RoomState): boolean => {
+  return (
+    state.status === ROOM_STATUS.FINISHED &&
+    state.members.length > 0 &&
+    state.members.every((member) => !member.online)
+  );
+};
+
 const mountNetworkGame = async (network: NetworkService): Promise<void> => {
   if (activeGame) return;
   if (networkGameMounting) return networkGameMounting;
@@ -782,7 +801,9 @@ const mountNetworkGame = async (network: NetworkService): Promise<void> => {
     assetPreloader.preloadGroup('gameplay'),
     audioService.preloadGroup('gameplay'),
   ])
-    .then(() => {
+    .then(async () => {
+      if (activeGame || activeNetwork !== network) return;
+      const { GameEngine } = await import('./engine/classes/_game-engine/game-engine.class');
       if (activeGame || activeNetwork !== network) return;
       activeGame = new GameEngine({
         mode: 'network',
@@ -1120,7 +1141,6 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
   let draftControls: ControlBindings = { ...current.controls };
   let draftGameplay: GameplaySettings = { ...current.gameplay };
   let capturing: ControlAction | null = null;
-  let saving = false;
   const rowButtons = new Map<ControlAction, HTMLButtonElement>();
 
   appendSectionTitle(card, t('controlsTitle'));
@@ -1148,11 +1168,10 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
 
   appendSectionTitle(card, t('gameplaySettings'));
   const autoRollBtn = button('', () => {
-    draftGameplay = {
+    applyDraft(draftControls, {
       ...draftGameplay,
       autoRollAfterContinue: !draftGameplay.autoRollAfterContinue,
-    };
-    renderRows();
+    });
   });
   Object.assign(autoRollBtn.style, {
     width: '100%',
@@ -1166,15 +1185,13 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
   const actions = document.createElement('div');
   Object.assign(actions.style, {
     display: 'grid',
-    gridTemplateColumns: '1fr 1fr 1fr',
+    gridTemplateColumns: '1fr 1fr',
     gap: scaledPx(8),
   } satisfies Partial<CSSStyleDeclaration>);
 
   const resetBtn = button(t('resetDefaults'), () => {
-    draftControls = { ...DEFAULT_PLAYER_SETTINGS.controls };
-    draftGameplay = { ...DEFAULT_PLAYER_SETTINGS.gameplay };
     capturing = null;
-    renderRows();
+    applyDraft({ ...DEFAULT_PLAYER_SETTINGS.controls }, { ...DEFAULT_PLAYER_SETTINGS.gameplay });
   });
   resetBtn.style.background = SETTINGS_BUTTON_BG;
   actions.appendChild(resetBtn);
@@ -1182,27 +1199,6 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
   const closeBtn = button(t('back'), close);
   closeBtn.style.background = SETTINGS_BUTTON_BG;
   actions.appendChild(closeBtn);
-
-  const saveBtn = button(t('save'), () => {
-    const settings: PlayerSettings = {
-      version: 1,
-      controls: { ...draftControls },
-      gameplay: { ...draftGameplay },
-    };
-    const validation = validatePlayerSettings(settings);
-    if (!validation.valid || saving) return;
-    saving = true;
-    saveBtn.disabled = true;
-    savePlayerSettings(settings)
-      .then(() => close())
-      .catch((err: Error) => {
-        saving = false;
-        error.textContent = err.message;
-        renderRows();
-      });
-  });
-  saveBtn.style.background = SETTINGS_BUTTON_BG;
-  actions.appendChild(saveBtn);
   card.appendChild(actions);
 
   const keyListener = (event: KeyboardEvent): void => {
@@ -1213,10 +1209,31 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
       error.textContent = t('invalidControlKey');
       return;
     }
-    draftControls = { ...draftControls, [capturing]: event.code };
+    const action = capturing;
+    const nextControls = { ...draftControls, [action]: event.code };
     capturing = null;
-    renderRows();
+    if (!applyDraft(nextControls, draftGameplay)) capturing = action;
   };
+
+  function applyDraft(nextControls: ControlBindings, nextGameplay: GameplaySettings): boolean {
+    const settings: PlayerSettings = {
+      version: 1,
+      controls: { ...nextControls },
+      gameplay: { ...nextGameplay },
+    };
+    const validation = validatePlayerSettings(settings);
+    if (!validation.valid) {
+      error.textContent = t('duplicateControls');
+      return false;
+    }
+    draftControls = { ...nextControls };
+    draftGameplay = { ...nextGameplay };
+    savePlayerSettings(settings).catch((err: Error) => {
+      error.textContent = err.message;
+    });
+    renderRows();
+    return true;
+  }
 
   function renderRows(): void {
     for (const action of CONTROL_ACTIONS) {
@@ -1239,9 +1256,6 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
     };
     const validation = validatePlayerSettings(settings);
     error.textContent = validation.valid ? '' : t('duplicateControls');
-    saveBtn.disabled = !validation.valid || saving;
-    saveBtn.style.opacity = saveBtn.disabled ? '0.4' : '1';
-    saveBtn.style.cursor = saveBtn.disabled ? 'not-allowed' : 'pointer';
   }
 
   window.addEventListener('keydown', keyListener, true);
@@ -1619,6 +1633,10 @@ const renderLobby = (): void => {
   ensureMenuDiceScene();
 
   const quickSearching = isQuickSearchActive();
+  const singleBtn = appendMenuButton(card, t('singleplayerGame'), () =>
+    startLocalMatch(createLocalMatchConfig(DEFAULT_ROOM_OPTIONS)).catch(showError),
+  );
+  singleBtn.style.background = '#0f766e';
   const quickBtn = appendMenuButton(
     card,
     quickSearching ? t('quickSearchCancel') : t('quickGame'),
@@ -1634,58 +1652,6 @@ const renderLobby = (): void => {
 
 const renderCreateRoomMenu = (): void => {
   renderMultiplayerCreate();
-};
-
-const renderSoloCreate = (): void => {
-  currentLobbyView = 'solo';
-  destroyMenuDiceScene();
-  audioService.stopMusic();
-  renderAuthControls();
-  renderLanguageControls();
-  const card = createLobbyFrame(440);
-  appendTitle(card, t('soloGame'));
-
-  const soloSelect = selectInput(
-    SOLO_MODE_CONFIGS.map((mode) => [mode.id, soloModeTitle(mode.id, mode.title)]),
-  );
-  soloSelect.value = DEFAULT_SOLO_MODE.id;
-  card.appendChild(labeledControl(t('mode'), soloSelect));
-
-  const { targetInput, minBankInput } = createRoomOptionsControls(card);
-  const syncSoloDefaults = (): void => {
-    const selected = getSoloModeConfig(soloSelect.value);
-    targetInput.value = String(selected.targetScore ?? DEFAULT_ROOM_OPTIONS.targetScore);
-  };
-  soloSelect.addEventListener('change', syncSoloDefaults);
-  syncSoloDefaults();
-
-  // appendDisabledMenuButton(card, `${t('mode')}: Bot ${t('normalMode')}`);
-
-  const startBtn = button(t('createGame'), () => {
-    const selected = getSoloModeConfig(soloSelect.value);
-    const soloConfig: SoloModeConfig = {
-      ...selected,
-      targetScore: readSteppedNumber(
-        targetInput,
-        selected.targetScore ?? DEFAULT_ROOM_OPTIONS.targetScore,
-        ROOM_TARGET_SCORE_MIN,
-        ROOM_TARGET_SCORE_MAX,
-        ROOM_TARGET_SCORE_STEP,
-      ),
-      minBank: readSteppedNumber(
-        minBankInput,
-        DEFAULT_ROOM_OPTIONS.minBank,
-        ROOM_MIN_BANK_MIN,
-        ROOM_MIN_BANK_MAX,
-        ROOM_MIN_BANK_STEP,
-      ),
-    };
-    startLocal(soloConfig).catch(showError);
-  });
-  card.appendChild(startBtn);
-
-  appendBackTo(card, renderCreateRoomMenu);
-  appendLobbyError(card);
 };
 
 const renderMultiplayerMenu = (): void => {
@@ -2017,28 +1983,6 @@ const roomCodeInput = (): HTMLInputElement => {
   input.autocapitalize = 'characters';
   input.style.textTransform = 'uppercase';
   return input;
-};
-
-const selectInput = (options: [string, string][]): HTMLSelectElement => {
-  const select = document.createElement('select');
-  for (const [value, label] of options) {
-    const opt = document.createElement('option');
-    opt.value = value;
-    opt.textContent = label;
-    select.appendChild(opt);
-  }
-  Object.assign(select.style, {
-    padding: scaledPx(8),
-    fontSize: FONT_SIZE.control,
-    height: UI_SIZE.controlHeight,
-    boxSizing: 'border-box',
-    border: '1px solid #444',
-    background: '#111',
-    color: '#eee',
-    borderRadius: UI_RADIUS,
-    fontFamily: FONT_FAMILY.ui,
-  } satisfies Partial<CSSStyleDeclaration>);
-  return select;
 };
 
 const labeledControl = (label: string, control: HTMLElement): HTMLLabelElement => {

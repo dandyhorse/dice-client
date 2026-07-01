@@ -22,7 +22,7 @@ interface Sample {
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
-const SPACE_THROW_SPEED_SCALE = 0.2;
+const SPACE_THROW_SPEED_SCALE = 0.24;
 const DEFAULT_THROW_KEY_CODE = 'Space';
 
 const isInteractiveKeyboardTarget = (target: EventTarget | null): boolean => {

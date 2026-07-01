@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import type * as THREE from 'three';
 
 import { SERVER_URL } from '../../../config';
 import { EventEmitter } from '../../event-emitter.class';
@@ -65,6 +65,7 @@ export type {
 } from '../../../../network/protocol/types';
 export {
   DEFAULT_ROOM_OPTIONS,
+  MATCH_FINISH_REASON,
   MATCH_PHASE,
   ROOM_MIN_BANK_MAX,
   ROOM_MIN_BANK_MIN,
@@ -335,9 +336,24 @@ export class NetworkService {
     const ws = new WebSocket(wsUrlFor(this.userId, this.displayName, this.accessToken));
     ws.binaryType = 'arraybuffer';
     let opened = false;
+    let initialSettled = false;
+    const isInitialConnect = initialResolve !== undefined || initialReject !== undefined;
+    const rejectInitial = (err: Error): boolean => {
+      if (!isInitialConnect || opened || initialSettled) return false;
+      initialSettled = true;
+      this.autoReconnect = false;
+      if (this.ws === ws) this.ws = null;
+      initialReject?.(err);
+      return true;
+    };
 
     ws.onopen = () => {
+      if (this.ws !== ws) {
+        ws.close();
+        return;
+      }
       opened = true;
+      initialSettled = true;
       this.reconnectDelay = RECONNECT_INITIAL_MS;
       initialResolve?.();
       // Реконнект-rejoin: если до падения сидели в комнате — снова заходим
@@ -352,11 +368,19 @@ export class NetworkService {
     };
 
     ws.onerror = () => {
-      if (!opened) initialReject?.(new Error('connection failed'));
+      if (!opened) rejectInitial(new Error('connection failed'));
     };
 
     ws.onclose = () => {
-      this.ws = null;
+      const wasCurrent = this.ws === ws;
+      if (wasCurrent) this.ws = null;
+      if (!opened) {
+        if (rejectInitial(new Error('connection failed'))) return;
+        if (wasCurrent && this.autoReconnect) this.scheduleReconnect();
+        return;
+      }
+      if (!wasCurrent) return;
+
       // Все висящие requests становятся undelivered — реджектим.
       for (const p of this.pending.values()) {
         if (p.timeoutId !== null) clearTimeout(p.timeoutId);
