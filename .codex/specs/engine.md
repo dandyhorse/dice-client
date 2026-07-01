@@ -119,8 +119,12 @@ camera.y  = max(hForDepth, hForWidth)   // contain — берём большую
 
 - `assets/ost/*.{mp3,ogg,wav}` резолвится через Vite glob в URL-список. `MusicService` играет OST всю жизнь приложения через `HTMLAudioElement`, без `audioService.preloadGroup()`.
 - Первый трек выбирается random на клиенте. Текущий трек stream/range-грузится браузером; следующий random track (без повтора текущего) создаётся с `preload="auto"` только когда до конца текущего остаётся около 25 секунд. При нескольких треках переход идёт через короткий crossfade.
-- `assets/dices/1.svg..6.svg` грузятся через Vite glob; `RulesBoardService` рисует их в ряд на canvas texture.
-- `H` переключает 3D-дощечку справа от стола: slide-in/out, небольшой mouse tilt, hover разворачивает лицом к камере.
+- `assets/dices/1.svg..6.svg` грузятся через Vite glob; `RulesBoardService` использует их как иконки в canvas texture с таблицей правил Farkle.
+- 3D-дощечка справа от стола сейчас крупная: `BOARD_WIDTH = 4.8`, `BOARD_DEPTH = 5.2`, лицевая canvas texture `4096×4096`. Размеры намеренно экспериментальные, чтобы уместить все scoring-комбинации.
+- `KeyH` переключает плашку: root `group.position.x` плавно едет между `shownX` и `hiddenX` через `BOARD_SLIDE_SPEED`.
+- Плашка использует Steam-card-style mouse tilt: позиция курсора отслеживается на `window` в capture-фазе без `pointerleave` reset, считается относительно экранного центра плашки и маппится в `pitchGroup.rotation.x` / `yawGroup.rotation.z`. Базовый визуальный разворот по Z — `30deg`; текущий общий tilt clamp: `BOARD_MAX_TILT = 18deg`, left/max clamp по Z — `BOARD_LEFT_MAX_TILT = 10deg`.
+- Материалы дощечки рендерятся `DoubleSide`, чтобы при малом tilt была видна и правая грань, а не только стороны, чьи normals уже смотрят в камеру.
+- Текстура дощечки использует плоскую заливку без PS1-style dither/noise, canvas text и SVG dice icons. В текущем виде результат визуально неудовлетворительный: текст выглядит мыльно/мелко на 3D-плоскости, следующий pass вероятно должен заменить canvas text на заранее подготовленную bitmap/texture image.
 
 ## Освещение
 

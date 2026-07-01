@@ -53,6 +53,12 @@
 - [x] Table borders minimized and edge assist changed to cube-surface contact only; edge force/kick increased by 40%.
 - [x] Dice-dice face-contact kick made heavier for stuck-in-row tests: speed `4.2`, max delta `2.4`.
 - [x] Collision test sound switched from `impactWood_medium_000.ogg` to `impactWood_medium_003.ogg`; previous choice is commented in `asset-manifest.ts`.
+- [x] Right 3D rules board changed from old raycast hover/scale tilt to Steam-card-style mouse follow: center pivot is preserved, window capture-level pointer offset from board screen center drives nested pitch/yaw groups, with no edge-based clamp or `pointerleave` reset.
+- [x] Right 3D rules board materials switched to `DoubleSide` so the right edge is not hidden by backface culling during small-angle tilt.
+- [x] Right 3D rules board texture flattened to remove gradient/dither-like backing.
+- [x] Right 3D rules board `H` slide toggle restored while preserving the newer nested mouse-tilt groups.
+- [x] Right 3D rules board enlarged for rules-table experiments: current size `BOARD_WIDTH = 4.8`, `BOARD_DEPTH = 5.2`, texture `4096×4096`, `anisotropy = 8`.
+- [x] Farkle scoring table added to the rules board texture from the shared scorer/spec: singles, 3/4/5/6-of-a-kind for each face, straights, and explicit non-scoring V1 combos.
 
 ## Verification
 - [x] `npm run build` in `dice-client` passed after test-room changes.
@@ -76,6 +82,8 @@
 - [x] Local WebSocket quick-match trace confirmed server sends `ROOM_STATE ACTIVE`, `MATCH_DICE_SPAWN`, and `MATCH_STATE` immediately on match start.
 - [x] `npm run build` in `dice-client` passed after contact-only edge assist and minimal border tuning.
 - [x] `npm run build` in `dice-client` passed after heavier dice-dice kick and alternate collision sound.
+- [x] `npm run build` in `dice-client` passed after right rules board mouse-follow tilt and flat texture.
+- [x] `npm run build` in `dice-client` passed after restoring `H` toggle, enlarging the rules board, and adding the scoring-table canvas texture.
 
 ## Notes
 - Public routing target is nginx on `80/443`; client preview remains internal on `127.0.0.1:5174`.
@@ -90,6 +98,7 @@
 - Selection preview protocol files remain mirrored with the server protocol files except the optional first marker comment.
 - Next cleanup target: split `src/main.ts` menu/quick-search flow into smaller stateful modules and remove race-prone coupling between loading overlay, lobby render, network callbacks, and `ESC`.
 - Physics watch note: Chrome can still show dice jitter near table edges after hard throws. If it returns after edge-kick tuning, investigate wall/contact tension, continuous edge assist, bottom-magnet torque near walls, and whether edge behavior should become pure short impulse instead of persistent force.
+- Rules-board visual handoff: current canvas-text rules texture is functional but visually poor/blurry on the 3D panel. Next pass should explore a dedicated bitmap/texture image (possibly generated or designed outside canvas text), then map it onto the existing panel.
 
 ## Current Physics Handoff
 
