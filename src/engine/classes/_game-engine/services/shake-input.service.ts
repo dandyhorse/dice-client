@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { EventEmitter } from '../../event-emitter.class';
 import {
+  DICE_COUNT,
   DICE_HALF_SIZE,
+  DICE_SPACING,
   HOLD_HEIGHT,
   TABLE_DEPTH,
   TABLE_WIDTH,
@@ -22,7 +24,16 @@ interface Sample {
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
-const SPACE_THROW_SPEED_SCALE = 0.24;
+const randomBetween = (min: number, max: number): number => min + (max - min) * Math.random();
+
+const SPACE_THROW_SPEED_SCALE = 0.46;
+const SPACE_THROW_UPWARD_SPEED = 3.7;
+const SPACE_THROW_START_DEPTH_MIN = 0.58;
+const SPACE_THROW_START_DEPTH_MAX = 0.76;
+const SPACE_THROW_START_CROSS_AXIS_SPREAD = 0.22;
+const SPACE_THROW_TARGET_DEPTH_MIN = 0.08;
+const SPACE_THROW_TARGET_DEPTH_MAX = 0.28;
+const SPACE_THROW_TARGET_CROSS_AXIS_SPREAD = 0.25;
 const DEFAULT_THROW_KEY_CODE = 'Space';
 
 const isInteractiveKeyboardTarget = (target: EventTarget | null): boolean => {
@@ -193,32 +204,65 @@ export class ShakeInputService {
   private emitSpaceThrow(): void {
     this.isHolding = true;
     this.samples.length = 0;
-    this.currentPos.set(0, HOLD_HEIGHT, 0);
+    const throwSetup = this.createSpaceThrow();
+    this.currentPos.copy(throwSetup.position);
     this.lastEmittedPos.copy(this.currentPos);
     this.events.emit('hold-start', this.currentPos.clone());
 
     if (!this.enabled || !this.isHolding) return;
     this.isHolding = false;
 
-    const velocity = this.createSpaceThrowVelocity();
-    this.events.emit('release', velocity, this.currentPos.clone());
+    this.events.emit('release', throwSetup.velocity, this.currentPos.clone());
   }
 
-  private createSpaceThrowVelocity(): THREE.Vector3 {
-    const tableForward = new THREE.Vector3().copy(this.camera.up);
-    tableForward.y = 0;
-    if (tableForward.lengthSq() === 0) {
-      tableForward.set(0, 0, -1);
+  private createSpaceThrow(): { position: THREE.Vector3; velocity: THREE.Vector3 } {
+    const maxGroupOffsetX = ((DICE_COUNT - 1) / 2) * DICE_SPACING;
+    const limitX = Math.max(
+      0,
+      TABLE_WIDTH / 2 - WALL_INSET - maxGroupOffsetX - DICE_HALF_SIZE - THROW_POSITION_PADDING,
+    );
+    const limitZ = Math.max(
+      0,
+      TABLE_DEPTH / 2 - WALL_INSET - DICE_HALF_SIZE - THROW_POSITION_PADDING,
+    );
+
+    const side = Math.floor(Math.random() * 4);
+    const start = new THREE.Vector3(0, HOLD_HEIGHT, 0);
+    const target = new THREE.Vector3(0, HOLD_HEIGHT, 0);
+    const startDepth = randomBetween(SPACE_THROW_START_DEPTH_MIN, SPACE_THROW_START_DEPTH_MAX);
+    const targetDepth = randomBetween(SPACE_THROW_TARGET_DEPTH_MIN, SPACE_THROW_TARGET_DEPTH_MAX);
+    const startSpreadX = limitX * SPACE_THROW_START_CROSS_AXIS_SPREAD;
+    const startSpreadZ = limitZ * SPACE_THROW_START_CROSS_AXIS_SPREAD;
+    const spreadX = limitX * SPACE_THROW_TARGET_CROSS_AXIS_SPREAD;
+    const spreadZ = limitZ * SPACE_THROW_TARGET_CROSS_AXIS_SPREAD;
+
+    if (side === 0) {
+      start.set(randomBetween(-startSpreadX, startSpreadX), HOLD_HEIGHT, limitZ * startDepth);
+      target.set(randomBetween(-spreadX, spreadX), HOLD_HEIGHT, -limitZ * targetDepth);
+    } else if (side === 1) {
+      start.set(randomBetween(-startSpreadX, startSpreadX), HOLD_HEIGHT, -limitZ * startDepth);
+      target.set(randomBetween(-spreadX, spreadX), HOLD_HEIGHT, limitZ * targetDepth);
+    } else if (side === 2) {
+      start.set(-limitX * startDepth, HOLD_HEIGHT, randomBetween(-startSpreadZ, startSpreadZ));
+      target.set(limitX * targetDepth, HOLD_HEIGHT, randomBetween(-spreadZ, spreadZ));
     } else {
-      tableForward.normalize();
+      start.set(limitX * startDepth, HOLD_HEIGHT, randomBetween(-startSpreadZ, startSpreadZ));
+      target.set(-limitX * targetDepth, HOLD_HEIGHT, randomBetween(-spreadZ, spreadZ));
     }
 
-    const velocity = tableForward.multiplyScalar(THROW_MAX_SPEED * SPACE_THROW_SPEED_SCALE);
-    velocity.y = THROW_DOWNWARD_BIAS;
+    const velocity = target.sub(start);
+    velocity.y = 0;
+    if (velocity.lengthSq() <= 1e-6) {
+      velocity.set(0, 0, -1);
+    } else {
+      velocity.normalize();
+    }
+    velocity.multiplyScalar(THROW_MAX_SPEED * SPACE_THROW_SPEED_SCALE);
+    velocity.y = SPACE_THROW_UPWARD_SPEED;
     if (velocity.length() > THROW_MAX_SPEED) {
       velocity.setLength(THROW_MAX_SPEED);
     }
-    return velocity;
+    return { position: start, velocity };
   }
 
   private pushSample(time: number): void {

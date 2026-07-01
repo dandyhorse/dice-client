@@ -30,7 +30,7 @@ interface Die {
   `linearDamping = DICE_LINEAR_DAMPING`, `angularDamping = DICE_ANGULAR_DAMPING`
 - **Стартовый тип: DYNAMIC** (не KINEMATIC). Кости лежат на столе и спят.
 - `allowSleep = true`, `sleepSpeedLimit = 0.25`, `sleepTimeLimit = 0.2`
-- `spawnOffset.x = (i - (count-1)/2) * DICE_SPACING` — расстановка по X
+- `spawnOffset.x = (i - (count-1)/2) * DICE_SPACING` — начальная расстановка по X
 - Стартовая позиция: `(offsetX, DICE_HALF_SIZE + 0.05, 0)` — чуть выше стола, физика опустит и усыпит
 
 ### `pickup()`
@@ -46,6 +46,8 @@ interface Die {
    - `body.sleep()`
 
 ### `release(velocity, position)`
+
+- Release-row выбирается по стороне броска: если `|x| > |z|`, кости раскладываются по Z (параллельно левой/правой стенке), иначе по X (параллельно верхней/нижней стенке).
 
 Вызывается на `release` (mouseup). Идемпотентен (если `!isHeld` — выходит).
 

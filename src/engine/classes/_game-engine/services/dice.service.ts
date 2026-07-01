@@ -1,11 +1,21 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 import {
+  DICE_BOTTOM_MAGNET_MAX_HEIGHT,
+  DICE_BOTTOM_MAGNET_TORQUE,
   DICE_COUNT,
   DICE_ANGULAR_DAMPING,
+  DICE_DICE_CONTACT_KICK_MAX_DELTA,
+  DICE_DICE_CONTACT_KICK_SPEED,
+  DICE_DICE_FACE_CONTACT_DOT_MIN,
+  DICE_DICE_FACE_CONTACT_MIN_HORIZONTAL_NORMAL,
+  DICE_EDGE_REPULSION_DISTANCE,
+  DICE_EDGE_REPULSION_FORCE,
+  DICE_EDGE_REPULSION_KICK_SPEED,
   DICE_HALF_SIZE,
   DICE_LINEAR_DAMPING,
   DICE_MASS,
+  DICE_REROLL_FALL_Y,
   DICE_SPACING,
   HOLD_HEIGHT,
   INTERPOLATION_DELAY_MS,
@@ -19,6 +29,7 @@ import {
   TABLE_DEPTH,
   TABLE_WIDTH,
   THROW_ANGULAR_RANDOM,
+  THROW_ANGULAR_DIE_VARIATION,
   THROW_POSITION_PADDING,
   WALL_INSET,
 } from '../../../config';
@@ -56,6 +67,13 @@ interface FaceAlignment {
   dot: number;
 }
 
+type ReleaseRowAxis = 'x' | 'z';
+
+interface ClampedReleasePosition {
+  position: THREE.Vector3;
+  rowAxis: ReleaseRowAxis;
+}
+
 const FACE_AXES: { axis: CANNON.Vec3; face: number }[] = [
   { axis: new CANNON.Vec3(1, 0, 0), face: 1 },
   { axis: new CANNON.Vec3(-1, 0, 0), face: 6 },
@@ -64,6 +82,7 @@ const FACE_AXES: { axis: CANNON.Vec3; face: number }[] = [
   { axis: new CANNON.Vec3(0, 0, 1), face: 3 },
   { axis: new CANNON.Vec3(0, 0, -1), face: 4 },
 ];
+const SUPPORT_AXES = [FACE_AXES[0]!.axis, FACE_AXES[2]!.axis, FACE_AXES[4]!.axis];
 
 const PARKED_Y = -1000;
 const REMOTE_SAMPLE_CAPACITY = 8;
@@ -95,6 +114,16 @@ export class DiceService {
   private isHeld = false;
   private interpolationRampStartMs = 0;
   private readonly tmpDeltaQ = new THREE.Quaternion();
+  private readonly tmpEdgeForce = new CANNON.Vec3();
+  private readonly tmpMagnetAxis = new CANNON.Vec3();
+  private readonly tmpBestMagnetAxis = new CANNON.Vec3();
+  private readonly tmpMagnetTorque = new CANNON.Vec3();
+  private readonly tmpContactNormal = new CANNON.Vec3();
+  private readonly tmpOppositeContactNormal = new CANNON.Vec3();
+  private readonly tmpFaceNormal = new CANNON.Vec3();
+  private readonly tmpSupportAxis = new CANNON.Vec3();
+  private readonly worldUp = new CANNON.Vec3(0, 1, 0);
+  private readonly contactKickPairs = new Set<string>();
 
   // В local mode — массив LocalDie (cannon body + mesh).
   // В network mode — массив RemoteDie (только mesh + state от сервера).
@@ -225,15 +254,18 @@ export class DiceService {
       this.parkLocalDie(this.localDice[i]!);
     }
     const center = (active.length - 1) / 2;
-    const releasePosition = this.clampReleasePosition(position, active.length);
+    const release = this.clampReleasePosition(position, active.length);
     for (let slot = 0; slot < active.length; slot++) {
       const die = this.localDice[active[slot]!]!;
+      const offset = (slot - center) * DICE_SPACING;
+      const offsetX = release.rowAxis === 'x' ? offset : 0;
+      const offsetZ = release.rowAxis === 'z' ? offset : 0;
       die.mesh.visible = true;
       die.body.type = CANNON.Body.DYNAMIC;
       die.body.position.set(
-        releasePosition.x + (slot - center) * DICE_SPACING,
-        releasePosition.y,
-        releasePosition.z + die.spawnOffset.z,
+        release.position.x + offsetX,
+        release.position.y,
+        release.position.z + offsetZ,
       );
       die.body.quaternion.setFromAxisAngle(
         new CANNON.Vec3(Math.random(), Math.random(), Math.random()).unit(),
@@ -241,10 +273,11 @@ export class DiceService {
       );
       die.body.wakeUp();
       die.body.velocity.set(velocity.x, velocity.y, velocity.z);
+      const spinScale = 1 + (Math.random() - 0.5) * THROW_ANGULAR_DIE_VARIATION;
       die.body.angularVelocity.set(
-        (Math.random() - 0.5) * THROW_ANGULAR_RANDOM,
-        (Math.random() - 0.5) * THROW_ANGULAR_RANDOM,
-        (Math.random() - 0.5) * THROW_ANGULAR_RANDOM,
+        (Math.random() - 0.5) * THROW_ANGULAR_RANDOM * spinScale,
+        (Math.random() - 0.5) * THROW_ANGULAR_RANDOM * spinScale,
+        (Math.random() - 0.5) * THROW_ANGULAR_RANDOM * spinScale,
       );
       die.mesh.position.set(die.body.position.x, die.body.position.y, die.body.position.z);
       die.mesh.quaternion.set(
@@ -256,21 +289,38 @@ export class DiceService {
     }
   }
 
-  private clampReleasePosition(position: THREE.Vector3, diceCount: number): THREE.Vector3 {
-    const maxOffsetX = ((diceCount - 1) / 2) * DICE_SPACING;
+  private clampReleasePosition(
+    position: THREE.Vector3,
+    diceCount: number,
+  ): ClampedReleasePosition {
+    const x = Number.isFinite(position.x) ? position.x : 0;
+    const z = Number.isFinite(position.z) ? position.z : 0;
+    const rowAxis = this.resolveReleaseRowAxis(x, z);
+    const maxOffset = ((diceCount - 1) / 2) * DICE_SPACING;
     const limitX = Math.max(
       0,
-      TABLE_WIDTH / 2 - WALL_INSET - maxOffsetX - DICE_HALF_SIZE - THROW_POSITION_PADDING,
+      TABLE_WIDTH / 2 -
+        WALL_INSET -
+        (rowAxis === 'x' ? maxOffset : 0) -
+        DICE_HALF_SIZE -
+        THROW_POSITION_PADDING,
     );
     const limitZ = Math.max(
       0,
-      TABLE_DEPTH / 2 - WALL_INSET - DICE_HALF_SIZE - THROW_POSITION_PADDING,
+      TABLE_DEPTH / 2 -
+        WALL_INSET -
+        (rowAxis === 'z' ? maxOffset : 0) -
+        DICE_HALF_SIZE -
+        THROW_POSITION_PADDING,
     );
-    return new THREE.Vector3(
-      clamp(Number.isFinite(position.x) ? position.x : 0, -limitX, limitX),
-      HOLD_HEIGHT,
-      clamp(Number.isFinite(position.z) ? position.z : 0, -limitZ, limitZ),
-    );
+    return {
+      position: new THREE.Vector3(clamp(x, -limitX, limitX), HOLD_HEIGHT, clamp(z, -limitZ, limitZ)),
+      rowAxis,
+    };
+  }
+
+  private resolveReleaseRowAxis(x: number, z: number): ReleaseRowAxis {
+    return Math.abs(x) > Math.abs(z) ? 'z' : 'x';
   }
 
   syncMeshes(): void {
@@ -285,6 +335,208 @@ export class DiceService {
         die.body.quaternion.w,
       );
     }
+  }
+
+  applyLocalAssistForces(): void {
+    if (this.mode !== 'local') return;
+    const activeIndices = this.getValidLocalActiveIndices();
+    this.rerollLocalDiceInTriggerZone(activeIndices);
+    const activeDice = activeIndices
+      .map((index) => this.localDice[index])
+      .filter((die): die is LocalDie =>
+        die !== undefined &&
+        die.mesh.visible &&
+        die.body.type === CANNON.Body.DYNAMIC &&
+        die.body.position.y > -100 &&
+        die.body.sleepState !== CANNON.Body.SLEEPING,
+      );
+
+    for (const die of activeDice) {
+      this.applyLocalEdgeRepulsion(die.body);
+      this.applyLocalBottomMagnet(die.body);
+    }
+  }
+
+  applyLocalContactKicks(): void {
+    if (this.mode !== 'local' || !this.world) return;
+    const activeBodies = new Set(
+      this.getValidLocalActiveIndices()
+        .map((index) => this.localDice[index]?.body)
+        .filter(
+          (body): body is CANNON.Body =>
+            body !== undefined &&
+            body.type === CANNON.Body.DYNAMIC &&
+            body.position.y > -100 &&
+            body.sleepState !== CANNON.Body.SLEEPING,
+        ),
+    );
+
+    this.contactKickPairs.clear();
+    for (const contact of this.world.contacts) {
+      const a = contact.bi;
+      const b = contact.bj;
+      if (!activeBodies.has(a) || !activeBodies.has(b)) continue;
+      if (!this.isLocalDiceFaceToFaceContact(a, b, contact.ni)) continue;
+      const key = a.id < b.id ? `${a.id}:${b.id}` : `${b.id}:${a.id}`;
+      if (this.contactKickPairs.has(key)) continue;
+      this.contactKickPairs.add(key);
+      this.applyLocalDiceContactNormalKick(a, b, contact.ni);
+    }
+  }
+
+  private applyLocalDiceContactNormalKick(
+    a: CANNON.Body,
+    b: CANNON.Body,
+    normal: CANNON.Vec3,
+  ): void {
+    let nx = normal.x;
+    let nz = normal.z;
+    const len = Math.hypot(nx, nz);
+    if (len > 1e-6) {
+      nx /= len;
+      nz /= len;
+    } else {
+      const dx = b.position.x - a.position.x;
+      const dz = b.position.z - a.position.z;
+      const centerLen = Math.hypot(dx, dz);
+      nx = centerLen > 1e-6 ? dx / centerLen : 1;
+      nz = centerLen > 1e-6 ? dz / centerLen : 0;
+    }
+
+    this.applyLocalDiceContactKick(a, b, nx, nz);
+  }
+
+  private applyLocalDiceContactKick(a: CANNON.Body, b: CANNON.Body, nx: number, nz: number): void {
+    const relativeSpeed = (b.velocity.x - a.velocity.x) * nx + (b.velocity.z - a.velocity.z) * nz;
+    const targetSpeed = DICE_DICE_CONTACT_KICK_SPEED;
+    if (relativeSpeed >= targetSpeed) return;
+
+    const delta = Math.min((targetSpeed - relativeSpeed) * 0.5, DICE_DICE_CONTACT_KICK_MAX_DELTA);
+    a.velocity.x -= nx * delta;
+    a.velocity.z -= nz * delta;
+    b.velocity.x += nx * delta;
+    b.velocity.z += nz * delta;
+    a.wakeUp();
+    b.wakeUp();
+  }
+
+  private isLocalDiceFaceToFaceContact(
+    a: CANNON.Body,
+    b: CANNON.Body,
+    normal: CANNON.Vec3,
+  ): boolean {
+    const len = normal.length();
+    if (len <= 1e-6) return false;
+
+    this.tmpContactNormal.set(normal.x / len, normal.y / len, normal.z / len);
+    const horizontalLen = Math.hypot(this.tmpContactNormal.x, this.tmpContactNormal.z);
+    if (horizontalLen < DICE_DICE_FACE_CONTACT_MIN_HORIZONTAL_NORMAL) return false;
+    if (!this.hasLocalFaceAlong(a, this.tmpContactNormal)) return false;
+
+    this.tmpContactNormal.negate(this.tmpOppositeContactNormal);
+    return this.hasLocalFaceAlong(b, this.tmpOppositeContactNormal);
+  }
+
+  private hasLocalFaceAlong(body: CANNON.Body, direction: CANNON.Vec3): boolean {
+    for (const { axis } of FACE_AXES) {
+      body.quaternion.vmult(axis, this.tmpFaceNormal);
+      if (this.tmpFaceNormal.dot(direction) >= DICE_DICE_FACE_CONTACT_DOT_MIN) return true;
+    }
+    return false;
+  }
+
+  private applyLocalBottomMagnet(body: CANNON.Body): void {
+    if (body.position.y > DICE_BOTTOM_MAGNET_MAX_HEIGHT) return;
+
+    let bestDot = -Infinity;
+    for (const { axis } of FACE_AXES) {
+      body.quaternion.vmult(axis, this.tmpMagnetAxis);
+      const dot = this.tmpMagnetAxis.dot(this.worldUp);
+      if (dot > bestDot) {
+        bestDot = dot;
+        this.tmpBestMagnetAxis.copy(this.tmpMagnetAxis);
+      }
+    }
+
+    const proximity = clamp(
+      (DICE_BOTTOM_MAGNET_MAX_HEIGHT - body.position.y) /
+        Math.max(0.001, DICE_BOTTOM_MAGNET_MAX_HEIGHT - DICE_HALF_SIZE),
+      0,
+      1,
+    );
+    const alignmentError = clamp(1 - bestDot, 0, 1);
+    if (proximity <= 0 || alignmentError <= 0.001) return;
+
+    this.tmpBestMagnetAxis.cross(this.worldUp, this.tmpMagnetTorque);
+    this.tmpMagnetTorque.scale(
+      DICE_BOTTOM_MAGNET_TORQUE * proximity * alignmentError,
+      this.tmpMagnetTorque,
+    );
+    body.torque.vadd(this.tmpMagnetTorque, body.torque);
+  }
+
+  private applyLocalEdgeRepulsion(body: CANNON.Body): void {
+    const wallX = TABLE_WIDTH / 2 - WALL_INSET;
+    const wallZ = TABLE_DEPTH / 2 - WALL_INSET;
+    const supportX = this.projectedDiceHalfExtent(body, 'x');
+    const supportZ = this.projectedDiceHalfExtent(body, 'z');
+    let forceX = 0;
+    let forceZ = 0;
+
+    const positiveXPenetration = body.position.x + supportX - wallX;
+    const negativeXPenetration = -wallX - (body.position.x - supportX);
+    if (positiveXPenetration > 0) {
+      const t = this.edgeRepulsionContactScale(positiveXPenetration);
+      forceX -= t * t * DICE_EDGE_REPULSION_FORCE;
+      body.velocity.x = Math.min(body.velocity.x, -DICE_EDGE_REPULSION_KICK_SPEED * t);
+    } else if (negativeXPenetration > 0) {
+      const t = this.edgeRepulsionContactScale(negativeXPenetration);
+      forceX += t * t * DICE_EDGE_REPULSION_FORCE;
+      body.velocity.x = Math.max(body.velocity.x, DICE_EDGE_REPULSION_KICK_SPEED * t);
+    }
+
+    const positiveZPenetration = body.position.z + supportZ - wallZ;
+    const negativeZPenetration = -wallZ - (body.position.z - supportZ);
+    if (positiveZPenetration > 0) {
+      const t = this.edgeRepulsionContactScale(positiveZPenetration);
+      forceZ -= t * t * DICE_EDGE_REPULSION_FORCE;
+      body.velocity.z = Math.min(body.velocity.z, -DICE_EDGE_REPULSION_KICK_SPEED * t);
+    } else if (negativeZPenetration > 0) {
+      const t = this.edgeRepulsionContactScale(negativeZPenetration);
+      forceZ += t * t * DICE_EDGE_REPULSION_FORCE;
+      body.velocity.z = Math.max(body.velocity.z, DICE_EDGE_REPULSION_KICK_SPEED * t);
+    }
+
+    if (forceX === 0 && forceZ === 0) return;
+    this.tmpEdgeForce.set(forceX, 0, forceZ);
+    body.applyForce(this.tmpEdgeForce);
+  }
+
+  private projectedDiceHalfExtent(body: CANNON.Body, axis: 'x' | 'z'): number {
+    let extent = 0;
+    for (const localAxis of SUPPORT_AXES) {
+      body.quaternion.vmult(localAxis, this.tmpSupportAxis);
+      extent += Math.abs(axis === 'x' ? this.tmpSupportAxis.x : this.tmpSupportAxis.z);
+    }
+    return DICE_HALF_SIZE * extent;
+  }
+
+  private edgeRepulsionContactScale(penetration: number): number {
+    if (penetration <= 0) return 0;
+    if (DICE_EDGE_REPULSION_DISTANCE <= 0) return 1;
+    return clamp(penetration / DICE_EDGE_REPULSION_DISTANCE, 0, 1);
+  }
+
+  private rerollLocalDiceInTriggerZone(activeIndices: number[]): void {
+    for (const index of activeIndices) {
+      const die = this.localDice[index];
+      if (!die || !this.isInRerollZone(die.body)) continue;
+      this.rerollLocalDie(index, activeIndices);
+    }
+  }
+
+  private isInRerollZone(body: CANNON.Body): boolean {
+    return body.position.y < DICE_REROLL_FALL_Y;
   }
 
   getActiveDiceMeshes(): { mesh: THREE.Mesh; index: number }[] {

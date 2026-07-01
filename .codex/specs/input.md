@@ -61,11 +61,13 @@
 2. Игнорировать, если input выключен через `setEnabled(false)`, событие повторное (`event.repeat`), уже отменено (`defaultPrevented`) или сейчас активен mouse-hold
 3. Игнорировать, если фокус/target внутри `input`, `textarea`, `select`, `button` или `[contenteditable]`
 4. `preventDefault()`, чтобы пробел не скроллил страницу
-5. Эмитнуть `hold-start` из центра стола: `(0, HOLD_HEIGHT, 0)`
-6. Сразу эмитнуть `release` из этой же позиции с мягким импульсом:
-   - направление = screen-up/table-forward (`camera.up`, спроецированный на XZ), fallback `(0, 0, -1)`
-   - горизонтальная скорость = `THROW_MAX_SPEED * 0.2`
-   - вертикальная составляющая = `THROW_DOWNWARD_BIAS`
+5. Выбрать random edge-start позицию и эмитнуть из неё `hold-start`
+6. Сразу эмитнуть `release` из этой же позиции:
+   - старт выбирается с одной из 4 сторон стола, позиция вдоль стороны рандомится
+   - старт расположен ближе к центру стороны: `58–76%` от центра к краю, spread вдоль стороны `22%`
+   - цель выбирается ближе к центру: в противоположную сторону только на `8–28%` глубины от центра, spread по поперечной оси `25%`
+   - горизонтальная скорость = `THROW_MAX_SPEED * 0.46`
+   - вертикальная составляющая = `+3.7`, чтобы Space/автобросок давал размеренную дугу вверх
 
 ## `update(currentTime)`
 
@@ -77,6 +79,11 @@
 2. `raycaster.setFromCamera(ndc, camera)`
 3. Пересечение луча с `holdPlane`. Если нет пересечения — `false`, иначе записать в `currentPos`.
 4. Зажать `currentPos.x/z` в область внутри стен: `TABLE/2 - WALL_INSET - DICE_HALF_SIZE - THROW_POSITION_PADDING`, а `currentPos.y` вернуть на `HOLD_HEIGHT`.
+
+## Rules board hotkey
+
+- `KeyH` переключает rules-board справа от стола.
+- Клавиша игнорируется в `input`, `textarea`, `select`, `button`, `[contenteditable]`.
 
 ## Важные тонкости
 

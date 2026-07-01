@@ -43,10 +43,16 @@
 - [x] Quick-search now keeps the loading overlay while waiting for a second player, hides the waiting lobby, and cancels via `ESC` by leaving the pseudo-room.
 - [x] Game HUD controls, FARKLE overlay, turn banners, player panels, realtime selected-points display, and auto-reroll-after-continue were updated for the current multiplayer UI pass.
 - [x] Background texture `public/assets/background/background_texture_2.png` is rendered behind the table without dither/vignette/color effects.
-- [x] Table view was reduced back after the oversized pass; dice size is synced at `DICE_HALF_SIZE = 0.26` with spacing `0.71`, while wall collision thickness/inset remain reduced.
+- [x] Table view was reduced back after the oversized pass; dice size is synced at `DICE_HALF_SIZE = 0.273` with spacing `0.76`, while wall collision thickness/inset are minimized at `0.10`.
 - [x] Current checkpoint intentionally preserves the overloaded quick-game/menu code as-is for a follow-up refactor pass.
-- [x] Quick-match race note recorded: do not replay cached `MATCH_STATE`/`MATCH_DICE_SPAWN` into `GameEngine`; preload gameplay assets before sending `ROOM_QUICK_MATCH` so live server events arrive after listeners are installed.
+- [x] Quick-match race fixed: `NetworkService` caches the latest `MATCH_STATE`/dice snapshot, and `GameEngine` replays it after subscribing so startup server broadcasts cannot be lost during scene mount.
 - [x] End-of-match multiplayer UI added: table dice are hidden after `MATCH_TURN_RESULT`, finished games keep players in the game view, winner sees persistent `WIN`, loser sees persistent `FARKLE`, and final buttons emit exit/rematch actions.
+- [x] Dice-dice repulsion narrowed to real face-to-face contacts only; pre-contact distance repulsion removed.
+- [x] Collision test sound added: `assets/sounds/impactWood_medium_000.ogg` plays on dice-table/dice-dice contact with slight pitch variation.
+- [x] Quick-game regression fixed: `ROOM_QUICK_MATCH` no longer waits on audio preload; audio preload has a fail-open timeout, and cached match/dice state is replayed into `GameEngine` after mount.
+- [x] Table borders minimized and edge assist changed to cube-surface contact only; edge force/kick increased by 40%.
+- [x] Dice-dice face-contact kick made heavier for stuck-in-row tests: speed `4.2`, max delta `2.4`.
+- [x] Collision test sound switched from `impactWood_medium_000.ogg` to `impactWood_medium_003.ogg`; previous choice is commented in `asset-manifest.ts`.
 
 ## Verification
 - [x] `npm run build` in `dice-client` passed after test-room changes.
@@ -63,6 +69,13 @@
 - [x] `npm run build` in `dice-client` passed after reverting quick-match cached-event replay and preloading gameplay assets before quick-match send.
 - [x] `npm run build` in `dice-client` passed after end-of-match WIN/FARKLE, dice cleanup, and rematch UI wiring.
 - [x] `git diff --check` in `dice-client` passed before checkpoint commit.
+- [x] `npm run build` in `dice-client` passed after current dice physics/auto-throw tuning batch.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after face-to-face-only dice contact repulsion.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after collision test sound wiring.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after quick-game match-state replay fix.
+- [x] Local WebSocket quick-match trace confirmed server sends `ROOM_STATE ACTIVE`, `MATCH_DICE_SPAWN`, and `MATCH_STATE` immediately on match start.
+- [x] `npm run build` in `dice-client` passed after contact-only edge assist and minimal border tuning.
+- [x] `npm run build` in `dice-client` passed after heavier dice-dice kick and alternate collision sound.
 
 ## Notes
 - Public routing target is nginx on `80/443`; client preview remains internal on `127.0.0.1:5174`.
@@ -76,3 +89,15 @@
 - Current UI batch keeps the 1v1 case primary; score placement for more than two players is intentionally left for a separate pass.
 - Selection preview protocol files remain mirrored with the server protocol files except the optional first marker comment.
 - Next cleanup target: split `src/main.ts` menu/quick-search flow into smaller stateful modules and remove race-prone coupling between loading overlay, lobby render, network callbacks, and `ESC`.
+- Physics watch note: Chrome can still show dice jitter near table edges after hard throws. If it returns after edge-kick tuning, investigate wall/contact tension, continuous edge assist, bottom-magnet torque near walls, and whether edge behavior should become pure short impulse instead of persistent force.
+
+## Current Physics Handoff
+
+- Current client/server physics constants are synced: `DICE_MASS = 0.72`, `DICE_SPACING = 0.76`, `DICE_LINEAR_DAMPING = 0.19`, `DICE_ANGULAR_DAMPING = 0.18`, `DICE_TABLE_RESTITUTION = 0.14`, `DICE_DICE_RESTITUTION = 0.10`, `WALL_THICKNESS = 0.10`, `WALL_INSET = 0.10`, `THROW_MAX_SPEED = 10.5`, `THROW_ANGULAR_RANDOM = 5.8`, `THROW_ANGULAR_DIE_VARIATION = 0.35`.
+- Dice-dice anti-sticking is now one layer: real Cannon `world.contacts` post-step contact kick only. Pre-contact distance force is removed.
+- Face-to-face filter values: `DICE_DICE_FACE_CONTACT_DOT_MIN = 0.98`, `DICE_DICE_FACE_CONTACT_MIN_HORIZONTAL_NORMAL = 0.35`, `DICE_DICE_CONTACT_KICK_SPEED = 4.2`, `DICE_DICE_CONTACT_KICK_MAX_DELTA = 2.4`.
+- Contact kick is intentionally skipped for edge/corner contacts and near-vertical stacked contacts.
+- Edge assist is contact-only: `DICE_EDGE_REPULSION_DISTANCE = 0`, `DICE_EDGE_REPULSION_FORCE = 8.4`, `DICE_EDGE_REPULSION_KICK_SPEED = 1.47`. Wall contact is evaluated by cube surface support (`position ± projected half-extent`), not by center distance.
+- Auto/Space throw now chooses one of four sides, but starts near the center of that side: start depth `58..76%` from table center to side, side-axis spread `22%`; target depth `8..28%`, target spread `25%`; horizontal speed `THROW_MAX_SPEED * 0.46`, upward velocity `3.7`.
+- Release row orientation is side-aware: top/bottom releases lay dice along X, left/right releases lay dice along Z. Server authoritative path mirrors this with `ReleaseRowAxis`.
+- Last verification for this batch: client build passed, server build passed, server tests passed `109/109`.

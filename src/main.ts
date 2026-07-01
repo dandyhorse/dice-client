@@ -61,6 +61,7 @@ import {
 } from './player-settings';
 import { assetPreloader } from './engine/assets/asset-preloader';
 import { audioService } from './engine/audio/audio.service';
+import { musicService } from './engine/audio/music.service';
 import type { MenuDiceScene } from './ui/menu-dice-scene';
 import { hideLoadingOverlay, showLoadingOverlay } from './ui/loading-overlay';
 
@@ -192,9 +193,13 @@ let quickSearchToken = 0;
 let finishedRoomReturnQueued = false;
 let settingsScreenCleanup: (() => void) | null = null;
 
+const QUICK_MATCH_PRELOAD_TIMEOUT_MS = 2500;
+
 const isQuickSearchActive = (): boolean => quickSearchConnecting || quickSearchNetwork !== null;
 
 audioService.bindUnlockListeners();
+
+musicService.start();
 
 onPlayerSettingsChange((settings) => {
   activeGame?.setPlayerSettings(settings);
@@ -207,7 +212,6 @@ const cleanupSettingsUi = (): void => {
 
 const startLocalMatch = async (localMatchConfig: LocalMatchConfig): Promise<void> => {
   destroyMenuDiceScene();
-  audioService.stopMusic();
   showLoadingOverlay();
   try {
     await Promise.all([
@@ -287,10 +291,8 @@ const startQuickMatch = async (): Promise<void> => {
     quickSearchNetwork = network;
     quickSearchConnecting = false;
     renderHome();
-    await Promise.all([
-      assetPreloader.preloadGroup('gameplay'),
-      audioService.preloadGroup('gameplay'),
-    ]);
+    await waitForQuickMatchPreload();
+    void audioService.preloadGroup('gameplay');
     if (quickSearchToken !== token || activeNetwork !== network || quickSearchNetwork !== network) {
       return;
     }
@@ -313,6 +315,16 @@ const startQuickMatch = async (): Promise<void> => {
   clearAuthControls();
   clearAuthModal();
   handleRoomState(network, state);
+};
+
+const waitForQuickMatchPreload = (): Promise<void> => {
+  const preload = assetPreloader.preloadGroup('gameplay').catch((error: unknown) => {
+    console.warn('[QuickMatch] gameplay preload failed before queueing:', error);
+  });
+  const timeout = new Promise<void>((resolve) => {
+    window.setTimeout(resolve, QUICK_MATCH_PRELOAD_TIMEOUT_MS);
+  });
+  return Promise.race([preload, timeout]).then(() => undefined);
 };
 
 const cancelQuickSearch = (): void => {
@@ -437,10 +449,8 @@ const isMenuDiceView = (): boolean =>
 const ensureMenuDiceScene = (): void => {
   if (menuDiceScene || menuDiceSceneLoading) return;
   showLoadingOverlay();
-  menuDiceSceneLoading = Promise.all([
-    assetPreloader.preloadGroup('menu'),
-    audioService.preloadGroup('menu'),
-  ])
+  menuDiceSceneLoading = assetPreloader
+    .preloadGroup('menu')
     .then(async () => {
       if (!isMenuDiceView() || activeGame || mobileRuntime) return;
       const { MenuDiceScene } = await import('./ui/menu-dice-scene');
@@ -451,7 +461,6 @@ const ensureMenuDiceScene = (): void => {
       }
       scene.mount(document.body);
       menuDiceScene = scene;
-      audioService.playMusic('menu-music');
     })
     .catch(showError)
     .finally(() => {
@@ -772,7 +781,6 @@ const handleRoomState = (network: NetworkService, state: RoomState): void => {
   }
 
   destroyMenuDiceScene();
-  audioService.stopMusic();
   clearLobby();
   clearRoomScreen();
   clearRoomBadge();
@@ -824,7 +832,6 @@ const mountNetworkGame = async (network: NetworkService): Promise<void> => {
 
 const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
   destroyMenuDiceScene();
-  audioService.stopMusic();
   clearLobby();
   clearAuthControls();
   clearRoomScreen();
@@ -1657,7 +1664,6 @@ const renderCreateRoomMenu = (): void => {
 const renderMultiplayerMenu = (): void => {
   currentLobbyView = 'multiplayer';
   destroyMenuDiceScene();
-  audioService.stopMusic();
   renderAuthControls();
   renderLanguageControls();
   const card = createLobbyFrame(420);
@@ -1905,7 +1911,6 @@ const renderMultiplayerJoin = (): void => {
 const renderRankedMenu = (): void => {
   currentLobbyView = 'ranked';
   destroyMenuDiceScene();
-  audioService.stopMusic();
   renderAuthControls();
   renderLanguageControls();
   const card = createLobbyFrame(380);

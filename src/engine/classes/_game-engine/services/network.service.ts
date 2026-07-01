@@ -29,7 +29,7 @@ import {
   unpackSnapshot,
 } from '../../../../network/protocol/codecs';
 import { OP } from '../../../../network/protocol/opcodes';
-import { ROOM_MODE } from '../../../../network/protocol/types';
+import { MATCH_PHASE, ROOM_MODE, ROOM_STATUS } from '../../../../network/protocol/types';
 
 import type {
   DieRestStateBin,
@@ -44,6 +44,7 @@ import type {
   RoomListItemPayload,
   RestPayload,
   RoomStatePayload,
+  SnapshotPayload,
 } from '../../../../network/protocol/types';
 
 // Reexport под старыми именами — потребители (DiceService, GameEngine, main)
@@ -113,6 +114,12 @@ export class NetworkService {
   private currentRoomId: string | null = null;
   private currentRoomCode: string | null = null;
   private currentRoomState: RoomStatePayload | null = null;
+  private currentDiceSnapshot: SnapshotPayload | null = null;
+  private currentDiceSnapshotEvent: 'dice-spawn' | 'dice-snapshot' | null = null;
+  private currentDiceRest: RestPayload | null = null;
+  private currentMatchState: MatchStatePayload | null = null;
+  private currentSelectionPreview: MatchSelectionPreviewPayload | null = null;
+  private currentRematchState: MatchRematchStatePayload | null = null;
   private userId: string | null = null;
   private displayName = 'Player';
   private accessToken: string | undefined;
@@ -146,6 +153,7 @@ export class NetworkService {
     this.currentRoomId = null;
     this.currentRoomCode = null;
     this.currentRoomState = null;
+    this.clearCurrentMatchData();
     this.userId = null;
     this.displayName = 'Player';
     this.accessToken = undefined;
@@ -161,6 +169,21 @@ export class NetworkService {
   getRoomId = (): string | null => this.currentRoomId;
   getRoomState = (): RoomStatePayload | null => this.currentRoomState;
 
+  replayLatestMatchData = (): void => {
+    if (this.currentDiceRest) {
+      this.events.emit('dice-rest', this.currentDiceRest);
+    } else if (this.currentDiceSnapshot && this.currentDiceSnapshotEvent) {
+      this.events.emit(this.currentDiceSnapshotEvent, this.currentDiceSnapshot);
+    }
+    if (this.currentMatchState) this.events.emit('match-state', this.currentMatchState);
+    if (this.currentSelectionPreview) {
+      this.events.emit('match-selection-preview', this.currentSelectionPreview);
+    }
+    if (this.currentRematchState) {
+      this.events.emit('match-rematch-state', this.currentRematchState);
+    }
+  };
+
   createRoom = (
     mode: RoomMode = ROOM_MODE.MATCH,
     options?: Partial<RoomOptionsPayload>,
@@ -172,20 +195,20 @@ export class NetworkService {
     ).then((body) => {
       if (!body) throw new Error('empty ROOM_CREATE response');
       const state = unpackRoomState(body);
+      this.syncRoomStateCache(state);
       this.currentRoomId = state.id;
       this.currentRoomCode = state.code;
-      this.currentRoomState = state;
       return state;
     });
   };
 
   quickMatch = (): Promise<RoomState> => {
-    return this.sendCommand((requestId) => packRoomQuickMatch({ requestId }), null).then((body) => {
+    return this.sendCommand((requestId) => packRoomQuickMatch({ requestId })).then((body) => {
       if (!body) throw new Error('empty ROOM_QUICK_MATCH response');
       const state = unpackRoomState(body);
+      this.syncRoomStateCache(state);
       this.currentRoomId = state.id;
       this.currentRoomCode = state.code;
-      this.currentRoomState = state;
       return state;
     });
   };
@@ -201,9 +224,9 @@ export class NetworkService {
     return this.sendCommand((requestId) => packRoomJoin({ requestId, code, password })).then((body) => {
       if (!body) throw new Error('empty ROOM_JOIN response');
       const state = unpackRoomState(body);
+      this.syncRoomStateCache(state);
       this.currentRoomId = state.id;
       this.currentRoomCode = state.code;
-      this.currentRoomState = state;
       return state;
     });
   };
@@ -215,6 +238,7 @@ export class NetworkService {
       this.currentRoomId = null;
       this.currentRoomCode = null;
       this.currentRoomState = null;
+      this.clearCurrentMatchData();
     });
   };
 
@@ -224,9 +248,9 @@ export class NetworkService {
     return this.sendCommand((requestId) => packRoomStart({ requestId, roomId })).then((body) => {
       if (!body) throw new Error('empty ROOM_START response');
       const state = unpackRoomState(body);
+      this.syncRoomStateCache(state);
       this.currentRoomId = state.id;
       this.currentRoomCode = state.code;
-      this.currentRoomState = state;
       return state;
     });
   };
@@ -415,29 +439,39 @@ export class NetworkService {
     switch (op) {
       case OP.ROOM_STATE: {
         const state = unpackRoomState(buf);
-        this.currentRoomId = state.id;
-        this.currentRoomCode = state.code;
-        this.currentRoomState = state;
+        this.syncRoomStateCache(state);
         this.events.emit('room-state', state);
         return;
       }
       case OP.MATCH_DICE_SPAWN: {
         const snap = unpackSnapshot(buf);
+        this.currentDiceSnapshot = snap;
+        this.currentDiceSnapshotEvent = 'dice-spawn';
+        this.currentDiceRest = null;
         this.events.emit('dice-spawn', snap);
         return;
       }
       case OP.MATCH_DICE_SNAPSHOT: {
         const snap = unpackSnapshot(buf);
+        this.currentDiceSnapshot = snap;
+        this.currentDiceSnapshotEvent = 'dice-snapshot';
+        this.currentDiceRest = null;
         this.events.emit('dice-snapshot', snap);
         return;
       }
       case OP.MATCH_DICE_REST: {
         const rest: RestPayload = unpackRest(buf);
+        this.currentDiceRest = rest;
+        this.currentDiceSnapshot = null;
+        this.currentDiceSnapshotEvent = null;
         this.events.emit('dice-rest', rest);
         return;
       }
       case OP.MATCH_STATE: {
         const state: MatchStatePayload = unpackMatchState(buf);
+        this.currentMatchState = state;
+        if (state.phase !== MATCH_PHASE.SELECTING) this.currentSelectionPreview = null;
+        if (state.phase !== MATCH_PHASE.FINISHED) this.currentRematchState = null;
         this.events.emit('match-state', state);
         return;
       }
@@ -453,11 +487,13 @@ export class NetworkService {
       }
       case OP.MATCH_SELECTION_PREVIEW: {
         const payload: MatchSelectionPreviewPayload = unpackMatchSelectionPreview(buf);
+        this.currentSelectionPreview = payload;
         this.events.emit('match-selection-preview', payload);
         return;
       }
       case OP.MATCH_REMATCH_STATE: {
         const payload: MatchRematchStatePayload = unpackMatchRematchState(buf);
+        this.currentRematchState = payload;
         this.events.emit('match-rematch-state', payload);
         return;
       }
@@ -487,4 +523,21 @@ export class NetworkService {
         return;
     }
   };
+
+  private syncRoomStateCache(state: RoomStatePayload): void {
+    if (this.currentRoomId !== state.id) this.clearCurrentMatchData();
+    this.currentRoomId = state.id;
+    this.currentRoomCode = state.code;
+    this.currentRoomState = state;
+    if (state.status === ROOM_STATUS.WAITING) this.clearCurrentMatchData();
+  }
+
+  private clearCurrentMatchData(): void {
+    this.currentDiceSnapshot = null;
+    this.currentDiceSnapshotEvent = null;
+    this.currentDiceRest = null;
+    this.currentMatchState = null;
+    this.currentSelectionPreview = null;
+    this.currentRematchState = null;
+  }
 }

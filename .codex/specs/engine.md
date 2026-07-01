@@ -91,24 +91,36 @@ camera.y  = max(hForDepth, hForWidth)   // contain — берём большую
 | `WALL_INSET` | 0.22 | Сдвиг внутренней грани стены от кромки стола; равен WALL_THICKNESS — внешняя грань ровно на кромке |
 | `DICE_COUNT` | 6 | Сколько костей спавнить |
 | `DICE_HALF_SIZE` | 0.273 | Полуразмер ребра кости (куб 0.546×0.546×0.546) |
-| `DICE_MASS` | 0.6 | Масса кости |
-| `DICE_SPACING` | 0.746 | Разнос костей по X при release |
-| `DICE_LINEAR_DAMPING` / `DICE_ANGULAR_DAMPING` | 0.16 / 0.14 | Торможение полёта и вращения |
-| `DICE_TABLE_FRICTION` / `DICE_TABLE_RESTITUTION` | 0.72 / 0.18 | Трение и отскок кости от стола |
-| `DICE_DICE_FRICTION` / `DICE_DICE_RESTITUTION` | 0.46 / 0.08 | Трение и отскок кость ↔ кость |
-| `HOLD_HEIGHT` | 2.5 | Y-уровень hold-плоскости (куда проецируется мышь) |
+| `DICE_MASS` | 0.72 | Масса кости |
+| `DICE_SPACING` | 0.76 | Разнос костей в release-row; сверху/снизу ряд идёт по X, слева/справа по Z |
+| `DICE_LINEAR_DAMPING` / `DICE_ANGULAR_DAMPING` | 0.19 / 0.18 | Торможение полёта и вращения |
+| `DICE_TABLE_FRICTION` / `DICE_TABLE_RESTITUTION` | 0.72 / 0.14 | Трение и отскок кости от стола |
+| `DICE_DICE_FRICTION` / `DICE_DICE_RESTITUTION` | 0.24 / 0.10 | Трение и отскок кость ↔ кость |
+| `DICE_DICE_FACE_CONTACT_DOT_MIN` / `DICE_DICE_FACE_CONTACT_MIN_HORIZONTAL_NORMAL` | 0.98 / 0.35 | Face-to-face фильтр для dice-dice kick: normal контакта должен совпасть с гранью обеих костей и иметь боковую составляющую |
+| `DICE_DICE_CONTACT_KICK_SPEED` / `DICE_DICE_CONTACT_KICK_MAX_DELTA` | 2.8 / 1.6 | Прямой velocity kick по real Cannon contact normal только при контакте грань ↔ грань |
+| `DICE_EDGE_REPULSION_DISTANCE` / `DICE_EDGE_REPULSION_FORCE` / `DICE_EDGE_REPULSION_KICK_SPEED` | `DICE_HALF_SIZE * 2.6` / 6.0 / 1.05 | Отталкивание от бортов: меньше постоянного давления, плюс inward velocity kick от края |
+| `DICE_REROLL_FALL_Y` | `-DICE_HALF_SIZE` | Невидимая trigger-зона ниже стола; упавшая активная кость перебрасывается отдельно |
+| `DICE_BOTTOM_MAGNET_TORQUE` / `DICE_BOTTOM_MAGNET_MAX_HEIGHT` | 0.11 / `DICE_HALF_SIZE * 3.1` | Лёгкий bottom-heavy torque возле стола, чтобы кости лучше ложились на грань |
+| `HOLD_HEIGHT` | 2.85 | Y-уровень hold-плоскости (куда проецируется мышь) |
 | `HOLD_JITTER_SCALE` | 0.04 | (legacy, не используется в новом флоу pickup/release) |
 | `VELOCITY_BUFFER_MS` | 90 | Окно сэмплов для расчёта скорости броска |
-| `THROW_LINEAR_SCALE` | 0.8 | Масштаб линейной скорости броска (мышь → мир) |
-| `THROW_DOWNWARD_BIAS` | -3.2 | Принудительная Y-составляющая вниз при release |
+| `THROW_LINEAR_SCALE` | 0.68 | Масштаб линейной скорости броска (мышь → мир) |
+| `THROW_DOWNWARD_BIAS` | -2.8 | Принудительная Y-составляющая вниз при release |
 | `THROW_MIN_SPEED` | 0.4 | Минимальная скорость, иначе добавляется forward камеры |
 | `THROW_POSITION_PADDING` | 0.2 | Запас от внутренней грани стены при clamp release-позиции |
-| `THROW_MAX_SPEED` | 12 | Жёсткий потолок |velocity| перед emit — гарантия отсутствия tunneling сквозь стены |
-| `THROW_ANGULAR_RANDOM` | 5.8 | Диапазон случайной угловой скорости при release |
+| `THROW_MAX_SPEED` | 10.5 | Жёсткий потолок |velocity| перед emit — гарантия отсутствия tunneling сквозь стены |
+| `THROW_ANGULAR_RANDOM` / `THROW_ANGULAR_DIE_VARIATION` | 5.8 / 0.35 | Диапазон случайной угловой скорости и per-die spin multiplier при release |
 | `CAMERA_FOV` | 45 | Vertical FOV перспективной камеры |
 | `CAMERA_X`, `CAMERA_Z` | 0, 0 | Горизонтальная позиция камеры (по центру стола) |
 | `CAMERA_TARGET` | `[0, 0, 0]` | Куда смотрит камера |
 | `CAMERA_UP` | `[0, 0, -1]` | Up-вектор. Без него top-down даёт gimbal lock (look ‖ up) |
+
+### Rules board
+
+- `assets/ost/*.{mp3,ogg,wav}` резолвится через Vite glob в URL-список. `MusicService` играет OST всю жизнь приложения через `HTMLAudioElement`, без `audioService.preloadGroup()`.
+- Первый трек выбирается random на клиенте. Текущий трек stream/range-грузится браузером; следующий random track (без повтора текущего) создаётся с `preload="auto"` только когда до конца текущего остаётся около 25 секунд. При нескольких треках переход идёт через короткий crossfade.
+- `assets/dices/1.svg..6.svg` грузятся через Vite glob; `RulesBoardService` рисует их в ряд на canvas texture.
+- `H` переключает 3D-дощечку справа от стола: slide-in/out, небольшой mouse tilt, hover разворачивает лицом к камере.
 
 ## Освещение
 

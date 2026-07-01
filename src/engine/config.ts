@@ -8,25 +8,35 @@ export const TABLE_THICKNESS = 0.4;
 
 // Стены вдоль кромки стола, чтобы кости не улетали. Физические, но невидимые.
 // WALL_INSET = WALL_THICKNESS — внешняя грань стены ровно на кромке стола, внутренняя
-// сдвинута на толщину к центру.
+// сдвинута на минимальную безопасную толщину к центру.
 // CEILING закрывает арену сверху (невидимый), чтобы кости не вылетали при сильном броске.
-// Стены держим близко к визуальному борту, но толще максимального substep-displacement.
+// Стены держим близко к визуальному борту, но толще максимального server tick displacement.
 export const WALL_HEIGHT = 4;
-export const WALL_THICKNESS = 0.22;
-export const WALL_INSET = 0.22;
+export const WALL_THICKNESS = 0.1;
+export const WALL_INSET = 0.1;
 
 export const DICE_COUNT = 6;
 export const DICE_HALF_SIZE = 0.273;
-export const DICE_MASS = 0.6;
-export const DICE_SPACING = 0.746;
-export const DICE_LINEAR_DAMPING = 0.16;
-export const DICE_ANGULAR_DAMPING = 0.14;
+export const DICE_MASS = 0.72;
+export const DICE_SPACING = 0.76;
+export const DICE_LINEAR_DAMPING = 0.19;
+export const DICE_ANGULAR_DAMPING = 0.18;
 export const DICE_TABLE_FRICTION = 0.72;
-export const DICE_TABLE_RESTITUTION = 0.18;
+export const DICE_TABLE_RESTITUTION = 0.14;
 export const DICE_TABLE_CONTACT_STIFFNESS = 1e8;
 export const DICE_TABLE_CONTACT_RELAXATION = 2;
-export const DICE_DICE_FRICTION = 0.46;
-export const DICE_DICE_RESTITUTION = 0.08;
+export const DICE_DICE_FRICTION = 0.24;
+export const DICE_DICE_RESTITUTION = 0.1;
+export const DICE_DICE_FACE_CONTACT_DOT_MIN = 0.98;
+export const DICE_DICE_FACE_CONTACT_MIN_HORIZONTAL_NORMAL = 0.35;
+export const DICE_DICE_CONTACT_KICK_SPEED = 4.2;
+export const DICE_DICE_CONTACT_KICK_MAX_DELTA = 2.4;
+export const DICE_EDGE_REPULSION_DISTANCE = 0;
+export const DICE_EDGE_REPULSION_FORCE = 8.4;
+export const DICE_EDGE_REPULSION_KICK_SPEED = 1.47;
+export const DICE_REROLL_FALL_Y = -DICE_HALF_SIZE;
+export const DICE_BOTTOM_MAGNET_TORQUE = 0.11;
+export const DICE_BOTTOM_MAGNET_MAX_HEIGHT = DICE_HALF_SIZE * 3.1;
 
 export const REST_FACE_DOT_MIN = 0.82;
 export const REST_STACKED_CENTER_Y_MIN = DICE_HALF_SIZE * 2.2;
@@ -41,20 +51,21 @@ export const REST_REROLL_CLEARANCE = DICE_SPACING;
 // нужно для прогресс-бара. При изменении — править и dice-server/src/engine/config.ts.
 export const TARGET_SCORE = 4000;
 
-export const HOLD_HEIGHT = 2.5;
+export const HOLD_HEIGHT = 2.85;
 export const HOLD_JITTER_SCALE = 0.04;
 
 export const VELOCITY_BUFFER_MS = 90;
-export const THROW_LINEAR_SCALE = 0.8;
-export const THROW_DOWNWARD_BIAS = -3.2;
+export const THROW_LINEAR_SCALE = 0.68;
+export const THROW_DOWNWARD_BIAS = -2.8;
 export const THROW_MIN_SPEED = 0.4;
 // Дополнительный отступ от внутренней грани невидимой стены для release-position.
 export const THROW_POSITION_PADDING = 0.2;
 // Жёсткий потолок скорости броска. Без него быстрая мышь даёт displacement
 // больше WALL_THICKNESS за substep — кость туннелирует сквозь стену.
-// 12 u/s * (1/60/3 substep) = 0.067 — намного меньше WALL_THICKNESS=0.5.
-export const THROW_MAX_SPEED = 12;
+// 10.5 u/s * (1/120 server tick) = 0.0875 — меньше WALL_THICKNESS.
+export const THROW_MAX_SPEED = 10.5;
 export const THROW_ANGULAR_RANDOM = 5.8;
+export const THROW_ANGULAR_DIE_VARIATION = 0.35;
 
 // Камера строго сверху вниз. Y вычисляется из размеров стола и аспекта viewport
 // (см. GameEngine.computeCameraY) — здесь только X/Z и FOV. Up-вектор по -Z,

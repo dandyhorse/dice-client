@@ -1,8 +1,9 @@
 import { Howl, Howler } from 'howler';
 
+import { DICE_COLLISION_SOUND_URL } from '../assets/asset-manifest';
 import type { AssetGroup } from '../assets/asset-manifest';
 
-export type SoundId = 'dice-pickup' | 'dice-throw' | 'dice-collision' | 'menu-music';
+export type SoundId = 'dice-pickup' | 'dice-throw' | 'dice-collision';
 
 interface SoundDef {
   src: string[];
@@ -29,17 +30,11 @@ const SOUND_DEFS: Record<SoundId, SoundDef> = {
     cooldownMs: 120,
   },
   'dice-collision': {
-    src: [],
+    src: DICE_COLLISION_SOUND_URL ? [DICE_COLLISION_SOUND_URL] : [],
     group: 'gameplay',
     volume: 0.5,
-    rateVariation: 0.12,
-    cooldownMs: 70,
-  },
-  'menu-music': {
-    src: [],
-    group: 'menu',
-    volume: 0.34,
-    loop: true,
+    rateVariation: 0.1,
+    cooldownMs: 35,
   },
 };
 
@@ -47,11 +42,12 @@ interface PlayOptions {
   volumeScale?: number;
 }
 
+const AUDIO_PRELOAD_TIMEOUT_MS = 1200;
+
 class AudioService {
   private readonly howls = new Map<SoundId, Howl>();
   private readonly groupPromises = new Map<AssetGroup, Promise<void>>();
   private readonly lastPlayedAt = new Map<SoundId, number>();
-  private currentMusic: SoundId | null = null;
   private unlockBound = false;
 
   bindUnlockListeners(): void {
@@ -103,36 +99,29 @@ class AudioService {
     this.play('dice-collision', { volumeScale });
   }
 
-  playMusic(id: Extract<SoundId, 'menu-music'>): void {
-    if (this.currentMusic === id) return;
-    this.stopMusic();
-    const howl = this.howls.get(id);
-    if (!howl) return;
-    howl.play();
-    this.currentMusic = id;
-  }
-
-  stopMusic(): void {
-    if (!this.currentMusic) return;
-    this.howls.get(this.currentMusic)?.stop();
-    this.currentMusic = null;
-  }
-
   private load(id: SoundId): Promise<void> {
     if (this.howls.has(id)) return Promise.resolve();
     const def = SOUND_DEFS[id];
     if (def.src.length === 0) return Promise.resolve();
 
     return new Promise<void>((resolve) => {
+      let settled = false;
+      const settle = (): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        resolve();
+      };
+      const timeoutId = window.setTimeout(settle, AUDIO_PRELOAD_TIMEOUT_MS);
       const howl = new Howl({
         src: def.src,
         volume: def.volume,
         loop: def.loop ?? false,
         preload: true,
-        onload: () => resolve(),
+        onload: settle,
         onloaderror: (_soundId, error) => {
           console.warn(`[Audio] Failed to load ${id}:`, error);
-          resolve();
+          settle();
         },
       });
       this.howls.set(id, howl);
