@@ -23,10 +23,13 @@ export interface LocalMatchState {
   turnIndex: number;
   turnPoints: number;
   activeDiceCount: number;
+  bench: number[];
   players: Record<LocalMatchPlayerId, LocalMatchPlayerState>;
 }
 
-export const createLocalMatchConfig = (options: RoomOptionsPayload): LocalMatchConfig => ({
+export const createLocalMatchConfig = (
+  options: RoomOptionsPayload,
+): LocalMatchConfig => ({
   targetScore: options.targetScore,
   minBank: options.minBank,
   allowHotDice: options.allowHotDice,
@@ -38,6 +41,7 @@ export const createLocalMatch = (): LocalMatchState => ({
   turnIndex: 1,
   turnPoints: 0,
   activeDiceCount: 6,
+  bench: [],
   players: {
     human: createPlayerState(),
     bot: createPlayerState(),
@@ -52,6 +56,7 @@ export const recordLocalMatchContinue = (
   config: LocalMatchConfig,
   points: number,
   diceUsed: number,
+  selectedFaces: number[] = [],
 ): LocalMatchState => {
   if (isLocalMatchEnded(state)) return state;
   const used = clampDiceUsed(diceUsed, state.activeDiceCount);
@@ -60,6 +65,7 @@ export const recordLocalMatchContinue = (
     ...state,
     turnPoints: state.turnPoints + points,
     activeDiceCount: hotDice ? 6 : Math.max(1, state.activeDiceCount - used),
+    bench: [...state.bench, ...selectedFaces],
     players: hotDice
       ? updatePlayer(state.players, state.currentPlayer, (player) => ({
           ...player,
@@ -82,7 +88,9 @@ export const recordLocalMatchBank = (
   const current = state.currentPlayer;
   const totalScore = state.players[current].totalScore + banked;
   const status =
-    totalScore >= config.targetScore ? (`${current}-won` as LocalMatchStatus) : 'active';
+    totalScore >= config.targetScore
+      ? (`${current}-won` as LocalMatchStatus)
+      : 'active';
 
   return {
     status,
@@ -90,6 +98,7 @@ export const recordLocalMatchBank = (
     turnIndex: state.turnIndex + 1,
     turnPoints: 0,
     activeDiceCount: 6,
+    bench: [],
     players: updatePlayer(state.players, current, (player) => ({
       ...player,
       totalScore,
@@ -100,7 +109,9 @@ export const recordLocalMatchBank = (
   };
 };
 
-export const recordLocalMatchBust = (state: LocalMatchState): LocalMatchState => {
+export const recordLocalMatchBust = (
+  state: LocalMatchState,
+): LocalMatchState => {
   if (isLocalMatchEnded(state)) return state;
   const current = state.currentPlayer;
   return {
@@ -109,6 +120,7 @@ export const recordLocalMatchBust = (state: LocalMatchState): LocalMatchState =>
     turnIndex: state.turnIndex + 1,
     turnPoints: 0,
     activeDiceCount: 6,
+    bench: [],
     players: updatePlayer(state.players, current, (player) => ({
       ...player,
       bustCount: player.bustCount + 1,

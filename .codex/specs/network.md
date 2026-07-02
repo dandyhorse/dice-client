@@ -9,7 +9,7 @@
 ### Публичный API
 
 ```ts
-connect(userId: string, displayName: string, accessToken?: string): Promise<void>
+connect(userId: string, displayName: string, accessToken?: string, avatarIndex = 0): Promise<void>
 disconnect(): void
 createRoom(mode = ROOM_MODE.MATCH): Promise<RoomState>
 joinRoom(code: string): Promise<RoomState>
@@ -47,8 +47,10 @@ ROOM_CREATE, ROOM_JOIN, ROOM_START, MATCH_SELECT_DICE и MATCH_BANK несут `
 - dev fallback: `protocol//hostname:3002`.
 
 WebSocket URL строится как:
-- authenticated: `ws(s)://host/ws?t=<accessToken>`;
-- guest: `ws(s)://host/ws?u=<uuid>&n=<displayName>`.
+- authenticated: `ws(s)://host/ws?t=<accessToken>&a=<avatarIndex>`;
+- guest: `ws(s)://host/ws?u=<uuid>&n=<displayName>&a=<avatarIndex>`.
+
+`avatarIndex` берётся из `PlayerSettings.profile.avatarIndex`, нормализуется как `u16` и попадает в `RoomState.members[].avatarIndex` через серверный `ROOM_STATE`.
 
 Это важно для production: фронт не должен ходить напрямую на `:3002`, когда работает за nginx.
 

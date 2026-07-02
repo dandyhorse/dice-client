@@ -59,12 +59,17 @@ owning a separate UI service.
 
 | id | где | что |
 |---|---|---|
-| `#hud-left` | top-left | «Чей ход: X» / «Накоплено в ходу: N» / «Bench: f1, f2, ...» |
-| `#hud-right` | top-right | для каждого игрока: «X: total / TARGET_SCORE» |
+| `#hud-left` | top-left | player card с avatar, именем, total / TARGET_SCORE |
+| `#hud-right` | top-right | player cards для остальных игроков с avatar, именем, total / TARGET_SCORE |
 | `#hud-actions` | bottom-center | кнопки `[Continue]` `[Bank]` (только в SELECTING + own turn) |
 | `#hud-status` | bottom-center (под actions) | строка по фазе («Бросаем...», «Ждём X», «Победил X!»...) |
-| `#hud-error` | center | временный флэш — BUST или ACK_ERROR, исчезает через 2.5s |
+| `#hud-error` | center | transient overlay — BUST/FARKLE держится обязательный таймер; обычные ошибки держатся до первого click/tap |
+| `#hud-turn-banner` | center | `ТВОЙ ХОД` держится до первого click/tap или текущей клавиши броска (`Space` по умолчанию); чужой ход скрывается автоматически через `1500ms` |
 | `#hud-final-actions` | center | финальные кнопки `Выйти` / `Реванш`; реванш скрыт для `DISCONNECT` и `EXIT` |
+
+Player cards use enlarged avatar+score rectangles (`430px` min width, real `128px` avatar asset area, `18px 24px` padding) and sit near the table bounds: top/bottom cards use `clamp(90px, 14vh, 170px)`, horizontal placement uses `max(48px, calc(25vw - 18vh))` so left-side duel cards stay outside the table edge.
+
+The top turn stat tiles (`Banked` / `Selected`) use larger padding/min-width/value text than the original compact HUD so they read closer in scale to the player cards.
 
 ### API
 
@@ -84,11 +89,14 @@ class HudUiService {
 - **Кнопки видны** только если `phase === SELECTING && currentPlayer === ownUserId`.
 - **Кнопки enabled** только если `selectedCount > 0` (нельзя отправить пустой выбор — сервер всё равно отвергнет, но UX-фильтр на клиенте дешевле).
 - **Статус-строка** по фазе (см. таблицу в `match-rules.md`).
-- **Player labels**: `userId === ownUserId` → «Ты», иначе — первые 8 символов userId (UUID длинный, urлять не хочется).
-- **BUST**: на `match-roll-result.bust=true` показываем флэш «BUST» (через showError).
+- **Player cards**: имя берётся из `RoomState.members[].displayName`, avatar из `RoomState.members[].avatarIndex`. Картинки берутся из tracked runtime-файлов `public/assets/avatars/*.png` через статический список `src/avatars.ts`; если индекс недоступен, используется avatar `0`, если список пуст — initials fallback.
+- **Singleplayer avatars**: local human получает выбранный `PlayerSettings.profile.avatarIndex`; local bot получает следующий доступный avatar index или `0`, если доступна только одна картинка.
+- **Singleplayer bench parity**: local mode now mirrors server `MATCH_STATE.bench`. Continue appends selected faces, hot-dice/bust/bank/new-turn clears it, and `BenchDiceService` renders the held dice just like network mode.
+- **Turn banners / non-FARKLE transient errors**: `ТВОЙ ХОД` держится на экране до первого `pointerdown` или текущей клавиши броска (`Space` по умолчанию) в capture-фазе. Ход другого игрока показывается коротко (`1500ms`) и скрывается сам. Обычные ошибки держатся до первого `pointerdown`. Click/tap и клавиша броска только скрывают нужный overlay и не отменяют само действие под курсором.
+- **BUST/FARKLE**: на `match-roll-result.bust=true` показываем «FARKLE» (через showError) на обязательный таймер `1200ms`. Пока таймер идёт, действия заблокированы; следующий turn banner показывается только после окончания FARKLE-таймера.
 - **WIN/FARKLE**: на `MATCH_STATE.phase=FINISHED` показываем финальный экран. Кнопка реванша скрыта только если `MATCH_STATE.finishReason = DISCONNECT | EXIT`.
 - **Закрытая комната**: когда приходит `ROOM_STATUS.FINISHED` со всеми `members.online=false`, клиент не возвращает игрока в меню автоматически; он отключает действия, скрывает реванш и ждёт ручного `Выйти`.
-- **Сдаться**: действие surrender из HUD или hotkey (`Esc` по умолчанию) сначала открывает подтверждение «Уверен, что хочешь сдаться?» с кнопками `Да` / `Нет`.
+- **Сдаться**: действие surrender из HUD или hotkey (`Esc` по умолчанию) сначала открывает подтверждение «Уверен, что хочешь сдаться?» с кнопками `Да` / `Нет`. Пока confirm открыт, повторный `Esc` или click/tap по backdrop работает как `Нет`: закрывает confirm и возвращает к игре без surrender.
 
 ## Координация Input ↔ Selection
 

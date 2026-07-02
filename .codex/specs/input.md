@@ -26,6 +26,18 @@
 - `window.keydown` → `onKeyDown` (настраиваемая клавиша мгновенного броска)
 - `canvas.contextmenu` → `preventDefault` (не показывать меню по правой кнопке)
 
+## Cursor
+
+- Игровой canvas управляет курсором внутри `ShakeInputService`, а не глобальным CSS для всех `<canvas>`.
+- Source cursor assets остаются `128×128` PNG в `public/assets/cursors/`, чтобы не упереться в browser limit на native CSS cursor.
+- На desktop `src/ui/custom-cursor.ts` скрывает native cursor после первого pointer movement и рисует DOM overlay `147×147` (`+15%`) поверх страницы; overlay имеет `pointer-events: none`.
+- Базовый cursor всего клиента: `target-hand`; он действует в меню, паузах, выборе костей и любых состояниях без активного hold/release.
+- Когда input включён, кости ещё не взяты, pointer находится над throw-zone стола и поверх нет DOM-меню/модалки: `open-hand`.
+- Когда игрок держит кости и pointer остаётся над throw-zone стола без DOM-меню/модалки поверх: `close-hand`.
+- Если pointer выходит за throw-zone или под pointer оказывается не canvas (например, открыто меню поверх), desktop overlay принудительно показывает `target-hand`.
+- После release canvas сразу возвращается к базовому `target-hand`; отдельного release-ассета сейчас нет.
+- В коде `ShakeInputService` намеренно сохранён закомментированный `IMPORTANT: do not delete` подход для альтернативы: держать `open-hand` после release до local faces read / network `MATCH_ROLL_RESULT`. Он сейчас не активен.
+
 ## Обработчики
 
 ### `onMouseDown(event)`

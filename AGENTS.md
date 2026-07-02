@@ -31,6 +31,10 @@ Keep gameplay entities independent of viewport size. The physical table and wall
 
 New constants belong in `src/engine/config.ts`. Avoid local magic numbers.
 
+Runtime assets must live inside `dice-client/`, normally `public/assets/`, and be
+referenced as `/assets/...`. The repository root `assets/` directory is only a
+draft/source area; do not import or glob from it in runtime client code.
+
 Respect the pickup/release contract:
 - `pickup()` hides dice and parks bodies.
 - `release(velocity, position)` restores dice and switches bodies to dynamic.

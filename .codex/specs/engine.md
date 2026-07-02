@@ -61,6 +61,22 @@ ShakeInputService.events:
 - Стены: 4 невидимых `CANNON.Body` по периметру **внутренней** области `(TABLE_WIDTH - 2·WALL_INSET) × (TABLE_DEPTH - 2·WALL_INSET)`. Высота `WALL_HEIGHT`, толщина `WALL_THICKNESS`. `WALL_INSET = WALL_THICKNESS`, чтобы внешняя грань стены совпадала с кромкой стола.
 - Потолок: невидимый `CANNON.Body` (без mesh) поверх стен на высоте `WALL_HEIGHT`, размером с внутреннюю область. Закрывает арену сверху, чтобы кости не вылетали при сильном броске. Mesh не нужен — top-down камера смотрит ровно сквозь, видимый потолок перекрыл бы вид.
 
+## Runtime Assets
+
+Все ассеты, необходимые клиенту в runtime, должны лежать внутри `dice-client/`, чтобы git клиента видел полный набор файлов. Каноническое место для браузерных runtime-файлов — `dice-client/public/assets/`.
+
+Корневая папка репозитория `assets/` считается черновой/source-папкой для экспериментов и исходников. Код клиента не должен импортировать или glob'ить файлы из корневой `assets/`; перед использованием в runtime нужный файл переносится/копируется в `dice-client/public/assets/` и подключается через `/assets/...`.
+
+Текущие runtime-группы:
+
+- `public/assets/ost/*.mp3` — OST URL-список в `src/engine/assets/asset-manifest.ts`.
+- `public/assets/sounds/impactWood_medium_003.ogg` — звук столкновения.
+- `public/assets/dices/*.svg` — иконки граней для rules board.
+- `public/assets/rules.svg` — DOM rules board.
+- `public/assets/avatars/*.png` — аватары игроков, список в `src/avatars.ts`.
+- `public/assets/cursors/*.png` — базовый target-hand cursor и игровые open/close hand cursors, список URL в `asset-manifest.ts`.
+- `public/assets/dice/`, `public/assets/table/`, `public/assets/background/`, `public/assets/lang/` — текстуры, фон и UI-иконки.
+
 ## Camera fit (contain)
 
 Камера подстраивается под viewport так, чтобы стол целиком был виден на любом аспекте.
@@ -108,7 +124,7 @@ camera.y  = max(hForDepth, hForWidth)   // contain — берём большую
 | `THROW_DOWNWARD_BIAS` | -2.8 | Принудительная Y-составляющая вниз при release |
 | `THROW_MIN_SPEED` | 0.4 | Минимальная скорость, иначе добавляется forward камеры |
 | `THROW_POSITION_PADDING` | 0.2 | Запас от внутренней грани стены при clamp release-позиции |
-| `THROW_MAX_SPEED` | 10.5 | Жёсткий потолок |velocity| перед emit — гарантия отсутствия tunneling сквозь стены |
+| `THROW_MAX_SPEED` | 10.5 | Жёсткий потолок \|velocity\| перед emit — гарантия отсутствия tunneling сквозь стены |
 | `THROW_ANGULAR_RANDOM` / `THROW_ANGULAR_DIE_VARIATION` | 5.8 / 0.35 | Диапазон случайной угловой скорости и per-die spin multiplier при release |
 | `CAMERA_FOV` | 45 | Vertical FOV перспективной камеры |
 | `CAMERA_X`, `CAMERA_Z` | 0, 0 | Горизонтальная позиция камеры (по центру стола) |
@@ -117,14 +133,12 @@ camera.y  = max(hForDepth, hForWidth)   // contain — берём большую
 
 ### Rules board
 
-- `assets/ost/*.{mp3,ogg,wav}` резолвится через Vite glob в URL-список. `MusicService` играет OST всю жизнь приложения через `HTMLAudioElement`, без `audioService.preloadGroup()`.
-- Первый трек выбирается random на клиенте. Текущий трек stream/range-грузится браузером; следующий random track (без повтора текущего) создаётся с `preload="auto"` только когда до конца текущего остаётся около 25 секунд. При нескольких треках переход идёт через короткий crossfade.
-- `assets/dices/1.svg..6.svg` грузятся через Vite glob; `RulesBoardService` использует их как иконки в canvas texture с таблицей правил Farkle.
-- 3D-дощечка справа от стола сейчас крупная: `BOARD_WIDTH = 4.8`, `BOARD_DEPTH = 5.2`, лицевая canvas texture `4096×4096`. Размеры намеренно экспериментальные, чтобы уместить все scoring-комбинации.
-- `KeyH` переключает плашку: root `group.position.x` плавно едет между `shownX` и `hiddenX` через `BOARD_SLIDE_SPEED`.
-- Плашка использует Steam-card-style mouse tilt: позиция курсора отслеживается на `window` в capture-фазе без `pointerleave` reset, считается относительно экранного центра плашки и маппится в `pitchGroup.rotation.x` / `yawGroup.rotation.z`. Базовый визуальный разворот по Z — `30deg`; текущий общий tilt clamp: `BOARD_MAX_TILT = 18deg`, left/max clamp по Z — `BOARD_LEFT_MAX_TILT = 10deg`.
-- Материалы дощечки рендерятся `DoubleSide`, чтобы при малом tilt была видна и правая грань, а не только стороны, чьи normals уже смотрят в камеру.
-- Текстура дощечки использует плоскую заливку без PS1-style dither/noise, canvas text и SVG dice icons. В текущем виде результат визуально неудовлетворительный: текст выглядит мыльно/мелко на 3D-плоскости, следующий pass вероятно должен заменить canvas text на заранее подготовленную bitmap/texture image.
+- `public/assets/ost/*.mp3` перечислены в URL-списке `asset-manifest.ts`. `MusicService` играет OST всю жизнь приложения через `HTMLAudioElement`, без `audioService.preloadGroup()`.
+- Первый трек выбирается random на клиенте. Текущий трек stream/range-грузится браузером; следующий random track (без повтора текущего) создаётся с `preload="auto"` только когда до конца текущего остаётся около 25 секунд. При нескольких треках переход идёт через короткий crossfade. Если отдельный `next.play()` блокируется или срывается на границе `ended`, `MusicService` переиспользует текущий `HTMLAudioElement`, переключает `src` на следующий трек и продолжает бесконечный OST loop.
+- `public/assets/rules.svg` используется как обычный `/assets/rules.svg` URL и preloads as image. Текущий rules-board эксперимент отключает 3D-объект в runtime и показывает SVG как обычный DOM `<img>` поверх WebGL canvas, чтобы избежать WebGL texture inversion/filtering/pixelation.
+- `RulesBoardService` сохраняет прежний lifecycle (`update`, `updateLayout`, `destroy`) и constructor-call из `GameEngine`, но scene/camera/canvas не используют для геометрии. Overlay добавляется в `document.body` с `position: fixed`, `z-index: 12`.
+- `KeyH` переключает DOM-плашку: overlay плавно едет из-за правого края экрана и обратно; shown-позиция держит правый отступ `168px`, чтобы плашка была ближе к центру. Когда скрыта, `pointer-events: none`.
+- На hover DOM-панель получает лёгкий Steam-card-style CSS tilt: cursor offset относительно центра маппится в `rotateX/rotateY` с clamp `±5deg`; при уходе курсора tilt возвращается в `0/0`. Постоянного `rotateZ`-наклона нет.
 
 ## Освещение
 

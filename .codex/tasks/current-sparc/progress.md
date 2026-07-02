@@ -57,8 +57,37 @@
 - [x] Right 3D rules board materials switched to `DoubleSide` so the right edge is not hidden by backface culling during small-angle tilt.
 - [x] Right 3D rules board texture flattened to remove gradient/dither-like backing.
 - [x] Right 3D rules board `H` slide toggle restored while preserving the newer nested mouse-tilt groups.
-- [x] Right 3D rules board enlarged for rules-table experiments: current size `BOARD_WIDTH = 4.8`, `BOARD_DEPTH = 5.2`, texture `4096×4096`, `anisotropy = 8`.
+- [x] Right 3D rules board enlarged for rules-table experiments: current depth `BOARD_DEPTH = 7.8624`, width derives from `assets/rules.svg` aspect ratio (`299 / 511`), `anisotropy = 8`.
 - [x] Farkle scoring table added to the rules board texture from the shared scorer/spec: singles, 3/4/5/6-of-a-kind for each face, straights, and explicit non-scoring V1 combos.
+- [x] Rules board tilt changed to hover-only behavior: outside raycast hover it smoothly returns to base half-side pose, and while hovered it follows cursor offset with symmetric `±10deg` pitch/yaw.
+- [x] Rules board face texture switched from runtime canvas text to direct bitmap texture `assets/rules.png`.
+- [x] Rules board texture mapping changed to exact image ratio: face plane is full body size, no `0.94×0.9` inset scaling, mipmaps disabled.
+- [x] Rules board texture filtering returned to `LinearFilter` for both min/mag sampling after nearest looked too pixelated.
+- [x] Rules board texture source switched from `assets/rules.png` to matching-ratio `assets/rules.svg` as an experiment.
+- [x] Rules board SVG now rasterizes into a `1198×2048` canvas texture before being mapped to the 3D panel; canvas is filled with body-colored `#2a1b12` and SVG is drawn with `3%` padding to avoid hard edge cutoffs.
+- [x] Rules board face material switched to `MeshBasicMaterial` so the texture is not shaded by scene lighting; face plane returned to full body size, and visible 3D volume now comes from `BOARD_THICKNESS = 0.28`.
+- [x] Rules board text/icon rendering changed from raster texture to vector geometry: `SVGLoader` parses `assets/rules.svg`, `ShapeGeometry` meshes render above a body-colored `MeshBasicMaterial` face.
+- [x] Rules board switched to a DOM overlay experiment: the Three.js board object is disabled in runtime, and `assets/rules.svg` renders as a normal `<img>` over the WebGL canvas with `H` slide toggle and CSS hover tilt.
+- [x] DOM rules board moved closer to screen center (`right = 96px`), hover tilt reduced to `±5deg`, and a small base left lean `rotateZ(-4deg)` added.
+- [x] DOM rules board moved further toward center (`right = 168px`) and the base `rotateZ` lean was removed.
+- [x] Player avatars added: `public/assets/avatars/*` are loaded through the client-owned static list in `src/avatars.ts`, settings store `profile.avatarIndex`, WebSocket connect sends avatar index, and HUD player cards render avatar + score.
+- [x] Singleplayer now mirrors multiplayer held-dice display: local match state tracks `bench`, local mode creates `BenchDiceService`, and Continue/hot-dice/bust/bank update bench like the server.
+- [x] HUD player/stat rectangles enlarged and moved inward: player panels used `286px` min width, `60px` avatars, larger padding, and `clamp(53px, 7.2vw, 115px)` inset.
+- [x] HUD player cards enlarged again without changing turn stat tiles: cards now use `430px` min width, `128px` avatar asset area without an inner frame, and table-edge placement via `clamp(90px, 14vh, 170px)` / `max(96px, calc(50vw - 36vh))`.
+- [x] HUD player cards shifted left from table-edge placement: horizontal placement now uses `max(48px, calc(25vw - 18vh))`.
+- [x] OST loop hardened: if crossfade/next-track `play()` fails at track end, `MusicService` reuses the current `HTMLAudioElement`, swaps to the next track URL, and keeps playback cycling.
+- [x] Runtime asset ownership fixed: OST, dice rule icons, rules board SVG, collision sound, and avatars now live under tracked `dice-client/public/assets/`; the root `assets/` folder is treated as draft/source material only.
+- [x] Game cursor assets added: root draft hand PNGs were converted to transparent `128×128` runtime files under `public/assets/cursors/`; `ShakeInputService` shows open hand while ready, close hand while holding, and default cursor after release/input disable.
+- [x] Base target-hand cursor added for the whole client: root draft `target_hand.png` converted to transparent `128×128` runtime asset; menu, pauses, dice selection, and disabled/released game states use it unless `ShakeInputService` overrides with open/close hand during active throw input.
+- [x] In-game sound sliders moved to the top-right to match the profile/menu sound placement.
+- [x] Cursor resolving state added: after release, `open-hand` stays active until local faces are read or network roll result/non-ROLLING state arrives; selection/menus return to base `target-hand`.
+- [x] Cursor resolving state reverted to the previous feel: after release the game canvas returns to base `target-hand`. The resolving approach is preserved as an `IMPORTANT: do not delete` commented note in `ShakeInputService`.
+- [x] Desktop cursors enlarged by ~15% via `src/ui/custom-cursor.ts`: source PNGs stay `128×128`, native cursor is hidden after pointer movement, and a `147×147` DOM overlay renders target/open/closed cursor states. Hand variants only show over the table throw-zone and downgrade to target-hand when pointer leaves the table or a DOM menu/modal covers the canvas.
+- [x] HUD transient overlays changed from timers to click-to-dismiss: turn banners and FARKLE/errors stay visible until the next pointerdown, while the click still reaches the intended game/UI action.
+- [x] FARKLE reverted to timer-driven flow: FARKLE ignores click-dismiss, blocks actions for `1200ms`, then hides and releases any queued turn banner. Local mode also delays the next turn until this timer ends.
+- [x] Turn banner behavior adjusted: own-turn banner stays until click, opponent-turn banner auto-hides after `1500ms`, non-FARKLE errors stay click-dismissed.
+- [x] Own-turn banner now also dismisses on the configured throw key (`Space` by default) without preventing the throw action.
+- [x] Surrender confirmation now treats repeat `Esc` or click/tap on the backdrop as `Нет`: closes the confirm and returns to the game without surrender.
 
 ## Verification
 - [x] `npm run build` in `dice-client` passed after test-room changes.
@@ -84,6 +113,36 @@
 - [x] `npm run build` in `dice-client` passed after heavier dice-dice kick and alternate collision sound.
 - [x] `npm run build` in `dice-client` passed after right rules board mouse-follow tilt and flat texture.
 - [x] `npm run build` in `dice-client` passed after restoring `H` toggle, enlarging the rules board, and adding the scoring-table canvas texture.
+- [x] `npm run build` in `dice-client` passed after hover-only rules board tilt.
+- [x] `npm run build` in `dice-client` passed after mapping `assets/rules.png` onto the rules board.
+- [x] `npm run build` in `dice-client` passed after exact-aspect rules board texture mapping.
+- [x] `npm run build` in `dice-client` passed after returning rules board texture sampling to linear.
+- [x] `npm run build` in `dice-client` passed after scaling the rules board up by 40%.
+- [x] `npm run build` in `dice-client` passed after scaling the rules board up by another 20%.
+- [x] `npm run build` in `dice-client` passed after switching rules board texture source to SVG.
+- [x] `npm run build` in `dice-client` passed after high-resolution SVG rasterization for the rules board texture.
+- [x] `npm run build` in `dice-client` passed after halving rules texture raster size, shrinking the board by 10%, and adding body-colored SVG padding.
+- [x] `npm run build` in `dice-client` passed after switching the rules board face to `MeshBasicMaterial` and restoring 3D thickness.
+- [x] `npm run build` in `dice-client` passed after replacing the rules board raster texture with SVG vector geometry.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after switching the rules board to a DOM overlay.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after moving the DOM rules board inward and reducing hover tilt.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after removing the base rules-board lean and moving it further inward.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after avatar settings/network/HUD integration.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after singleplayer bench parity and HUD sizing/position updates.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after enlarging only player cards and moving them to table-edge placement.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after shifting player cards left from the table edge.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after OST loop hardening.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after hand cursor asset wiring.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after adding target-hand as the base cursor.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after moving in-game sound sliders to the top-right.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after keeping open-hand active until roll resolution.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after reverting cursor resolving behavior while preserving the commented approach.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after changing the custom cursor overlay to +15% and adding table/menu target-hand fallback.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after making turn/FARKLE/error overlays click-to-dismiss.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after restoring FARKLE to a mandatory timer while keeping own-turn/non-FARKLE overlays click-dismissed.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after changing opponent-turn banners to a `1500ms` auto-hide timer.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after adding throw-key dismissal for the own-turn banner.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after adding `Esc`/backdrop cancel behavior to surrender confirmation.
 
 ## Notes
 - Public routing target is nginx on `80/443`; client preview remains internal on `127.0.0.1:5174`.
@@ -92,6 +151,7 @@
 - Protocol files remain synced with server except the first marker comment.
 - Hard refresh may be needed after rebuild because the Vite asset hash changes.
 - Dev server and pm2 were intentionally not touched during the latest UI iterations; only production builds were run.
+- Runtime asset rule: client code must not import/glob from root-level `assets/`; copy runtime files into `dice-client/public/assets/` and reference them via `/assets/...`.
 - Latest pushed client commit: `abd32d2 Update dice table visuals and physics`.
 - Dev server and pm2 were intentionally not touched during social v1 work; only production build was run.
 - Current UI batch keeps the 1v1 case primary; score placement for more than two players is intentionally left for a separate pass.

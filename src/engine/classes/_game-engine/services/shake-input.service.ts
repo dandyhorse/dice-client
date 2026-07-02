@@ -1,4 +1,6 @@
 import * as THREE from 'three';
+import { CLOSED_HAND_CURSOR_URL, OPEN_HAND_CURSOR_URL } from '../../../assets/asset-manifest';
+import { setCustomCursorVariant } from '../../../../ui/custom-cursor';
 import { EventEmitter } from '../../event-emitter.class';
 import {
   DICE_COUNT,
@@ -35,6 +37,8 @@ const SPACE_THROW_TARGET_DEPTH_MIN = 0.08;
 const SPACE_THROW_TARGET_DEPTH_MAX = 0.28;
 const SPACE_THROW_TARGET_CROSS_AXIS_SPREAD = 0.25;
 const DEFAULT_THROW_KEY_CODE = 'Space';
+const OPEN_HAND_CURSOR = `url("${OPEN_HAND_CURSOR_URL}") 64 64, grab`;
+const CLOSED_HAND_CURSOR = `url("${CLOSED_HAND_CURSOR_URL}") 64 64, grabbing`;
 
 const isInteractiveKeyboardTarget = (target: EventTarget | null): boolean => {
   if (!(target instanceof Element)) return false;
@@ -53,6 +57,9 @@ export class ShakeInputService {
   private currentPos = new THREE.Vector3();
   private lastEmittedPos = new THREE.Vector3();
   private lastSpeed = 0;
+  private releaseCursorSuppressed = false;
+  private pointerOverTable = false;
+  private readonly defaultCursor: string;
 
   private readonly raycaster = new THREE.Raycaster();
   private readonly holdPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -HOLD_HEIGHT);
@@ -70,8 +77,11 @@ export class ShakeInputService {
     this.canvas = canvas;
     this.camera = camera;
     this.throwKeyCode = throwKeyCode;
+    this.defaultCursor = canvas.style.cursor;
+    this.updateCursor();
     canvas.addEventListener('mousedown', this.onMouseDown);
     canvas.addEventListener('mousemove', this.onMouseMove);
+    canvas.addEventListener('mouseleave', this.onMouseLeave);
     window.addEventListener('mouseup', this.onMouseUp);
     window.addEventListener('keydown', this.onKeyDown);
     canvas.addEventListener('contextmenu', this.onContextMenu);
@@ -96,10 +106,13 @@ export class ShakeInputService {
   setEnabled(enabled: boolean): void {
     if (this.enabled === enabled) return;
     this.enabled = enabled;
+    this.releaseCursorSuppressed = false;
     if (!enabled && this.isHolding) {
       this.isHolding = false;
       this.samples.length = 0;
     }
+    if (!enabled) this.pointerOverTable = false;
+    this.updateCursor();
   }
 
   setThrowKeyCode(code: string): void {
@@ -116,10 +129,12 @@ export class ShakeInputService {
     this.setEnabled(false);
     this.canvas.removeEventListener('mousedown', this.onMouseDown);
     this.canvas.removeEventListener('mousemove', this.onMouseMove);
+    this.canvas.removeEventListener('mouseleave', this.onMouseLeave);
     this.canvas.removeEventListener('contextmenu', this.onContextMenu);
     window.removeEventListener('mouseup', this.onMouseUp);
     window.removeEventListener('keydown', this.onKeyDown);
     this.samples.length = 0;
+    this.canvas.style.cursor = this.defaultCursor;
   }
 
   private onContextMenu = (event: MouseEvent): void => {
@@ -129,8 +144,13 @@ export class ShakeInputService {
   private onMouseDown = (event: MouseEvent): void => {
     if (!this.enabled) return;
     if (event.button !== 0) return;
-    if (!this.projectToHoldPlane(event)) return;
+    if (!this.projectToHoldPlane(event) || !this.pointerOverTable) {
+      this.updateCursor();
+      return;
+    }
+    this.releaseCursorSuppressed = false;
     this.isHolding = true;
+    this.updateCursor();
     this.samples.length = 0;
     this.pushSample(performance.now());
     this.lastEmittedPos.copy(this.currentPos);
@@ -139,8 +159,12 @@ export class ShakeInputService {
 
   private onMouseMove = (event: MouseEvent): void => {
     if (!this.enabled) return;
+    if (!this.projectToHoldPlane(event)) {
+      this.updateCursor();
+      return;
+    }
+    this.updateCursor();
     if (!this.isHolding) return;
-    if (!this.projectToHoldPlane(event)) return;
     const now = performance.now();
 
     const prev = this.samples[this.samples.length - 1];
@@ -154,10 +178,17 @@ export class ShakeInputService {
     this.events.emit('hold-move', this.currentPos.clone(), this.lastSpeed);
   };
 
+  private onMouseLeave = (): void => {
+    this.pointerOverTable = false;
+    this.updateCursor();
+  };
+
   private onMouseUp = (event: MouseEvent): void => {
     if (!this.enabled) return;
     if (event.button !== 0 || !this.isHolding) return;
     this.isHolding = false;
+    this.releaseCursorSuppressed = true;
+    this.updateCursor();
 
     const now = performance.now();
     this.update(now);
@@ -203,6 +234,8 @@ export class ShakeInputService {
 
   private emitSpaceThrow(): void {
     this.isHolding = true;
+    this.releaseCursorSuppressed = false;
+    this.updateCursor();
     this.samples.length = 0;
     const throwSetup = this.createSpaceThrow();
     this.currentPos.copy(throwSetup.position);
@@ -211,9 +244,39 @@ export class ShakeInputService {
 
     if (!this.enabled || !this.isHolding) return;
     this.isHolding = false;
+    this.releaseCursorSuppressed = true;
+    this.updateCursor();
 
     this.events.emit('release', throwSetup.velocity, this.currentPos.clone());
   }
+
+  private updateCursor(): void {
+    if (!this.enabled || this.releaseCursorSuppressed || !this.pointerOverTable) {
+      this.canvas.style.cursor = this.defaultCursor;
+      setCustomCursorVariant('target');
+      return;
+    }
+    this.canvas.style.cursor = this.isHolding ? CLOSED_HAND_CURSOR : OPEN_HAND_CURSOR;
+    setCustomCursorVariant(this.isHolding ? 'closed' : 'open');
+  }
+
+  /*
+   * IMPORTANT: do not delete. Tested alternate cursor flow:
+   * keep `open-hand` after release until roll resolution, not just until mouseup.
+   *
+   * Shape:
+   * - add `private rollResolving = false`
+   * - add `setRollResolving(resolving: boolean): void`
+   * - `updateCursor()` priority:
+   *   `isHolding` -> close hand
+   *   `enabled || rollResolving` -> open hand
+   *   otherwise -> target-hand/default
+   * - `GameEngine` sets resolving true on release / `MATCH_STATE.ROLLING`
+   * - `GameEngine` sets resolving false on local faces read, network
+   *   `MATCH_ROLL_RESULT`, non-ROLLING fallback, room close, turn cleanup.
+   *
+   * Reverted because target-hand immediately after release felt better in play.
+   */
 
   private createSpaceThrow(): { position: THREE.Vector3; velocity: THREE.Vector3 } {
     const maxGroupOffsetX = ((DICE_COUNT - 1) / 2) * DICE_SPACING;
@@ -275,23 +338,43 @@ export class ShakeInputService {
     this.ndc.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     this.raycaster.setFromCamera(this.ndc, this.camera);
     const hit = this.raycaster.ray.intersectPlane(this.holdPlane, this.tmpHit);
-    if (!hit) return false;
+    if (!hit) {
+      this.pointerOverTable = false;
+      return false;
+    }
     this.currentPos.copy(hit);
+    this.pointerOverTable = this.isCurrentPosInsideThrowZone();
     this.clampCurrentPosToThrowZone();
     return true;
   }
 
+  private isCurrentPosInsideThrowZone(): boolean {
+    const { limitX, limitZ } = this.getThrowZoneLimits();
+    return (
+      this.currentPos.x >= -limitX &&
+      this.currentPos.x <= limitX &&
+      this.currentPos.z >= -limitZ &&
+      this.currentPos.z <= limitZ
+    );
+  }
+
   private clampCurrentPosToThrowZone(): void {
-    const limitX = Math.max(
-      0,
-      TABLE_WIDTH / 2 - WALL_INSET - DICE_HALF_SIZE - THROW_POSITION_PADDING,
-    );
-    const limitZ = Math.max(
-      0,
-      TABLE_DEPTH / 2 - WALL_INSET - DICE_HALF_SIZE - THROW_POSITION_PADDING,
-    );
+    const { limitX, limitZ } = this.getThrowZoneLimits();
     this.currentPos.x = clamp(this.currentPos.x, -limitX, limitX);
     this.currentPos.y = HOLD_HEIGHT;
     this.currentPos.z = clamp(this.currentPos.z, -limitZ, limitZ);
+  }
+
+  private getThrowZoneLimits(): { limitX: number; limitZ: number } {
+    return {
+      limitX: Math.max(
+        0,
+        TABLE_WIDTH / 2 - WALL_INSET - DICE_HALF_SIZE - THROW_POSITION_PADDING,
+      ),
+      limitZ: Math.max(
+        0,
+        TABLE_DEPTH / 2 - WALL_INSET - DICE_HALF_SIZE - THROW_POSITION_PADDING,
+      ),
+    };
   }
 }

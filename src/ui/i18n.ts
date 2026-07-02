@@ -87,6 +87,7 @@ const tokens = {
     diceCosmetics: 'Dice',
     handCup: 'Hand / cup',
     generalVolume: 'Master volume',
+    effects: 'Effects',
     music: 'Music',
     sounds: 'Sounds',
     autoResetDice: 'Auto reset dice',
@@ -219,6 +220,7 @@ const tokens = {
     diceCosmetics: 'Кости',
     handCup: 'Рука / чашка',
     generalVolume: 'Общая громкость',
+    effects: 'Эффекты',
     music: 'Музыка',
     sounds: 'Звуки',
     autoResetDice: 'Автосброс костей',
@@ -288,4 +290,5 @@ export const onLanguageChange = (listener: () => void): (() => void) => {
   return () => listeners.delete(listener);
 };
 
-export const t = (key: keyof (typeof tokens)['en']): string => tokens[getLanguage()][key];
+export const t = (key: keyof (typeof tokens)['en']): string =>
+  tokens[getLanguage()][key];

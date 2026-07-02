@@ -1,3 +1,5 @@
+import { normalizeAvatarIndex } from './avatars';
+
 export const CONTROL_ACTIONS = [
   'throwDice',
   'selectAll',
@@ -13,10 +15,21 @@ export interface GameplaySettings {
   autoRollAfterContinue: boolean;
 }
 
+export interface PlayerProfileSettings {
+  avatarIndex: number;
+}
+
+export interface AudioSettings {
+  effectsVolume: number;
+  musicVolume: number;
+}
+
 export interface PlayerSettings {
   version: 1;
   controls: ControlBindings;
   gameplay: GameplaySettings;
+  profile: PlayerProfileSettings;
+  audio: AudioSettings;
 }
 
 export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
@@ -30,6 +43,13 @@ export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
   },
   gameplay: {
     autoRollAfterContinue: true,
+  },
+  profile: {
+    avatarIndex: 0,
+  },
+  audio: {
+    effectsVolume: 1,
+    musicVolume: 1,
   },
 };
 
@@ -47,6 +67,8 @@ function cloneSettings(settings: PlayerSettings): PlayerSettings {
     version: 1,
     controls: { ...settings.controls },
     gameplay: { ...settings.gameplay },
+    profile: { ...settings.profile },
+    audio: { ...settings.audio },
   };
 }
 
@@ -62,6 +84,11 @@ export const controlCodeLabel = (code: string): string => {
   return code.toUpperCase();
 };
 
+const normalizeVolume = (value: unknown, fallback: number): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.max(0, Math.min(1, value));
+};
+
 export const normalizePlayerSettings = (value: unknown): PlayerSettings => {
   if (!isObject(value) || value.version !== 1 || !isObject(value.controls)) {
     return cloneSettings(DEFAULT_PLAYER_SETTINGS);
@@ -74,7 +101,8 @@ export const normalizePlayerSettings = (value: unknown): PlayerSettings => {
       controls[action] = DEFAULT_PLAYER_SETTINGS.controls[action];
       continue;
     }
-    if (!isAcceptedControlCode(code)) return cloneSettings(DEFAULT_PLAYER_SETTINGS);
+    if (!isAcceptedControlCode(code))
+      return cloneSettings(DEFAULT_PLAYER_SETTINGS);
     controls[action] = code;
   }
 
@@ -86,9 +114,26 @@ export const normalizePlayerSettings = (value: unknown): PlayerSettings => {
     }
   }
 
+  const profile = { ...DEFAULT_PLAYER_SETTINGS.profile };
+  if (isObject(value.profile)) {
+    profile.avatarIndex = normalizeAvatarIndex(value.profile.avatarIndex);
+  }
+
+  const audio = { ...DEFAULT_PLAYER_SETTINGS.audio };
+  if (isObject(value.audio)) {
+    audio.effectsVolume = normalizeVolume(
+      value.audio.effectsVolume,
+      audio.effectsVolume,
+    );
+    audio.musicVolume = normalizeVolume(
+      value.audio.musicVolume,
+      audio.musicVolume,
+    );
+  }
+
   return hasDuplicateBindings(controls)
     ? cloneSettings(DEFAULT_PLAYER_SETTINGS)
-    : { version: 1, controls, gameplay };
+    : { version: 1, controls, gameplay, profile, audio };
 };
 
 export const validatePlayerSettings = (
@@ -102,13 +147,33 @@ export const validatePlayerSettings = (
   if (hasDuplicateBindings(settings.controls)) {
     return { valid: false, message: 'Keys must be unique' };
   }
-  if (!isObject(settings.gameplay) || typeof settings.gameplay.autoRollAfterContinue !== 'boolean') {
+  if (
+    !isObject(settings.gameplay) ||
+    typeof settings.gameplay.autoRollAfterContinue !== 'boolean'
+  ) {
     return { valid: false, message: 'Invalid gameplay settings' };
+  }
+  if (
+    !isObject(settings.profile) ||
+    normalizeAvatarIndex(settings.profile.avatarIndex) !==
+      settings.profile.avatarIndex
+  ) {
+    return { valid: false, message: 'Invalid profile settings' };
+  }
+  if (
+    !isObject(settings.audio) ||
+    normalizeVolume(settings.audio.effectsVolume, -1) !==
+      settings.audio.effectsVolume ||
+    normalizeVolume(settings.audio.musicVolume, -1) !==
+      settings.audio.musicVolume
+  ) {
+    return { valid: false, message: 'Invalid audio settings' };
   }
   return { valid: true };
 };
 
-export const getPlayerSettings = (): PlayerSettings => cloneSettings(currentSettings);
+export const getPlayerSettings = (): PlayerSettings =>
+  cloneSettings(currentSettings);
 
 export const onPlayerSettingsChange = (
   listener: (settings: PlayerSettings) => void,
@@ -122,7 +187,9 @@ export const loadPlayerSettings = async (): Promise<PlayerSettings> => {
   return getPlayerSettings();
 };
 
-export const savePlayerSettings = async (settings: PlayerSettings): Promise<PlayerSettings> => {
+export const savePlayerSettings = async (
+  settings: PlayerSettings,
+): Promise<PlayerSettings> => {
   const validation = validatePlayerSettings(settings);
   if (!validation.valid) throw new Error(validation.message);
   const normalized = normalizePlayerSettings(settings);

@@ -49,6 +49,14 @@ class AudioService {
   private readonly groupPromises = new Map<AssetGroup, Promise<void>>();
   private readonly lastPlayedAt = new Map<SoundId, number>();
   private unlockBound = false;
+  private effectsVolume = 1;
+
+  setEffectsVolume(volume: number): void {
+    this.effectsVolume = Math.max(0, Math.min(1, volume));
+    for (const [id, howl] of this.howls) {
+      howl.volume(SOUND_DEFS[id].volume * this.effectsVolume);
+    }
+  }
 
   bindUnlockListeners(): void {
     if (this.unlockBound) return;
@@ -90,7 +98,10 @@ class AudioService {
       ? 1 + (Math.random() - 0.5) * 2 * def.rateVariation
       : 1;
     howl.rate(variation, playId);
-    howl.volume(Math.min(1, def.volume * (options.volumeScale ?? 1)), playId);
+    howl.volume(
+      Math.min(1, def.volume * this.effectsVolume * (options.volumeScale ?? 1)),
+      playId,
+    );
     return playId;
   }
 
@@ -115,7 +126,7 @@ class AudioService {
       const timeoutId = window.setTimeout(settle, AUDIO_PRELOAD_TIMEOUT_MS);
       const howl = new Howl({
         src: def.src,
-        volume: def.volume,
+        volume: def.volume * this.effectsVolume,
         loop: def.loop ?? false,
         preload: true,
         onload: settle,

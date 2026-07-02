@@ -26,7 +26,10 @@ import {
   type RoomListItem,
   type RoomState,
 } from './engine/classes/_game-engine/services/network.service';
-import { createLocalMatchConfig, type LocalMatchConfig } from './domain/local-match';
+import {
+  createLocalMatchConfig,
+  type LocalMatchConfig,
+} from './domain/local-match';
 import {
   getLanguage,
   onLanguageChange,
@@ -35,6 +38,8 @@ import {
   type Language,
 } from './ui/i18n';
 import { bindMouseOnlyClick } from './ui/mouse-only-button';
+import { installCustomCursor } from './ui/custom-cursor';
+import { createSoundSliders } from './ui/sound-controls';
 import {
   FONT_FAMILY,
   FONT_SIZE,
@@ -54,9 +59,11 @@ import {
   onPlayerSettingsChange,
   savePlayerSettings,
   validatePlayerSettings,
+  type AudioSettings,
   type ControlAction,
   type ControlBindings,
   type GameplaySettings,
+  type PlayerProfileSettings,
   type PlayerSettings,
 } from './player-settings';
 import { assetPreloader } from './engine/assets/asset-preloader';
@@ -64,6 +71,7 @@ import { audioService } from './engine/audio/audio.service';
 import { musicService } from './engine/audio/music.service';
 import type { MenuDiceScene } from './ui/menu-dice-scene';
 import { hideLoadingOverlay, showLoadingOverlay } from './ui/loading-overlay';
+import { AVATAR_URLS } from './avatars';
 
 const USER_ID_KEY = 'dice.userId';
 const DISPLAY_NAME_KEY = 'dice.displayName';
@@ -75,8 +83,10 @@ const ROOM_BADGE_ID = 'room-badge';
 const LANG_CONTROLS_ID = 'lang-controls';
 const ROOM_LIST_MODAL_ID = 'room-list-modal';
 const LEADERBOARD_ID = 'leaderboard-panel';
+const GAME_SOUND_CONTROLS_ID = 'game-sound-controls';
 const RANKED_ENTRY_FEE = 10;
-const MOBILE_DEVICE_RE = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
+const MOBILE_DEVICE_RE =
+  /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
 const LANG_ICON_SRC: Record<Language, string> = {
   en: '/assets/lang/united-kingdom.png',
   ru: '/assets/lang/russia.png',
@@ -129,7 +139,8 @@ const isMobileRuntime = (): boolean => {
   const nav = navigator as Navigator & { userAgentData?: { mobile?: boolean } };
   if (nav.userAgentData?.mobile === true) return true;
   if (MOBILE_DEVICE_RE.test(navigator.userAgent)) return true;
-  if (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) return true;
+  if (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+    return true;
   return window.matchMedia('(max-width: 920px) and (pointer: coarse)').matches;
 };
 
@@ -167,6 +178,8 @@ const renderMobileSoon = (): void => {
 const mobileRuntime = isMobileRuntime();
 if (mobileRuntime) {
   renderMobileSoon();
+} else {
+  installCustomCursor();
 }
 
 let activeGame: GameEngine | null = null;
@@ -195,13 +208,29 @@ let settingsScreenCleanup: (() => void) | null = null;
 
 const QUICK_MATCH_PRELOAD_TIMEOUT_MS = 2500;
 
-const isQuickSearchActive = (): boolean => quickSearchConnecting || quickSearchNetwork !== null;
+const isQuickSearchActive = (): boolean =>
+  quickSearchConnecting || quickSearchNetwork !== null;
+
+const applyAudioSettings = (settings: PlayerSettings): void => {
+  audioService.setEffectsVolume(settings.audio.effectsVolume);
+  musicService.setMusicVolume(settings.audio.musicVolume);
+};
+
+const saveAudioSettings = (audio: AudioSettings): void => {
+  savePlayerSettings({
+    ...getPlayerSettings(),
+    audio,
+  }).catch(showError);
+};
+
+applyAudioSettings(getPlayerSettings());
 
 audioService.bindUnlockListeners();
 
 musicService.start();
 
 onPlayerSettingsChange((settings) => {
+  applyAudioSettings(settings);
   activeGame?.setPlayerSettings(settings);
 });
 
@@ -210,7 +239,9 @@ const cleanupSettingsUi = (): void => {
   settingsScreenCleanup = null;
 };
 
-const startLocalMatch = async (localMatchConfig: LocalMatchConfig): Promise<void> => {
+const startLocalMatch = async (
+  localMatchConfig: LocalMatchConfig,
+): Promise<void> => {
   destroyMenuDiceScene();
   showLoadingOverlay();
   try {
@@ -218,7 +249,8 @@ const startLocalMatch = async (localMatchConfig: LocalMatchConfig): Promise<void
       assetPreloader.preloadGroup('gameplay'),
       audioService.preloadGroup('gameplay'),
     ]);
-    const { GameEngine } = await import('./engine/classes/_game-engine/game-engine.class');
+    const { GameEngine } =
+      await import('./engine/classes/_game-engine/game-engine.class');
     clearLobby();
     clearRoomScreen();
     clearAuthControls();
@@ -234,6 +266,7 @@ const startLocalMatch = async (localMatchConfig: LocalMatchConfig): Promise<void
     game.warmup();
     game.start();
     activeGame = game;
+    renderLanguageControls();
     clearBackButton();
   } finally {
     hideLoadingOverlay();
@@ -293,14 +326,20 @@ const startQuickMatch = async (): Promise<void> => {
     renderHome();
     await waitForQuickMatchPreload();
     void audioService.preloadGroup('gameplay');
-    if (quickSearchToken !== token || activeNetwork !== network || quickSearchNetwork !== network) {
+    if (
+      quickSearchToken !== token ||
+      activeNetwork !== network ||
+      quickSearchNetwork !== network
+    ) {
       return;
     }
     state = await network.quickMatch();
   } catch (err) {
     const searchStillCurrent =
       quickSearchToken === token &&
-      (quickSearchConnecting || activeNetwork === network || quickSearchNetwork === network);
+      (quickSearchConnecting ||
+        activeNetwork === network ||
+        quickSearchNetwork === network);
     if (quickSearchToken === token) quickSearchConnecting = false;
     if (network && quickSearchNetwork === network) quickSearchNetwork = null;
     if (network && activeNetwork === network) activeNetwork = null;
@@ -309,7 +348,11 @@ const startQuickMatch = async (): Promise<void> => {
     renderHome();
     throw err;
   }
-  if (quickSearchToken !== token || activeNetwork !== network || quickSearchNetwork !== network) {
+  if (
+    quickSearchToken !== token ||
+    activeNetwork !== network ||
+    quickSearchNetwork !== network
+  ) {
     return;
   }
   clearAuthControls();
@@ -318,9 +361,14 @@ const startQuickMatch = async (): Promise<void> => {
 };
 
 const waitForQuickMatchPreload = (): Promise<void> => {
-  const preload = assetPreloader.preloadGroup('gameplay').catch((error: unknown) => {
-    console.warn('[QuickMatch] gameplay preload failed before queueing:', error);
-  });
+  const preload = assetPreloader
+    .preloadGroup('gameplay')
+    .catch((error: unknown) => {
+      console.warn(
+        '[QuickMatch] gameplay preload failed before queueing:',
+        error,
+      );
+    });
   const timeout = new Promise<void>((resolve) => {
     window.setTimeout(resolve, QUICK_MATCH_PRELOAD_TIMEOUT_MS);
   });
@@ -344,7 +392,9 @@ const cancelQuickSearch = (): void => {
 const connectNetwork = async (): Promise<NetworkService> => {
   const network = new NetworkService();
   const authIdentity = await getAuthIdentity();
-  const displayName = authIdentity ? authIdentity.displayName : saveDisplayName(getSavedDisplayName());
+  const displayName = authIdentity
+    ? authIdentity.displayName
+    : saveDisplayName(getSavedDisplayName());
   const identity = authIdentity ?? {
     userId: getOrCreateUserId(),
     displayName,
@@ -354,14 +404,20 @@ const connectNetwork = async (): Promise<NetworkService> => {
   network.events.on('room-state', (state: RoomState) => {
     handleRoomState(network, state);
   });
-  await network.connect(identity.userId, identity.displayName, identity.accessToken);
+  await network.connect(
+    identity.userId,
+    identity.displayName,
+    identity.accessToken,
+    getPlayerSettings().profile.avatarIndex,
+  );
   return network;
 };
 
 const rankedAccessError = (): Error | null => {
   const user = getStoredUser();
   if (!user) return new Error(t('authRequiredRanked'));
-  if (user.coins < RANKED_ENTRY_FEE) return new Error(t('insufficientCoinsRanked'));
+  if (user.coins < RANKED_ENTRY_FEE)
+    return new Error(t('insufficientCoinsRanked'));
   return null;
 };
 
@@ -425,6 +481,35 @@ const clearRoomBadge = (): void => {
 const clearLanguageControls = (): void => {
   const existing = document.getElementById(LANG_CONTROLS_ID);
   if (existing) existing.remove();
+};
+
+const clearGameSoundControls = (): void => {
+  const existing = document.getElementById(GAME_SOUND_CONTROLS_ID);
+  if (existing) existing.remove();
+};
+
+const renderGameSoundControls = (): void => {
+  clearGameSoundControls();
+  const wrap = document.createElement('div');
+  wrap.id = GAME_SOUND_CONTROLS_ID;
+  Object.assign(wrap.style, {
+    position: 'fixed',
+    top: '12px',
+    right: '12px',
+    zIndex: '45',
+    padding: '8px',
+    width: 'min(260px, calc(100vw - 24px))',
+    background: 'rgba(12,12,18,0.78)',
+    border: '1px solid rgba(255,255,255,0.12)',
+    borderRadius: UI_RADIUS,
+    pointerEvents: 'auto',
+  } satisfies Partial<CSSStyleDeclaration>);
+  wrap.appendChild(
+    createSoundSliders(getPlayerSettings().audio, saveAudioSettings, {
+      compact: true,
+    }),
+  );
+  document.body.appendChild(wrap);
 };
 
 const isInteractiveKeyboardTarget = (target: EventTarget | null): boolean => {
@@ -492,6 +577,7 @@ const returnToLobbyAsync = async (): Promise<void> => {
   clearAuthModal();
   clearSettingsModal();
   clearRoomListModal();
+  clearGameSoundControls();
   closeLobbyListNetwork();
   renderHome();
   returningToLobby = false;
@@ -510,7 +596,7 @@ const scheduleFinishedRoomReturn = (network: NetworkService): void => {
   });
 };
 
-const renderBackButton = (): void => {
+const renderBackButton = (includeSettings = true): void => {
   clearBackButton();
   const wrap = document.createElement('div');
   wrap.id = BACK_BUTTON_ID;
@@ -523,13 +609,15 @@ const renderBackButton = (): void => {
     zIndex: '35',
   } satisfies Partial<CSSStyleDeclaration>);
 
-  const controlsBtn = button(t('settings'), renderSettingsModal);
-  Object.assign(controlsBtn.style, {
-    background: SETTINGS_BUTTON_BG,
-    border: '1px solid rgba(255,255,255,0.18)',
-    boxShadow: '0 8px 22px rgba(0,0,0,0.35)',
-  } satisfies Partial<CSSStyleDeclaration>);
-  wrap.appendChild(controlsBtn);
+  if (includeSettings) {
+    const controlsBtn = button(t('settings'), renderSettingsModal);
+    Object.assign(controlsBtn.style, {
+      background: SETTINGS_BUTTON_BG,
+      border: '1px solid rgba(255,255,255,0.18)',
+      boxShadow: '0 8px 22px rgba(0,0,0,0.35)',
+    } satisfies Partial<CSSStyleDeclaration>);
+    wrap.appendChild(controlsBtn);
+  }
 
   const backBtn = button(t('back'), returnToLobby);
   Object.assign(backBtn.style, {
@@ -606,6 +694,20 @@ const toggleSettingsMenu = (): void => {
 const renderLanguageControls = (): void => {
   clearLanguageControls();
 
+  const current = getLanguage();
+  const nextLanguage: Language = current === 'ru' ? 'en' : 'ru';
+  const roomStatus = activeNetwork?.getRoomState()?.status;
+  const gameplayActive =
+    activeGame !== null ||
+    roomStatus === ROOM_STATUS.ACTIVE ||
+    roomStatus === ROOM_STATUS.PAUSED;
+
+  if (gameplayActive) {
+    renderGameSoundControls();
+    return;
+  }
+  clearGameSoundControls();
+
   const wrap = document.createElement('div');
   wrap.id = LANG_CONTROLS_ID;
   Object.assign(wrap.style, {
@@ -613,7 +715,8 @@ const renderLanguageControls = (): void => {
     top: '12px',
     right: '12px',
     display: 'flex',
-    alignItems: 'center',
+    flexDirection: 'column',
+    alignItems: 'stretch',
     gap: '8px',
     padding: '8px',
     background: 'rgba(12,12,18,0.78)',
@@ -624,14 +727,16 @@ const renderLanguageControls = (): void => {
     color: '#eee',
   } satisfies Partial<CSSStyleDeclaration>);
 
-  const current = getLanguage();
-  const nextLanguage: Language = current === 'ru' ? 'en' : 'ru';
-  const roomStatus = activeNetwork?.getRoomState()?.status;
-  const gameplayActive =
-    activeGame !== null || roomStatus === ROOM_STATUS.ACTIVE || roomStatus === ROOM_STATUS.PAUSED;
+  const topRow = document.createElement('div');
+  Object.assign(topRow.style, {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  } satisfies Partial<CSSStyleDeclaration>);
+  wrap.appendChild(topRow);
 
   const user = getStoredUser();
-  if (!gameplayActive && !user && currentLobbyView !== 'player-name') {
+  if (!user && currentLobbyView !== 'player-name') {
     const nameInput = textInput(t('displayName'));
     nameInput.value = getSavedDisplayName();
     nameInput.maxLength = 32;
@@ -661,7 +766,7 @@ const renderLanguageControls = (): void => {
       saveName();
       nameInput.blur();
     });
-    wrap.appendChild(nameInput);
+    topRow.appendChild(nameInput);
   }
 
   const languageBtn = document.createElement('button');
@@ -676,7 +781,6 @@ const renderLanguageControls = (): void => {
     color: '#fff',
     border: 'none',
     borderRadius: UI_RADIUS,
-    cursor: 'pointer',
     fontFamily: FONT_FAMILY.ui,
     lineHeight: '1',
     width: LANG_ICON_BUTTON_SIZE,
@@ -697,12 +801,7 @@ const renderLanguageControls = (): void => {
   } satisfies Partial<CSSStyleDeclaration>);
   languageBtn.appendChild(icon);
   languageBtn.addEventListener('click', () => setLanguage(nextLanguage));
-  wrap.appendChild(languageBtn);
-
-  if (gameplayActive) {
-    document.body.appendChild(wrap);
-    return;
-  }
+  topRow.appendChild(languageBtn);
 
   if (user) {
     const label = document.createElement('span');
@@ -712,7 +811,7 @@ const renderLanguageControls = (): void => {
       fontSize: FONT_SIZE.playerName,
       lineHeight: '1',
     } satisfies Partial<CSSStyleDeclaration>);
-    wrap.appendChild(label);
+    topRow.insertBefore(label, languageBtn);
 
     const logoutBtn = button('×', () => {
       logoutAccount()
@@ -729,7 +828,7 @@ const renderLanguageControls = (): void => {
     logoutBtn.style.border = 'none';
     logoutBtn.style.color = '#b8b8c8';
     applyAuthIconButtonSize(logoutBtn);
-    wrap.appendChild(logoutBtn);
+    topRow.appendChild(logoutBtn);
   }
 
   const settingsBtn = button('S', toggleSettingsMenu);
@@ -738,7 +837,15 @@ const renderLanguageControls = (): void => {
   settingsBtn.style.background = SETTINGS_BUTTON_BG;
   settingsBtn.style.border = '1px solid rgba(255,255,255,0.18)';
   applyAuthIconButtonSize(settingsBtn);
-  wrap.appendChild(settingsBtn);
+  topRow.appendChild(settingsBtn);
+
+  if (currentLobbyView === 'home') {
+    wrap.appendChild(
+      createSoundSliders(getPlayerSettings().audio, saveAudioSettings, {
+        compact: true,
+      }),
+    );
+  }
 
   document.body.appendChild(wrap);
 };
@@ -754,7 +861,8 @@ const handleRoomState = (network: NetworkService, state: RoomState): void => {
 
   if (
     state.mode === ROOM_MODE.RANKED &&
-    (state.status === ROOM_STATUS.ACTIVE || state.status === ROOM_STATUS.FINISHED)
+    (state.status === ROOM_STATUS.ACTIVE ||
+      state.status === ROOM_STATUS.FINISHED)
   ) {
     refreshAuthUserSilently();
   }
@@ -784,7 +892,7 @@ const handleRoomState = (network: NetworkService, state: RoomState): void => {
   clearLobby();
   clearRoomScreen();
   clearRoomBadge();
-  if (state.mode === ROOM_MODE.TEST) renderBackButton();
+  if (state.mode === ROOM_MODE.TEST) renderBackButton(false);
   else clearBackButton();
   renderLanguageControls();
   if (!activeGame) {
@@ -811,7 +919,8 @@ const mountNetworkGame = async (network: NetworkService): Promise<void> => {
   ])
     .then(async () => {
       if (activeGame || activeNetwork !== network) return;
-      const { GameEngine } = await import('./engine/classes/_game-engine/game-engine.class');
+      const { GameEngine } =
+        await import('./engine/classes/_game-engine/game-engine.class');
       if (activeGame || activeNetwork !== network) return;
       activeGame = new GameEngine({
         mode: 'network',
@@ -822,6 +931,7 @@ const mountNetworkGame = async (network: NetworkService): Promise<void> => {
       app.appendChild(activeGame.renderer.domElement);
       activeGame.warmup();
       activeGame.start();
+      renderLanguageControls();
     })
     .finally(() => {
       networkGameMounting = null;
@@ -873,7 +983,9 @@ const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
 
   const status = document.createElement('div');
   status.textContent =
-    state.ownerId === network.getUserId() ? t('roomOwner') : t('waitingForStart');
+    state.ownerId === network.getUserId()
+      ? t('roomOwner')
+      : t('waitingForStart');
   Object.assign(status.style, {
     color: '#b8b8c8',
     fontSize: FONT_SIZE.roomText,
@@ -892,9 +1004,20 @@ const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
   } satisfies Partial<CSSStyleDeclaration>);
   panel.appendChild(options);
 
-  panel.appendChild(memberSection(t('players'), state, ROOM_ROLE.PLAYER, network.getUserId()));
-  panel.appendChild(memberSection(t('spectators'), state, ROOM_ROLE.SPECTATOR, network.getUserId()));
-  const onlinePlayers = state.members.filter((m) => m.role === ROOM_ROLE.PLAYER && m.online);
+  panel.appendChild(
+    memberSection(t('players'), state, ROOM_ROLE.PLAYER, network.getUserId()),
+  );
+  panel.appendChild(
+    memberSection(
+      t('spectators'),
+      state,
+      ROOM_ROLE.SPECTATOR,
+      network.getUserId(),
+    ),
+  );
+  const onlinePlayers = state.members.filter(
+    (m) => m.role === ROOM_ROLE.PLAYER && m.online,
+  );
 
   const error = document.createElement('div');
   Object.assign(error.style, {
@@ -916,10 +1039,10 @@ const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
         error.textContent = err.message;
       });
   });
-  startBtn.disabled = state.ownerId !== network.getUserId() || onlinePlayers.length < 2;
+  startBtn.disabled =
+    state.ownerId !== network.getUserId() || onlinePlayers.length < 2;
   if (startBtn.disabled) {
     startBtn.style.opacity = '0.45';
-    startBtn.style.cursor = 'default';
   }
   panel.appendChild(startBtn);
   panel.appendChild(error);
@@ -974,8 +1097,13 @@ const memberSection = (
   return wrap;
 };
 
-const formatMember = (displayName: string, userId: string, ownUserId: string | null): string => {
-  const name = displayName || (userId.length <= 8 ? userId : userId.slice(0, 8));
+const formatMember = (
+  displayName: string,
+  userId: string,
+  ownUserId: string | null,
+): string => {
+  const name =
+    displayName || (userId.length <= 8 ? userId : userId.slice(0, 8));
   return userId === ownUserId ? `${name} (${t('youSuffix')})` : name;
 };
 
@@ -991,7 +1119,9 @@ const roomModeLabel = (mode: RoomMode): string => {
   }
 };
 
-const roomOptionsLabel = (options: RoomOptionsPayload = DEFAULT_ROOM_OPTIONS): string => {
+const roomOptionsLabel = (
+  options: RoomOptionsPayload = DEFAULT_ROOM_OPTIONS,
+): string => {
   const minBank = options.minBank > 0 ? options.minBank : t('noValue');
   return `${t('target')}: ${options.targetScore} · ${t('minBank')}: ${minBank} · ${t(
     'hotDice',
@@ -1075,7 +1205,10 @@ const renderAuthModal = (): void => {
     gap: '8px',
   } satisfies Partial<CSSStyleDeclaration>);
 
-  const submit = (mode: 'register' | 'login', clicked: HTMLButtonElement): void => {
+  const submit = (
+    mode: 'register' | 'login',
+    clicked: HTMLButtonElement,
+  ): void => {
     error.textContent = '';
     registerBtn.disabled = true;
     loginBtn.disabled = true;
@@ -1109,7 +1242,9 @@ const renderAuthModal = (): void => {
       });
   };
 
-  const registerBtn = button(t('authRegister'), () => submit('register', registerBtn));
+  const registerBtn = button(t('authRegister'), () =>
+    submit('register', registerBtn),
+  );
   registerBtn.style.background = '#16a34a';
   actions.appendChild(registerBtn);
 
@@ -1147,8 +1282,15 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
   const current = getPlayerSettings();
   let draftControls: ControlBindings = { ...current.controls };
   let draftGameplay: GameplaySettings = { ...current.gameplay };
+  let draftProfile: PlayerProfileSettings = { ...current.profile };
+  let draftAudio: AudioSettings = { ...current.audio };
   let capturing: ControlAction | null = null;
   const rowButtons = new Map<ControlAction, HTMLButtonElement>();
+  const avatarButtons: HTMLButtonElement[] = [];
+
+  appendSectionTitle(card, t('soundSettings'));
+  const soundSlidersHost = document.createElement('div');
+  card.appendChild(soundSlidersHost);
 
   appendSectionTitle(card, t('controlsTitle'));
   const rows = document.createElement('div');
@@ -1175,10 +1317,15 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
 
   appendSectionTitle(card, t('gameplaySettings'));
   const autoRollBtn = button('', () => {
-    applyDraft(draftControls, {
-      ...draftGameplay,
-      autoRollAfterContinue: !draftGameplay.autoRollAfterContinue,
-    });
+    applyDraft(
+      draftControls,
+      {
+        ...draftGameplay,
+        autoRollAfterContinue: !draftGameplay.autoRollAfterContinue,
+      },
+      draftProfile,
+      draftAudio,
+    );
   });
   Object.assign(autoRollBtn.style, {
     width: '100%',
@@ -1187,6 +1334,62 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
     border: '1px solid rgba(255,255,255,0.18)',
   } satisfies Partial<CSSStyleDeclaration>);
   card.appendChild(autoRollBtn);
+
+  appendSectionTitle(card, t('avatar'));
+  const avatarGrid = document.createElement('div');
+  Object.assign(avatarGrid.style, {
+    display: 'grid',
+    gridTemplateColumns: `repeat(auto-fill, minmax(${scaledPx(56)}, 1fr))`,
+    gap: scaledPx(8),
+  } satisfies Partial<CSSStyleDeclaration>);
+  if (AVATAR_URLS.length === 0) {
+    const empty = document.createElement('div');
+    empty.textContent = t('noValue');
+    Object.assign(empty.style, {
+      color: '#8e8e9d',
+      fontSize: FONT_SIZE.label,
+    } satisfies Partial<CSSStyleDeclaration>);
+    avatarGrid.appendChild(empty);
+  } else {
+    for (let index = 0; index < AVATAR_URLS.length; index++) {
+      const avatarUrl = AVATAR_URLS[index]!;
+      const avatarBtn = button('', () => {
+        applyDraft(
+          draftControls,
+          draftGameplay,
+          { avatarIndex: index },
+          draftAudio,
+        );
+      });
+      avatarBtn.title = `${t('avatar')} ${index + 1}`;
+      avatarBtn.setAttribute('aria-label', `${t('avatar')} ${index + 1}`);
+      Object.assign(avatarBtn.style, {
+        width: scaledPx(56),
+        height: scaledPx(56),
+        padding: '0',
+        background: SETTINGS_BUTTON_BG,
+        border: '1px solid rgba(255,255,255,0.18)',
+        overflow: 'hidden',
+      } satisfies Partial<CSSStyleDeclaration>);
+
+      const image = document.createElement('img');
+      image.src = avatarUrl;
+      image.alt = '';
+      image.draggable = false;
+      Object.assign(image.style, {
+        display: 'block',
+        width: '100%',
+        height: '100%',
+        objectFit: 'cover',
+        pointerEvents: 'none',
+        userSelect: 'none',
+      } satisfies Partial<CSSStyleDeclaration>);
+      avatarBtn.replaceChildren(image);
+      avatarButtons.push(avatarBtn);
+      avatarGrid.appendChild(avatarBtn);
+    }
+  }
+  card.appendChild(avatarGrid);
 
   const error = appendLobbyError(card);
   const actions = document.createElement('div');
@@ -1198,7 +1401,13 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
 
   const resetBtn = button(t('resetDefaults'), () => {
     capturing = null;
-    applyDraft({ ...DEFAULT_PLAYER_SETTINGS.controls }, { ...DEFAULT_PLAYER_SETTINGS.gameplay });
+    const reset = applyDraft(
+      { ...DEFAULT_PLAYER_SETTINGS.controls },
+      { ...DEFAULT_PLAYER_SETTINGS.gameplay },
+      { ...DEFAULT_PLAYER_SETTINGS.profile },
+      { ...DEFAULT_PLAYER_SETTINGS.audio },
+    );
+    if (reset) renderSoundSliders();
   });
   resetBtn.style.background = SETTINGS_BUTTON_BG;
   actions.appendChild(resetBtn);
@@ -1219,14 +1428,22 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
     const action = capturing;
     const nextControls = { ...draftControls, [action]: event.code };
     capturing = null;
-    if (!applyDraft(nextControls, draftGameplay)) capturing = action;
+    if (!applyDraft(nextControls, draftGameplay, draftProfile, draftAudio))
+      capturing = action;
   };
 
-  function applyDraft(nextControls: ControlBindings, nextGameplay: GameplaySettings): boolean {
+  function applyDraft(
+    nextControls: ControlBindings,
+    nextGameplay: GameplaySettings,
+    nextProfile: PlayerProfileSettings,
+    nextAudio: AudioSettings,
+  ): boolean {
     const settings: PlayerSettings = {
       version: 1,
       controls: { ...nextControls },
       gameplay: { ...nextGameplay },
+      profile: { ...nextProfile },
+      audio: { ...nextAudio },
     };
     const validation = validatePlayerSettings(settings);
     if (!validation.valid) {
@@ -1235,11 +1452,21 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
     }
     draftControls = { ...nextControls };
     draftGameplay = { ...nextGameplay };
+    draftProfile = { ...nextProfile };
+    draftAudio = { ...nextAudio };
     savePlayerSettings(settings).catch((err: Error) => {
       error.textContent = err.message;
     });
     renderRows();
     return true;
+  }
+
+  function renderSoundSliders(): void {
+    soundSlidersHost.replaceChildren(
+      createSoundSliders(draftAudio, (nextAudio) => {
+        applyDraft(draftControls, draftGameplay, draftProfile, nextAudio);
+      }),
+    );
   }
 
   function renderRows(): void {
@@ -1255,11 +1482,21 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
     autoRollBtn.textContent = `${t('autoRollAfterContinue')}: ${
       draftGameplay.autoRollAfterContinue ? t('settingOn') : t('settingOff')
     }`;
+    for (let index = 0; index < avatarButtons.length; index++) {
+      const avatarBtn = avatarButtons[index]!;
+      const active = draftProfile.avatarIndex === index;
+      avatarBtn.style.border = active
+        ? '2px solid #22c55e'
+        : '1px solid rgba(255,255,255,0.18)';
+      avatarBtn.style.background = active ? '#14532d' : SETTINGS_BUTTON_BG;
+    }
 
     const settings: PlayerSettings = {
       version: 1,
       controls: { ...draftControls },
       gameplay: { ...draftGameplay },
+      profile: { ...draftProfile },
+      audio: { ...draftAudio },
     };
     const validation = validatePlayerSettings(settings);
     error.textContent = validation.valid ? '' : t('duplicateControls');
@@ -1269,6 +1506,7 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
   settingsScreenCleanup = () => {
     window.removeEventListener('keydown', keyListener, true);
   };
+  renderSoundSliders();
   renderRows();
 };
 
@@ -1500,14 +1738,16 @@ const appendMenuButton = (
 //   Object.assign(btn.style, {
 //     background: '#2b2b33',
 //     color: '#8e8e9d',
-//     cursor: 'not-allowed',
 //     border: '1px solid rgba(255,255,255,0.08)',
 //   } satisfies Partial<CSSStyleDeclaration>);
 //   card.appendChild(btn);
 //   return btn;
 // };
 
-const appendSectionTitle = (card: HTMLElement, text: string): HTMLDivElement => {
+const appendSectionTitle = (
+  card: HTMLElement,
+  text: string,
+): HTMLDivElement => {
   const title = document.createElement('div');
   title.textContent = text;
   Object.assign(title.style, {
@@ -1641,13 +1881,17 @@ const renderLobby = (): void => {
 
   const quickSearching = isQuickSearchActive();
   const singleBtn = appendMenuButton(card, t('singleplayerGame'), () =>
-    startLocalMatch(createLocalMatchConfig(DEFAULT_ROOM_OPTIONS)).catch(showError),
+    startLocalMatch(createLocalMatchConfig(DEFAULT_ROOM_OPTIONS)).catch(
+      showError,
+    ),
   );
   singleBtn.style.background = '#0f766e';
   const quickBtn = appendMenuButton(
     card,
     quickSearching ? t('quickSearchCancel') : t('quickGame'),
-    quickSearching ? cancelQuickSearch : () => startQuickMatch().catch(showError),
+    quickSearching
+      ? cancelQuickSearch
+      : () => startQuickMatch().catch(showError),
   );
   quickBtn.style.background = quickSearching ? '#b91c1c' : '#0f766e';
   if (quickSearching) {
@@ -1830,7 +2074,11 @@ const renderMultiplayerJoin = (): void => {
     handleRoomState(network, state);
   }
 
-  function joinByCode(code: string, password: string | undefined, clicked: HTMLButtonElement): void {
+  function joinByCode(
+    code: string,
+    password: string | undefined,
+    clicked: HTMLButtonElement,
+  ): void {
     clicked.disabled = true;
     ensureNetwork()
       .then((network) =>
@@ -1853,7 +2101,9 @@ const renderMultiplayerJoin = (): void => {
     roomRows.replaceChildren();
     const query = filterInput.value.trim().toLocaleLowerCase();
     const rooms = query
-      ? loadedRooms.filter((room) => room.gameName.toLocaleLowerCase().includes(query))
+      ? loadedRooms.filter((room) =>
+          room.gameName.toLocaleLowerCase().includes(query),
+        )
       : loadedRooms;
     if (rooms.length === 0) {
       roomRows.textContent = t('noRooms');
@@ -1881,7 +2131,9 @@ const renderMultiplayerJoin = (): void => {
       row.appendChild(meta);
 
       const joinBtn = button(t('join'), () => {
-        const password = room.hasPassword ? (window.prompt(t('roomPassword')) ?? '') : undefined;
+        const password = room.hasPassword
+          ? (window.prompt(t('roomPassword')) ?? '')
+          : undefined;
         if (room.hasPassword && !password) return;
         joinByCode(room.code, password, joinBtn);
       });
@@ -1971,7 +2223,12 @@ const textInput = (placeholder: string): HTMLInputElement => {
   return input;
 };
 
-const numberInput = (value: number, min: number, max: number, step: number): HTMLInputElement => {
+const numberInput = (
+  value: number,
+  min: number,
+  max: number,
+  step: number,
+): HTMLInputElement => {
   const input = textInput('');
   input.type = 'number';
   input.min = String(min);
@@ -1990,7 +2247,10 @@ const roomCodeInput = (): HTMLInputElement => {
   return input;
 };
 
-const labeledControl = (label: string, control: HTMLElement): HTMLLabelElement => {
+const labeledControl = (
+  label: string,
+  control: HTMLElement,
+): HTMLLabelElement => {
   const wrap = document.createElement('label');
   Object.assign(wrap.style, {
     display: 'flex',
@@ -2015,7 +2275,6 @@ const button = (label: string, onClick: () => void): HTMLButtonElement => {
     color: '#fff',
     border: 'none',
     borderRadius: UI_RADIUS,
-    cursor: 'pointer',
     fontSize: FONT_SIZE.control,
     fontFamily: FONT_FAMILY.ui,
     height: UI_SIZE.controlHeight,
@@ -2066,7 +2325,8 @@ window.addEventListener('keydown', (event) => {
   }
   if (
     !activeGame &&
-    (currentLobbyView === 'create-room' || currentLobbyView === 'multiplayer-join')
+    (currentLobbyView === 'create-room' ||
+      currentLobbyView === 'multiplayer-join')
   ) {
     event.preventDefault();
     closeLobbyListNetwork();

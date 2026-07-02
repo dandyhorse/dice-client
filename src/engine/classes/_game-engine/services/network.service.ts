@@ -29,7 +29,12 @@ import {
   unpackSnapshot,
 } from '../../../../network/protocol/codecs';
 import { OP } from '../../../../network/protocol/opcodes';
-import { MATCH_PHASE, ROOM_MODE, ROOM_STATUS } from '../../../../network/protocol/types';
+import {
+  MATCH_PHASE,
+  ROOM_MODE,
+  ROOM_STATUS,
+  normalizeAvatarIndex,
+} from '../../../../network/protocol/types';
 
 import type {
   DieRestStateBin,
@@ -87,11 +92,20 @@ const RECONNECT_INITIAL_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 const REQUEST_TIMEOUT_MS = 8000;
 
-const wsUrlFor = (userId: string, displayName: string, accessToken?: string): string => {
+const wsUrlFor = (
+  userId: string,
+  displayName: string,
+  accessToken: string | undefined,
+  avatarIndex: number,
+): string => {
   const base = SERVER_URL.replace(/^http/, 'ws');
   const qs = accessToken
-    ? new URLSearchParams({ t: accessToken })
-    : new URLSearchParams({ u: userId, n: displayName });
+    ? new URLSearchParams({ t: accessToken, a: String(normalizeAvatarIndex(avatarIndex)) })
+    : new URLSearchParams({
+        u: userId,
+        n: displayName,
+        a: String(normalizeAvatarIndex(avatarIndex)),
+      });
   return `${base}/ws?${qs.toString()}`;
 };
 
@@ -123,6 +137,7 @@ export class NetworkService {
   private userId: string | null = null;
   private displayName = 'Player';
   private accessToken: string | undefined;
+  private avatarIndex = 0;
 
   private requestSeq = 1;
   private pending = new Map<number, PendingRequest>();
@@ -131,11 +146,17 @@ export class NetworkService {
   private reconnectDelay = RECONNECT_INITIAL_MS;
   private autoReconnect = true;
 
-  connect = (userId: string, displayName: string, accessToken?: string): Promise<void> => {
+  connect = (
+    userId: string,
+    displayName: string,
+    accessToken?: string,
+    avatarIndex = 0,
+  ): Promise<void> => {
     if (this.ws) return Promise.resolve();
     this.userId = userId;
     this.displayName = displayName.trim() || 'Player';
     this.accessToken = accessToken;
+    this.avatarIndex = normalizeAvatarIndex(avatarIndex);
     this.autoReconnect = true;
     return new Promise<void>((resolve, reject) => {
       this.openSocket(resolve, reject);
@@ -157,6 +178,7 @@ export class NetworkService {
     this.userId = null;
     this.displayName = 'Player';
     this.accessToken = undefined;
+    this.avatarIndex = 0;
     // Реджектим висящие — иначе UI промисы зависнут навсегда.
     for (const p of this.pending.values()) {
       if (p.timeoutId !== null) clearTimeout(p.timeoutId);
@@ -357,7 +379,9 @@ export class NetworkService {
       initialReject?.(new Error('userId required'));
       return;
     }
-    const ws = new WebSocket(wsUrlFor(this.userId, this.displayName, this.accessToken));
+    const ws = new WebSocket(
+      wsUrlFor(this.userId, this.displayName, this.accessToken, this.avatarIndex),
+    );
     ws.binaryType = 'arraybuffer';
     let opened = false;
     let initialSettled = false;

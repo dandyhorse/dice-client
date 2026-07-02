@@ -1,6 +1,6 @@
 import { OST_TRACK_URLS } from '../assets/asset-manifest';
 
-const MUSIC_VOLUME = 0.34;
+const MUSIC_BASE_VOLUME = 0.34;
 const NEXT_PRELOAD_REMAINING_SECONDS = 25;
 const CROSSFADE_SECONDS = 1.2;
 
@@ -13,12 +13,24 @@ class MusicService {
   private transitioning = false;
   private unlockBound = false;
   private fadeRafId: number | null = null;
+  private musicVolume = 1;
+
+  setMusicVolume(volume: number): void {
+    this.musicVolume = Math.max(0, Math.min(1, volume));
+    if (!this.transitioning && this.current)
+      this.current.volume = this.targetVolume();
+    if (!this.transitioning && this.next) this.next.volume = 0;
+  }
 
   start(): void {
     if (OST_TRACK_URLS.length === 0) return;
     if (!this.current) {
       this.currentIndex = this.pickRandomTrackIndex();
-      this.current = this.createAudio(this.currentIndex, 'auto', MUSIC_VOLUME);
+      this.current = this.createAudio(
+        this.currentIndex,
+        'auto',
+        this.targetVolume(),
+      );
     }
     this.bindUnlockListeners();
     void this.playCurrent();
@@ -70,18 +82,33 @@ class MusicService {
   }
 
   private onTimeUpdate = (event: Event): void => {
-    if (event.currentTarget !== this.current || !this.current || OST_TRACK_URLS.length <= 1) return;
-    if (!Number.isFinite(this.current.duration) || this.current.duration <= 0) return;
+    if (
+      event.currentTarget !== this.current ||
+      !this.current ||
+      OST_TRACK_URLS.length <= 1
+    )
+      return;
+    if (!Number.isFinite(this.current.duration) || this.current.duration <= 0)
+      return;
 
     const remaining = this.current.duration - this.current.currentTime;
     if (remaining <= NEXT_PRELOAD_REMAINING_SECONDS) this.prepareNextTrack();
-    if (remaining <= CROSSFADE_SECONDS && this.next && !this.transitioning && this.playing) {
+    if (
+      remaining <= CROSSFADE_SECONDS &&
+      this.next &&
+      !this.transitioning &&
+      this.playing
+    ) {
       this.crossfadeToNext();
     }
   };
 
   private onEnded = (event: Event): void => {
-    if (event.currentTarget !== this.current || OST_TRACK_URLS.length <= 1 || this.transitioning) {
+    if (
+      event.currentTarget !== this.current ||
+      OST_TRACK_URLS.length <= 1 ||
+      this.transitioning
+    ) {
       return;
     }
     this.switchToNext();
@@ -106,6 +133,7 @@ class MusicService {
       .then(() => this.animateCrossfade(from, to))
       .catch(() => {
         this.transitioning = false;
+        this.playNextOnCurrentElement(from);
       });
   }
 
@@ -114,8 +142,9 @@ class MusicService {
     const durationMs = CROSSFADE_SECONDS * 1000;
     const tick = (nowMs: number): void => {
       const t = Math.min(1, (nowMs - startMs) / durationMs);
-      from.volume = MUSIC_VOLUME * (1 - t);
-      to.volume = MUSIC_VOLUME * t;
+      const volume = this.targetVolume();
+      from.volume = volume * (1 - t);
+      to.volume = volume * t;
       if (t < 1) {
         this.fadeRafId = requestAnimationFrame(tick);
         return;
@@ -127,18 +156,53 @@ class MusicService {
 
   private switchToNext(): void {
     const from = this.current;
-    this.nextIndex = this.next ? this.nextIndex : this.pickRandomTrackIndex(this.currentIndex);
+    this.nextIndex = this.next
+      ? this.nextIndex
+      : this.pickRandomTrackIndex(this.currentIndex);
     const to = this.next ?? this.createAudio(this.nextIndex, 'auto', 0);
-    to.volume = MUSIC_VOLUME;
+    to.volume = this.targetVolume();
     void to
       .play()
       .then(() => {
         if (from) this.finishSwitch(from, to);
       })
       .catch(() => {
-        this.playing = false;
-        this.bindUnlockListeners();
+        if (from && from !== to) {
+          this.playNextOnCurrentElement(from);
+          return;
+        }
+        this.handlePlayBlocked();
       });
+  }
+
+  private playNextOnCurrentElement(audio: HTMLAudioElement): void {
+    if (OST_TRACK_URLS.length === 0) return;
+    if (this.fadeRafId !== null) cancelAnimationFrame(this.fadeRafId);
+    this.fadeRafId = null;
+    const targetIndex = this.next
+      ? this.nextIndex
+      : this.pickRandomTrackIndex(this.currentIndex);
+    if (this.next && this.next !== audio) this.releaseAudio(this.next);
+    this.next = null;
+    this.transitioning = false;
+    this.current = audio;
+    this.currentIndex = targetIndex;
+    audio.volume = this.targetVolume();
+    audio.loop = OST_TRACK_URLS.length === 1;
+    audio.src = OST_TRACK_URLS[targetIndex]!;
+    audio.load();
+    void audio
+      .play()
+      .then(() => {
+        this.playing = true;
+        this.unbindUnlockListeners();
+      })
+      .catch(() => this.handlePlayBlocked());
+  }
+
+  private handlePlayBlocked(): void {
+    this.playing = false;
+    this.bindUnlockListeners();
   }
 
   private finishSwitch(from: HTMLAudioElement, to: HTMLAudioElement): void {
@@ -167,6 +231,10 @@ class MusicService {
       index = Math.floor(Math.random() * OST_TRACK_URLS.length);
     } while (index === excludeIndex);
     return index;
+  }
+
+  private targetVolume(): number {
+    return MUSIC_BASE_VOLUME * this.musicVolume;
   }
 }
 

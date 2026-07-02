@@ -29,6 +29,7 @@
 :root {
   --font-ui: 'EB Garamond Local', Georgia, serif;
   --font-title: 'Uncial Antiqua Local', 'EB Garamond Local', Georgia, serif;
+  --cursor-target-hand: url('/assets/cursors/target-hand.png') 64 14, auto;
 }
 
 html,
@@ -47,13 +48,18 @@ body {
   height: 100vh;
 }
 
-canvas {
-  display: block;
-  cursor: grab;
+body,
+body * {
+  cursor: var(--cursor-target-hand);
 }
 
-canvas:active {
-  cursor: grabbing;
+body.custom-cursor-enabled,
+body.custom-cursor-enabled * {
+  cursor: none !important;
+}
+
+canvas {
+  display: block;
 }
 
 .loading-dots span {

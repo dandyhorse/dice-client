@@ -71,6 +71,7 @@ import { SelectionService } from './services/selection.service';
 import { ShakeInputService } from './services/shake-input.service';
 import { TurnHotkeysService } from './services/turn-hotkeys.service';
 import { UI_RADIUS } from '../../../ui/theme';
+import { nextAvatarIndex } from '../../../avatars';
 
 export type GameMode = 'local' | 'network';
 
@@ -452,7 +453,7 @@ export class GameEngine {
       }
       net.replayLatestMatchData();
     } else if (this.mode === 'local' && this.localMatchConfig) {
-      this.benchDice = null;
+      this.benchDice = new BenchDiceService(this.scene);
       this.selection = new SelectionService(this.renderer.domElement, this.camera, this.dice, this.scene);
       this.selection.disable();
       this.localMatchState = createLocalMatch();
@@ -588,6 +589,7 @@ export class GameEngine {
           userId: LOCAL_HUMAN_USER_ID,
           socketId: LOCAL_HUMAN_USER_ID,
           displayName: t('youPlayer'),
+          avatarIndex: this.playerSettings.profile.avatarIndex,
           role: ROOM_ROLE.PLAYER,
           online: true,
         },
@@ -595,6 +597,7 @@ export class GameEngine {
           userId: LOCAL_BOT_USER_ID,
           socketId: LOCAL_BOT_USER_ID,
           displayName: t('botPlayer'),
+          avatarIndex: nextAvatarIndex(this.playerSettings.profile.avatarIndex),
           role: ROOM_ROLE.PLAYER,
           online: true,
         },
@@ -621,7 +624,7 @@ export class GameEngine {
       onlinePlayers: [LOCAL_HUMAN_USER_ID, LOCAL_BOT_USER_ID],
       turnPoints: state.turnPoints,
       remainingDice: state.activeDiceCount,
-      bench: [],
+      bench: [...state.bench],
       totals: [
         { userId: LOCAL_HUMAN_USER_ID, total: state.players.human.totalScore },
         { userId: LOCAL_BOT_USER_ID, total: state.players.bot.totalScore },
@@ -645,6 +648,7 @@ export class GameEngine {
 
     this.currentRoomState = roomState;
     this.currentMatchState = matchState;
+    this.benchDice?.setFaces(matchState.bench);
     this.hud?.setRoomState(roomState);
     this.hud?.setMatchState(matchState);
   }
@@ -666,7 +670,7 @@ export class GameEngine {
       this.hud?.setSelectionPreview(null);
       this.hud?.setSelectionState(0, false, 0);
       this.hud?.showError('BUST');
-      this.enterLocalMatchTurn();
+      this.scheduleLocalMatchTurnAfterFarkle();
       return;
     }
 
@@ -711,7 +715,7 @@ export class GameEngine {
       this.hud?.setSelectionPreview(null);
       this.hud?.setSelectionState(0, false, 0);
       this.hud?.showError('BUST');
-      this.enterLocalMatchTurn();
+      this.scheduleLocalMatchTurnAfterFarkle();
       return;
     }
 
@@ -746,7 +750,7 @@ export class GameEngine {
     if (decision.action === 'bank') {
       this.applyLocalMatchBank(decision.points, decision.rollIndices.length);
     } else {
-      this.applyLocalMatchContinue(decision.points, selected, decision.rollIndices.length);
+      this.applyLocalMatchContinue(decision.points, selected, decision.rollIndices);
     }
   }
 
@@ -760,7 +764,7 @@ export class GameEngine {
     this.applyLocalMatchContinue(
       validation.points,
       selection.getSelectedIndices(),
-      selection.getSelectedIndices().length,
+      selection.getSelectedRollIndices(),
     );
   };
 
@@ -783,7 +787,7 @@ export class GameEngine {
   private applyLocalMatchContinue(
     points: number,
     selectedDiceIndices: number[],
-    diceUsed: number,
+    selectedRollIndices: number[],
   ): void {
     const state = this.localMatchState;
     const config = this.localMatchConfig;
@@ -791,7 +795,16 @@ export class GameEngine {
 
     const selected = new Set(selectedDiceIndices);
     const remaining = this.dice.getLocalActiveIndices().filter((index) => !selected.has(index));
-    this.localMatchState = recordLocalMatchContinue(state, config, points, diceUsed);
+    const selectedFaces = selectedRollIndices
+      .map((rollIndex) => this.localLastRolledFaces[rollIndex])
+      .filter((face): face is number => typeof face === 'number');
+    this.localMatchState = recordLocalMatchContinue(
+      state,
+      config,
+      points,
+      selectedFaces.length,
+      selectedFaces,
+    );
     if (remaining.length === 0 || this.localMatchState.activeDiceCount === 6) {
       this.dice.resetLocalForNewTurn();
     } else {
@@ -862,6 +875,14 @@ export class GameEngine {
     }, LOCAL_BOT_ROLL_DELAY_MS);
   }
 
+  private scheduleLocalMatchTurnAfterFarkle(): void {
+    this.clearLocalBotActionTimer();
+    this.localBotActionTimer = window.setTimeout(() => {
+      this.localBotActionTimer = null;
+      this.enterLocalMatchTurn();
+    }, FARKLE_ACTION_BLOCK_MS);
+  }
+
   private clearLocalBotActionTimer(): void {
     if (this.localBotActionTimer !== null) clearTimeout(this.localBotActionTimer);
     this.localBotActionTimer = null;
@@ -918,6 +939,14 @@ export class GameEngine {
     this.showSurrenderConfirm();
   };
 
+  private handleSurrenderConfirmKeyDown = (event: KeyboardEvent): void => {
+    if (event.code !== 'Escape') return;
+    if (event.repeat) return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.closeSurrenderConfirm();
+  };
+
   private showSurrenderConfirm(): void {
     if (this.surrenderConfirmEl !== null || !this.canUseSurrender()) return;
 
@@ -971,7 +1000,6 @@ export class GameEngine {
         borderRadius: UI_RADIUS,
         background,
         color: '#fff',
-        cursor: 'pointer',
         fontSize: '18px',
       } satisfies Partial<CSSStyleDeclaration>);
       return btn;
@@ -989,16 +1017,22 @@ export class GameEngine {
       this.onSurrender?.();
     });
     noBtn.addEventListener('click', () => this.closeSurrenderConfirm());
+    overlay.addEventListener('click', (event) => {
+      if (event.target !== overlay) return;
+      this.closeSurrenderConfirm();
+    });
 
     actions.append(yesBtn, noBtn);
     panel.append(question, actions);
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
     this.surrenderConfirmEl = overlay;
+    window.addEventListener('keydown', this.handleSurrenderConfirmKeyDown, true);
     noBtn.focus();
   }
 
   private closeSurrenderConfirm(): void {
+    window.removeEventListener('keydown', this.handleSurrenderConfirmKeyDown, true);
     this.surrenderConfirmEl?.remove();
     this.surrenderConfirmEl = null;
   }

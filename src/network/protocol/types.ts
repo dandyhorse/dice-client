@@ -87,6 +87,8 @@ export const ROOM_TARGET_SCORE_STEP = 500;
 export const ROOM_MIN_BANK_MIN = 0;
 export const ROOM_MIN_BANK_MAX = 1000;
 export const ROOM_MIN_BANK_STEP = 50;
+export const DEFAULT_AVATAR_INDEX = 0;
+export const MAX_AVATAR_INDEX = 0xffff;
 
 const isStepAligned = (value: number, min: number, step: number): boolean =>
   (value - min) % step === 0;
@@ -133,10 +135,20 @@ export const normalizeRoomOptions = (
   };
 };
 
+export const normalizeAvatarIndex = (value: unknown): number => {
+  const index =
+    typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : Number.NaN;
+  if (!Number.isInteger(index) || index < 0 || index > MAX_AVATAR_INDEX) {
+    return DEFAULT_AVATAR_INDEX;
+  }
+  return index;
+};
+
 export interface RoomMember {
   userId: string;
   socketId: string;
   displayName: string;
+  avatarIndex: number;
   role: RoomRole;
   online: boolean;
 }

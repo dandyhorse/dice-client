@@ -15,6 +15,8 @@ const FACE_AXES: Record<number, THREE.Vector3> = {
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const DICE_SIZE = DICE_HALF_SIZE * 2;
 const SLOT_SPACING = 0.62;
+const COLUMN_SPACING = 0.54;
+const DICE_PER_COLUMN = 6;
 const BENCH_X = -TABLE_WIDTH / 2 - 0.82;
 const BENCH_Y = DICE_HALF_SIZE + 0.04;
 
@@ -25,17 +27,11 @@ export class BenchDiceService {
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
-    for (let i = 0; i < 6; i++) {
-      const mesh = createDiceMesh(DICE_SIZE, { shadowsEnabled: false });
-      mesh.visible = false;
-      mesh.renderOrder = 1;
-      this.scene.add(mesh);
-      this.dice.push(mesh);
-    }
+    this.ensureDiceCount(DICE_PER_COLUMN);
   }
 
   setFaces(faces: number[]): void {
-    const normalized = faces.filter((face) => face >= 1 && face <= 6).slice(0, this.dice.length);
+    const normalized = faces.filter((face) => face >= 1 && face <= 6);
     if (
       normalized.length === this.currentFaces.length &&
       normalized.every((face, index) => face === this.currentFaces[index])
@@ -45,7 +41,7 @@ export class BenchDiceService {
 
     this.currentFaces.length = 0;
     this.currentFaces.push(...normalized);
-    const startZ = -((normalized.length - 1) * SLOT_SPACING) / 2;
+    this.ensureDiceCount(normalized.length);
 
     for (let i = 0; i < this.dice.length; i++) {
       const mesh = this.dice[i]!;
@@ -54,8 +50,19 @@ export class BenchDiceService {
         continue;
       }
 
+      const column = Math.floor(i / DICE_PER_COLUMN);
+      const row = i % DICE_PER_COLUMN;
+      const rowsInColumn = Math.min(
+        DICE_PER_COLUMN,
+        normalized.length - column * DICE_PER_COLUMN,
+      );
+      const startZ = -((rowsInColumn - 1) * SLOT_SPACING) / 2;
       mesh.visible = true;
-      mesh.position.set(BENCH_X, BENCH_Y, startZ + i * SLOT_SPACING);
+      mesh.position.set(
+        BENCH_X - column * COLUMN_SPACING,
+        BENCH_Y,
+        startZ + row * SLOT_SPACING,
+      );
       this.orientFaceUp(mesh, normalized[i]!);
     }
   }
@@ -67,7 +74,9 @@ export class BenchDiceService {
   destroy(): void {
     for (const mesh of this.dice) {
       mesh.removeFromParent();
-      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      const materials = Array.isArray(mesh.material)
+        ? mesh.material
+        : [mesh.material];
       for (const material of materials) material.dispose();
     }
     this.dice.length = 0;
@@ -77,5 +86,15 @@ export class BenchDiceService {
   private orientFaceUp(mesh: THREE.Mesh, face: number): void {
     const axis = FACE_AXES[face] ?? FACE_AXES[1]!;
     mesh.quaternion.setFromUnitVectors(axis, WORLD_UP);
+  }
+
+  private ensureDiceCount(count: number): void {
+    while (this.dice.length < count) {
+      const mesh = createDiceMesh(DICE_SIZE, { shadowsEnabled: false });
+      mesh.visible = false;
+      mesh.renderOrder = 1;
+      this.scene.add(mesh);
+      this.dice.push(mesh);
+    }
   }
 }
