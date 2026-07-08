@@ -64,7 +64,7 @@ For our current `src/domain/scorer.ts` rules, a quick exact enumeration produced
 
 | Active dice after selection | Bank threshold |
 | --- | ---: |
-| 1 | 300 |
+| 1 | 150 |
 | 2 | 250 |
 | 3 | 450 |
 | 4 | 1050 |
@@ -80,6 +80,7 @@ Straightforward and readable:
 - Always select the best scoring subset from the current roll.
 - Always bank if the selected points immediately reach `targetScore`.
 - Respect `minBank`.
+- With one active die left, bank earlier than the exact expected-score baseline so the bot does not over-risk tiny single-die rerolls.
 - If ahead by at least 500, bank about 150-250 points earlier than the baseline threshold.
 - If behind by at least 500, bank about 150-250 points later than the baseline threshold.
 - If the human is within one normal turn of winning, raise aggression rather than banking small safe totals.

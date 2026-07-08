@@ -11,7 +11,7 @@ export const FONT_FAMILY = {
 } as const;
 
 export const FONT_SIZE = {
-  mobileTitle: 'clamp(34px, 12vw, 58px)',
+  mobileTitle: '42px',
   lang: scaledFont(12),
   badge: scaledFont(12),
   auth: scaledFont(11),
@@ -22,11 +22,12 @@ export const FONT_SIZE = {
   card: scaledFont(16),
   title: scaledFont(24),
   error: scaledFont(12),
-  menuButton: scaledFont(18),
+  menuButton: '25px',
   control: scaledFont(16),
   label: scaledFont(14),
   hud: scaledFont(14),
   overlay: scaledFont(24),
+  status: '50px',
   logo: scaledPx(34),
 } as const;
 
@@ -37,7 +38,7 @@ export const UI_SIZE = {
   authButtonHeight: scaledPx(42),
   authIconButtonSize: scaledPx(34),
   controlHeight: scaledPx(42),
-  menuButtonHeight: scaledPx(52),
+  menuButtonHeight: '60px',
   hudButtonWidth: scaledPx(120),
   hudButtonHeight: scaledPx(42),
 } as const;

@@ -6,27 +6,32 @@ import {
 
 type CustomCursorVariant = 'target' | 'open' | 'closed';
 
-const CURSOR_SIZE_PX = 147;
+const HAND_CURSOR_SIZE_PX = 147;
+const TARGET_CURSOR_SIZE_PX = 50;
 const CURSORS: Record<
   CustomCursorVariant,
   {
     url: string;
+    sizePx: number;
     hotspotX: number;
     hotspotY: number;
   }
 > = {
   target: {
     url: TARGET_HAND_CURSOR_URL,
-    hotspotX: 74,
-    hotspotY: 16,
+    sizePx: TARGET_CURSOR_SIZE_PX,
+    hotspotX: 25,
+    hotspotY: 6,
   },
   open: {
     url: OPEN_HAND_CURSOR_URL,
+    sizePx: HAND_CURSOR_SIZE_PX,
     hotspotX: 74,
     hotspotY: 74,
   },
   closed: {
     url: CLOSED_HAND_CURSOR_URL,
+    sizePx: HAND_CURSOR_SIZE_PX,
     hotspotX: 74,
     hotspotY: 74,
   },
@@ -49,15 +54,15 @@ export function installCustomCursor(): void {
     position: 'fixed',
     left: '0',
     top: '0',
-    width: `${CURSOR_SIZE_PX}px`,
-    height: `${CURSOR_SIZE_PX}px`,
+    width: `${TARGET_CURSOR_SIZE_PX}px`,
+    height: `${TARGET_CURSOR_SIZE_PX}px`,
     backgroundRepeat: 'no-repeat',
     backgroundPosition: '0 0',
     backgroundSize: 'contain',
     display: 'none',
     pointerEvents: 'none',
     zIndex: '2147483647',
-    willChange: 'transform, background-image',
+    willChange: 'transform, background-image, width, height',
   } satisfies Partial<CSSStyleDeclaration>);
 
   document.body.appendChild(cursorEl);
@@ -98,13 +103,15 @@ function hideCursor(): void {
 
 function applyCursorVariant(): void {
   if (cursorEl === null) return;
-  cursorEl.style.backgroundImage = `url("${CURSORS[getVisibleVariant()].url}")`;
   applyCursorPosition();
 }
 
 function applyCursorPosition(): void {
   if (cursorEl === null || !hasPointer) return;
   const cursor = CURSORS[getVisibleVariant()];
+  cursorEl.style.width = `${cursor.sizePx}px`;
+  cursorEl.style.height = `${cursor.sizePx}px`;
+  cursorEl.style.backgroundImage = `url("${cursor.url}")`;
   cursorEl.style.display = 'block';
   cursorEl.style.transform = `translate3d(${lastX - cursor.hotspotX}px, ${
     lastY - cursor.hotspotY

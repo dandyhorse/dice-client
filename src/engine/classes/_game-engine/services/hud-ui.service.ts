@@ -6,7 +6,7 @@ import {
 } from '../../../../player-settings';
 import { onLanguageChange, t } from '../../../../ui/i18n';
 import { bindMouseOnlyClick } from '../../../../ui/mouse-only-button';
-import { FONT_FAMILY, FONT_SIZE, UI_RADIUS, UI_SIZE } from '../../../../ui/theme';
+import { FONT_FAMILY, FONT_SIZE, UI_RADIUS } from '../../../../ui/theme';
 import { avatarUrlForIndex } from '../../../../avatars';
 
 import {
@@ -28,8 +28,6 @@ const PLAYER_PANEL_TOP_Y = 'calc(clamp(90px, 14vh, 170px) - 5px)';
 const PLAYER_PANEL_BOTTOM_Y = 'calc(clamp(90px, 14vh, 170px) + 5px)';
 const PLAYER_PANEL_TABLE_X = 'max(38px, calc(20vw - 14.4vh))';
 
-const BTN_BG = '#3b82f6';
-const BTN_FG = '#fff';
 const BTN_DISABLED_OPACITY = '0.4';
 const FARKLE_DURATION_MS = 1200;
 const OPPONENT_TURN_BANNER_DURATION_MS = 1500;
@@ -62,6 +60,7 @@ export class HudUiService {
   private readonly rightPanel: HTMLDivElement;
   private readonly turnStatsPanel: HTMLDivElement;
   private readonly actionsPanel: HTMLDivElement;
+  private readonly surrenderPanel: HTMLDivElement;
   private readonly statusPanel: HTMLDivElement;
   private readonly errorPanel: HTMLDivElement;
   private readonly turnBannerPanel: HTMLDivElement;
@@ -87,6 +86,7 @@ export class HudUiService {
   private statusTimer: number | null = null;
   private transientDismissBound = false;
   private turnBannerClickDismissable = false;
+  private turnBannerUserId = '';
   private queuedTurnBannerUserId = '';
   private lastAnnouncedTurnPlayer = '';
   private finalResult: 'WIN' | 'FARKLE' | null = null;
@@ -151,12 +151,28 @@ export class HudUiService {
     this.actionsPanel.id = 'hud-actions';
     Object.assign(this.actionsPanel.style, {
       position: 'fixed',
+      left: '50%',
+      bottom: '28px',
+      transform: 'translateX(-50%)',
+      display: 'none',
+      flexDirection: 'row',
+      gap: '16px',
+      width: 'min(1067px, calc(100vw - 32px))',
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexWrap: 'nowrap',
+      pointerEvents: 'auto',
+    } satisfies Partial<CSSStyleDeclaration>);
+
+    this.surrenderPanel = document.createElement('div');
+    this.surrenderPanel.id = 'hud-surrender';
+    Object.assign(this.surrenderPanel.style, {
+      position: 'fixed',
       right: '12px',
       bottom: '12px',
       display: 'none',
-      flexDirection: 'column',
-      gap: '8px',
       width: 'min(360px, calc(100vw - 24px))',
+      justifyContent: 'center',
       pointerEvents: 'auto',
     } satisfies Partial<CSSStyleDeclaration>);
 
@@ -179,61 +195,42 @@ export class HudUiService {
     this.actionsPanel.appendChild(this.selectAllBtn);
     this.actionsPanel.appendChild(this.continueBtn);
     this.actionsPanel.appendChild(this.bankBtn);
-    this.actionsPanel.appendChild(this.surrenderBtn);
+    this.surrenderPanel.appendChild(this.surrenderBtn);
 
     this.statusPanel = document.createElement('div');
     this.statusPanel.id = 'hud-status';
+    this.statusPanel.classList.add('status-frame');
     Object.assign(this.statusPanel.style, {
       position: 'fixed',
       bottom: '20px',
       left: '50%',
       transform: 'translateX(-50%)',
-      padding: PANEL_PAD,
-      background: PANEL_BG,
-      color: PANEL_FG,
-      fontFamily: FONT_FAMILY.ui,
-      fontSize: FONT_SIZE.hud,
-      borderRadius: PANEL_RADIUS,
       pointerEvents: 'none',
-      maxWidth: '70vw',
-      textAlign: 'center',
+      display: 'none',
     } satisfies Partial<CSSStyleDeclaration>);
 
     this.errorPanel = document.createElement('div');
     this.errorPanel.id = 'hud-error';
+    this.errorPanel.classList.add('status-frame');
     Object.assign(this.errorPanel.style, {
       position: 'fixed',
       top: '50%',
       left: '50%',
       transform: 'translate(-50%, -50%)',
-      padding: '18px 34px',
-      background: 'rgba(180,40,40,0.85)',
-      color: '#fff',
-      fontFamily: FONT_FAMILY.ui,
-      fontSize: 'clamp(42px, 8vw, 92px)',
-      fontWeight: 'bold',
-      borderRadius: PANEL_RADIUS,
       pointerEvents: 'none',
       display: 'none',
-      letterSpacing: '0.05em',
     } satisfies Partial<CSSStyleDeclaration>);
 
     this.turnBannerPanel = document.createElement('div');
     this.turnBannerPanel.id = 'hud-turn-banner';
+    this.turnBannerPanel.classList.add('status-frame');
     Object.assign(this.turnBannerPanel.style, {
       position: 'fixed',
       top: '50%',
       left: '50%',
       transform: 'translate(-50%, -50%)',
-      color: '#fff',
-      fontFamily: FONT_FAMILY.title,
-      fontSize: 'clamp(46px, 9vw, 104px)',
-      fontWeight: '700',
-      textAlign: 'center',
-      textShadow: '0 8px 28px rgba(0,0,0,0.7)',
       pointerEvents: 'none',
       display: 'none',
-      letterSpacing: '0',
     } satisfies Partial<CSSStyleDeclaration>);
 
     this.finalActionsPanel = document.createElement('div');
@@ -245,7 +242,9 @@ export class HudUiService {
       transform: 'translateX(-50%)',
       display: 'none',
       gap: '10px',
-      width: 'min(380px, calc(100vw - 24px))',
+      width: 'min(280px, calc(100vw - 24px))',
+      justifyContent: 'center',
+      flexWrap: 'nowrap',
       pointerEvents: 'auto',
       zIndex: '16',
     } satisfies Partial<CSSStyleDeclaration>);
@@ -253,15 +252,12 @@ export class HudUiService {
       if (this.finalExitBtn.disabled) return;
       this.events.emit('final-exit-clicked');
     });
-    this.finalExitBtn.style.background = '#374151';
-    this.finalExitBtn.style.flex = '1 1 0';
-    this.finalExitBtn.style.width = 'auto';
+    this.finalExitBtn.classList.add('menu-frame-button-small');
     this.finalRematchBtn = this.makeButton('', () => {
       if (this.finalRematchBtn.disabled) return;
       this.events.emit('rematch-clicked');
     });
-    this.finalRematchBtn.style.flex = '1 1 0';
-    this.finalRematchBtn.style.width = 'auto';
+    this.finalRematchBtn.classList.add('menu-frame-button-small');
     this.finalActionsPanel.appendChild(this.finalExitBtn);
     this.finalActionsPanel.appendChild(this.finalRematchBtn);
 
@@ -271,6 +267,7 @@ export class HudUiService {
     this.root.appendChild(this.turnStatsPanel);
     document.body.appendChild(this.root);
     document.body.appendChild(this.actionsPanel);
+    document.body.appendChild(this.surrenderPanel);
     document.body.appendChild(this.statusPanel);
     document.body.appendChild(this.errorPanel);
     document.body.appendChild(this.turnBannerPanel);
@@ -279,6 +276,7 @@ export class HudUiService {
     this.unsubscribeLanguage = onLanguageChange(() => {
       this.renderButtonLabels();
       this.render();
+      this.refreshLanguageText();
     });
     this.renderButtonLabels();
     this.render();
@@ -305,12 +303,14 @@ export class HudUiService {
     }
     this.updateStatusTimer();
     this.render();
+    this.refreshLanguageText();
   }
 
   setRoomState(state: RoomStatePayload): void {
     this.roomState = state;
     this.updateStatusTimer();
     this.render();
+    this.refreshLanguageText();
   }
 
   setControls(controls: ControlBindings): void {
@@ -340,12 +340,14 @@ export class HudUiService {
     if (this.finalResult !== null) return;
     const isFarkle = message.toUpperCase() === 'BUST';
     this.errorPanel.textContent = isFarkle ? t('farkle') : message;
-    this.errorPanel.style.display = 'block';
+    this.errorPanel.classList.toggle('status-frame-danger', isFarkle);
+    this.errorPanel.style.display = 'grid';
     if (isFarkle) {
       this.unbindTransientDismiss();
       this.actionsBlocked = true;
       this.clearTurnBannerTimer();
       this.turnBannerClickDismissable = false;
+      this.turnBannerUserId = '';
       this.turnBannerPanel.style.display = 'none';
       this.renderActions();
       if (this.farkleTimer !== null) clearTimeout(this.farkleTimer);
@@ -368,12 +370,12 @@ export class HudUiService {
     this.clearTurnBannerTimer();
     this.unbindTransientDismiss();
     this.turnBannerClickDismissable = false;
+    this.turnBannerUserId = '';
     this.queuedTurnBannerUserId = '';
     this.actionsBlocked = true;
     this.errorPanel.textContent = result === 'FARKLE' ? t('farkle') : 'WIN';
-    this.errorPanel.style.background =
-      result === 'WIN' ? 'rgba(34,197,94,0.88)' : 'rgba(180,40,40,0.85)';
-    this.errorPanel.style.display = 'block';
+    this.errorPanel.classList.toggle('status-frame-danger', result === 'FARKLE');
+    this.errorPanel.style.display = 'grid';
     this.turnBannerPanel.style.display = 'none';
     this.finalActionsPanel.style.display = 'flex';
     this.renderFinalButtons();
@@ -403,6 +405,7 @@ export class HudUiService {
     this.unsubscribeLanguage();
     this.root.remove();
     this.actionsPanel.remove();
+    this.surrenderPanel.remove();
     this.statusPanel.remove();
     this.errorPanel.remove();
     this.turnBannerPanel.remove();
@@ -417,19 +420,22 @@ export class HudUiService {
   }
 
   private renderButtonLabels(): void {
-    this.selectAllBtn.textContent = formatActionLabel(
+    this.setButtonLabel(this.selectAllBtn, formatActionLabel(
       t('selectAllAction'),
       this.controls.selectAll,
-    );
-    this.continueBtn.textContent = formatActionLabel(
+    ));
+    this.setButtonLabel(this.continueBtn, formatActionLabel(
       t('continueAction'),
       this.controls.continueTurn,
+    ));
+    this.setButtonLabel(
+      this.bankBtn,
+      formatActionLabel(t('bankAction'), this.controls.bankTurn),
     );
-    this.bankBtn.textContent = formatActionLabel(t('bankAction'), this.controls.bankTurn);
-    this.surrenderBtn.textContent = formatActionLabel(
+    this.setButtonLabel(this.surrenderBtn, formatActionLabel(
       t('surrenderAction'),
       this.controls.surrender,
-    );
+    ));
     this.renderFinalButtons();
   }
 
@@ -676,6 +682,7 @@ export class HudUiService {
       s.phase !== MATCH_PHASE.FINISHED &&
       this.finalResult === null;
     this.actionsPanel.style.display = showPanel ? 'flex' : 'none';
+    this.surrenderPanel.style.display = showPanel ? 'flex' : 'none';
     this.selectAllBtn.style.display = this.isRanked() ? 'none' : 'inline-flex';
 
     const canUseSelection =
@@ -704,13 +711,13 @@ export class HudUiService {
     }
     if (s.paused) {
       this.statusPanel.textContent = s.pauseReason ? `${t('pause')}: ${s.pauseReason}` : t('pause');
-      this.statusPanel.style.display = 'block';
+      this.statusPanel.style.display = 'grid';
       return;
     }
     const isSpectator = this.getOwnRole() === ROOM_ROLE.SPECTATOR;
     if (isSpectator) {
       this.statusPanel.textContent = t('spectatorMode');
-      this.statusPanel.style.display = 'block';
+      this.statusPanel.style.display = 'grid';
       return;
     }
     let text = '';
@@ -719,7 +726,7 @@ export class HudUiService {
         text = '';
         break;
       case MATCH_PHASE.ROLLING:
-        text = t('rolling');
+        text = '';
         break;
       case MATCH_PHASE.SELECTING:
         text = '';
@@ -735,7 +742,7 @@ export class HudUiService {
     const timer = this.formatTurnTimer();
     if (timer) text = text ? `${text} · ${timer}` : timer;
     this.statusPanel.textContent = text;
-    this.statusPanel.style.display = text ? 'block' : 'none';
+    this.statusPanel.style.display = text ? 'grid' : 'none';
   }
 
   private isRanked(): boolean {
@@ -754,26 +761,31 @@ export class HudUiService {
 
   private showTurnBanner(userId: string): void {
     this.clearTurnBannerTimer();
-    const text =
-      userId === this.ownUserId
-        ? t('yourTurnBanner')
-        : `${t('playerTurnPrefix')}: ${this.displayNameForUser(userId)}`;
-    this.turnBannerPanel.textContent = text.toLocaleUpperCase();
-    this.turnBannerPanel.style.display = 'block';
+    this.turnBannerUserId = userId;
+    this.turnBannerPanel.textContent = this.turnBannerTextForUser(userId);
+    this.turnBannerPanel.style.display = 'grid';
     this.turnBannerClickDismissable = userId === this.ownUserId;
     if (this.turnBannerClickDismissable) {
       this.bindTransientDismiss();
       return;
     }
-    if (this.errorPanel.style.display !== 'block') this.unbindTransientDismiss();
+    if (this.errorPanel.style.display === 'none') this.unbindTransientDismiss();
     this.turnBannerTimer = window.setTimeout(
       this.finishTimedTurnBanner,
       OPPONENT_TURN_BANNER_DURATION_MS,
     );
   }
 
+  private turnBannerTextForUser(userId: string): string {
+    const text =
+      userId === this.ownUserId
+        ? t('yourTurnBanner')
+        : `${t('playerTurnPrefix')}: ${this.displayNameForUser(userId)}`;
+    return text.toLocaleUpperCase();
+  }
+
   private queueOrShowTurnBanner(userId: string): void {
-    if (this.actionsBlocked || this.errorPanel.style.display === 'block') {
+    if (this.actionsBlocked || this.errorPanel.style.display !== 'none') {
       this.queuedTurnBannerUserId = userId;
       return;
     }
@@ -824,17 +836,8 @@ export class HudUiService {
 
   private makeButton(label: string, onClick: () => void): HTMLButtonElement {
     const btn = document.createElement('button');
-    btn.textContent = label;
+    btn.classList.add('menu-frame-button');
     Object.assign(btn.style, {
-      padding: '8px 16px',
-      background: BTN_BG,
-      color: BTN_FG,
-      border: 'none',
-      borderRadius: PANEL_RADIUS,
-      fontFamily: FONT_FAMILY.ui,
-      fontSize: FONT_SIZE.hud,
-      width: '100%',
-      minHeight: UI_SIZE.hudButtonHeight,
       boxSizing: 'border-box',
       display: 'inline-flex',
       alignItems: 'center',
@@ -844,8 +847,24 @@ export class HudUiService {
       whiteSpace: 'normal',
       pointerEvents: 'auto',
     } satisfies Partial<CSSStyleDeclaration>);
+    this.setButtonLabel(btn, label);
     bindMouseOnlyClick(btn, onClick);
     return btn;
+  }
+
+  private setButtonLabel(btn: HTMLButtonElement, label: string): void {
+    let text = btn.querySelector<HTMLSpanElement>('[data-button-label="true"]');
+    if (!text || text.parentElement !== btn) {
+      text = document.createElement('span');
+      text.dataset.buttonLabel = 'true';
+      Object.assign(text.style, {
+        position: 'relative',
+        zIndex: '1',
+        maxWidth: 'calc(100% - 24px)',
+      } satisfies Partial<CSSStyleDeclaration>);
+      btn.replaceChildren(text);
+    }
+    text.textContent = label;
   }
 
   private setButtonEnabled(btn: HTMLButtonElement, enabled: boolean): void {
@@ -877,7 +896,6 @@ export class HudUiService {
     if (this.finalResult !== null) return;
 
     this.errorPanel.style.display = 'none';
-    this.errorPanel.style.background = 'rgba(180,40,40,0.85)';
     this.actionsBlocked = false;
     this.renderActions();
 
@@ -892,7 +910,8 @@ export class HudUiService {
     this.turnBannerTimer = null;
     if (this.finalResult !== null || this.turnBannerClickDismissable) return;
     this.turnBannerPanel.style.display = 'none';
-    if (this.errorPanel.style.display !== 'block') this.unbindTransientDismiss();
+    this.turnBannerUserId = '';
+    if (this.errorPanel.style.display === 'none') this.unbindTransientDismiss();
   };
 
   private dismissTransientOverlays = (event: PointerEvent | KeyboardEvent): void => {
@@ -901,19 +920,19 @@ export class HudUiService {
     if (isKeyboard && (event as KeyboardEvent).code !== this.controls.throwDice) return;
 
     let dismissed = false;
-    if (!isKeyboard && this.errorPanel.style.display === 'block' && this.farkleTimer === null) {
+    if (!isKeyboard && this.errorPanel.style.display !== 'none' && this.farkleTimer === null) {
       this.errorPanel.style.display = 'none';
-      this.errorPanel.style.background = 'rgba(180,40,40,0.85)';
       dismissed = true;
       if (this.actionsBlocked) {
         this.actionsBlocked = false;
         this.renderActions();
       }
     }
-    if (this.turnBannerPanel.style.display === 'block' && this.turnBannerClickDismissable) {
+    if (this.turnBannerPanel.style.display !== 'none' && this.turnBannerClickDismissable) {
       this.clearTurnBannerTimer();
       this.turnBannerPanel.style.display = 'none';
       this.turnBannerClickDismissable = false;
+      this.turnBannerUserId = '';
       dismissed = true;
     }
 
@@ -924,17 +943,16 @@ export class HudUiService {
       return;
     }
     if (
-      this.errorPanel.style.display !== 'block' &&
-      (this.turnBannerPanel.style.display !== 'block' || !this.turnBannerClickDismissable)
+      this.errorPanel.style.display === 'none' &&
+      (this.turnBannerPanel.style.display === 'none' || !this.turnBannerClickDismissable)
     ) {
       this.unbindTransientDismiss();
     }
   };
 
   private renderFinalButtons(): void {
-    this.finalExitBtn.textContent = t('exitMatch');
-    this.finalRematchBtn.style.display = this.finalRematchAvailable ? 'block' : 'none';
-    this.finalExitBtn.style.flex = this.finalRematchAvailable ? '1 1 0' : '1 1 100%';
+    this.setButtonLabel(this.finalExitBtn, t('exitMatch'));
+    this.finalRematchBtn.style.display = this.finalRematchAvailable ? 'inline-flex' : 'none';
     if (!this.finalRematchAvailable) {
       this.setButtonEnabled(this.finalExitBtn, true);
       this.setButtonEnabled(this.finalRematchBtn, false);
@@ -943,13 +961,28 @@ export class HudUiService {
     const requested = this.finalRematchRequestedBy;
     const ownRequested = requested.includes(this.ownUserId);
     const opponentRequested = requested.some((userId) => userId !== this.ownUserId);
-    this.finalRematchBtn.textContent = ownRequested
+    this.setButtonLabel(this.finalRematchBtn, ownRequested
       ? t('rematchWaiting')
       : opponentRequested
         ? t('rematchAccept')
-        : t('rematchAsk');
+        : t('rematchAsk'));
     this.setButtonEnabled(this.finalExitBtn, true);
     this.setButtonEnabled(this.finalRematchBtn, !ownRequested);
+  }
+
+  private refreshLanguageText(): void {
+    if (this.finalResult !== null) {
+      this.errorPanel.textContent = this.finalResult === 'FARKLE' ? t('farkle') : 'WIN';
+    } else if (
+      this.errorPanel.style.display !== 'none' &&
+      this.errorPanel.classList.contains('status-frame-danger')
+    ) {
+      this.errorPanel.textContent = t('farkle');
+    }
+
+    if (this.turnBannerPanel.style.display !== 'none' && this.turnBannerUserId) {
+      this.turnBannerPanel.textContent = this.turnBannerTextForUser(this.turnBannerUserId);
+    }
   }
 
   private clearFinalResult(): void {
@@ -958,8 +991,8 @@ export class HudUiService {
     this.finalRematchAvailable = true;
     this.actionsBlocked = false;
     this.errorPanel.style.display = 'none';
-    this.errorPanel.style.background = 'rgba(180,40,40,0.85)';
     this.turnBannerClickDismissable = false;
+    this.turnBannerUserId = '';
     this.finalActionsPanel.style.display = 'none';
   }
 }

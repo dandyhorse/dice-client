@@ -4,7 +4,6 @@ import {
   getLeaderboard,
   getStoredUser,
   loginAccount,
-  logoutAccount,
   refreshCurrentUser,
   registerAccount,
 } from './auth';
@@ -81,21 +80,52 @@ const SETTINGS_MODAL_ID = 'settings-modal';
 const BACK_BUTTON_ID = 'back-button';
 const ROOM_BADGE_ID = 'room-badge';
 const LANG_CONTROLS_ID = 'lang-controls';
+const PROFILE_POPUP_ID = 'profile-popup';
 const ROOM_LIST_MODAL_ID = 'room-list-modal';
 const LEADERBOARD_ID = 'leaderboard-panel';
-const GAME_SOUND_CONTROLS_ID = 'game-sound-controls';
 const RANKED_ENTRY_FEE = 10;
 const MOBILE_DEVICE_RE =
   /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
+const UI_ASSET_BASE = '/assets/ui';
+const MAIN_LOGO_SRC = `${UI_ASSET_BASE}/MainLogo.svg`;
+const SMALL_FRAME_SRC = `${UI_ASSET_BASE}/Small_frame.svg`;
+const AVATAR_MASK_SRC = `${UI_ASSET_BASE}/avatar_mask.svg`;
+const SETTINGS_ICON_SRC = `${UI_ASSET_BASE}/settings.svg`;
+const SOUND_ICON_SRC = `${UI_ASSET_BASE}/sound.svg`;
+const SOUND_DROPDOWN_SRC = `${UI_ASSET_BASE}/sound_dropdown.svg`;
+const SOUND_PICKER_SRC = `${UI_ASSET_BASE}/sound_picker.svg`;
+const LANGUAGE_DROPDOWN_SRC = `${UI_ASSET_BASE}/language_dropdown.svg`;
+const BUTTON_S_SRC = `${UI_ASSET_BASE}/Button_S.svg`;
+const BUTTON_S_OVERLAY_SRC = `${UI_ASSET_BASE}/Button_S_overlay.svg`;
+const TOP_MENU_EDGE_OFFSET = 40;
+const TOP_MENU_ICON_SIZE = 60;
+const TOP_MENU_ICON_IMAGE_SIZE = 48;
+const TOP_DROPDOWN_WIDTH = 60;
+const SOUND_DROPDOWN_HEIGHT = 180;
+const LANGUAGE_DROPDOWN_HEIGHT = 99;
+const SMALL_MENU_BUTTON_WIDTH = 127;
+const SMALL_MENU_BUTTON_HEIGHT = 40;
+const PROFILE_AVATAR_IMAGE_SIZE = 68;
+const SOUND_TRACK_TOP = 21;
+const SOUND_TRACK_BOTTOM = 159;
+const SOUND_PICKER_WIDTH = 18;
+const SOUND_PICKER_HEIGHT = 9;
+const TOP_DROPDOWN_ANIMATION_MS = 260;
+const LANGUAGE_MATRIX_STEP_MS = 42;
+const LANGUAGE_MATRIX_ROUNDS = 5;
+const LANGUAGE_MATRIX_CHARS =
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789АБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЭЮЯабвгдежзиклмнопрстуфхцчшэюя';
 const LANG_ICON_SRC: Record<Language, string> = {
   en: '/assets/lang/united-kingdom.png',
   ru: '/assets/lang/russia.png',
 };
-const LANG_ICON_BUTTON_SIZE = scaledPx(35);
 const LANG_ICON_LABEL: Record<Language, string> = {
   en: 'English',
   ru: 'Русский',
 };
+const APP_BACKGROUND_COLOR = '#151414';
+const APP_BACKGROUND_OVERLAY = 'rgba(21,20,20,0.5)';
+const APP_PANEL_BACKGROUND = '#151414';
 
 // `crypto.randomUUID` в браузере доступен только в secure context (HTTPS/localhost).
 // При открытии dev-клиента по LAN-IP его нет — ломается "Create room". Fallback:
@@ -134,6 +164,7 @@ const hasSavedDisplayName = (): boolean => getSavedDisplayName().length > 0;
 
 const app = document.getElementById('app');
 if (!app) throw new Error('#app element not found');
+app.replaceChildren();
 
 const isMobileRuntime = (): boolean => {
   const nav = navigator as Navigator & { userAgentData?: { mobile?: boolean } };
@@ -145,7 +176,7 @@ const isMobileRuntime = (): boolean => {
 };
 
 const renderMobileSoon = (): void => {
-  document.title = t('mobileSoon');
+  document.title = 'Farklepit - Farkle Dice Online';
   app.replaceChildren();
 
   const screen = document.createElement('main');
@@ -155,23 +186,34 @@ const renderMobileSoon = (): void => {
     placeItems: 'center',
     padding: '24px',
     boxSizing: 'border-box',
-    background: '#111',
+    background: APP_BACKGROUND_COLOR,
     color: '#f4f4f5',
     fontFamily: FONT_FAMILY.ui,
     textAlign: 'center',
   } satisfies Partial<CSSStyleDeclaration>);
 
   const title = document.createElement('h1');
-  title.textContent = t('mobileSoon');
+  title.textContent = t('mobileTitle');
   Object.assign(title.style, {
     margin: '0',
-    maxWidth: '14ch',
+    maxWidth: '18ch',
     fontSize: FONT_SIZE.mobileTitle,
     lineHeight: '1.05',
     fontWeight: '800',
   } satisfies Partial<CSSStyleDeclaration>);
 
+  const description = document.createElement('p');
+  description.textContent = t('mobileDescription');
+  Object.assign(description.style, {
+    margin: '14px 0 0',
+    maxWidth: '32ch',
+    fontSize: '18px',
+    lineHeight: '1.35',
+    color: '#d4d4d8',
+  } satisfies Partial<CSSStyleDeclaration>);
+
   screen.appendChild(title);
+  screen.appendChild(description);
   app.appendChild(screen);
 };
 
@@ -203,17 +245,110 @@ let lobbyListNetwork: NetworkService | null = null;
 let quickSearchNetwork: NetworkService | null = null;
 let quickSearchConnecting = false;
 let quickSearchToken = 0;
+let quickSearchClockPreloadPending = false;
 let finishedRoomReturnQueued = false;
 let settingsScreenCleanup: (() => void) | null = null;
+let languageDropdownPinnedOpen = false;
+let languageMatrixRunId = 0;
 
 const QUICK_MATCH_PRELOAD_TIMEOUT_MS = 2500;
 
 const isQuickSearchActive = (): boolean =>
   quickSearchConnecting || quickSearchNetwork !== null;
 
+const syncQuickSearchClockSound = (): void => {
+  if (!getPlayerSettings().audio.quickSearchClockEnabled) {
+    audioService.stop('ui-quick-search-clock');
+    return;
+  }
+
+  if (!isQuickSearchActive()) {
+    audioService.stop('ui-quick-search-clock');
+    return;
+  }
+
+  if (audioService.playLoop('ui-quick-search-clock') !== null) return;
+  if (quickSearchClockPreloadPending) return;
+
+  quickSearchClockPreloadPending = true;
+  void audioService.preloadGroup('menu').finally(() => {
+    quickSearchClockPreloadPending = false;
+    if (isQuickSearchActive()) audioService.playLoop('ui-quick-search-clock');
+  });
+};
+
+const UI_SOUND_HOVER_SELECTOR = 'button';
+const UI_SOUND_CLICK_SELECTOR = 'button, [data-top-dropdown="sound"]';
+const UI_SOUND_HOVER_SUPPRESS_AFTER_CLICK_MS = 420;
+const UI_SOUND_STATIONARY_POINTER_PX = 6;
+
+const closestUiSoundTarget = (
+  target: EventTarget | null,
+  selector: string,
+): Element | null => {
+  if (!(target instanceof Element)) return null;
+  const el = target.closest(selector);
+  if (!el) return null;
+  if (el instanceof HTMLButtonElement && el.disabled) return null;
+  return el;
+};
+
+const installUiSoundFeedback = (): void => {
+  void audioService.preloadGroup('menu');
+
+  let suppressHoverUntil = 0;
+  let suppressHoverX = Number.NaN;
+  let suppressHoverY = Number.NaN;
+
+  const isSyntheticHoverAfterClick = (event: PointerEvent): boolean => {
+    if (performance.now() > suppressHoverUntil) return false;
+    return (
+      Math.hypot(event.clientX - suppressHoverX, event.clientY - suppressHoverY) <=
+      UI_SOUND_STATIONARY_POINTER_PX
+    );
+  };
+
+  window.addEventListener(
+    'pointerover',
+    (event) => {
+      if (event.pointerType !== 'mouse' && event.pointerType !== 'pen') return;
+      const target = closestUiSoundTarget(event.target, UI_SOUND_HOVER_SELECTOR);
+      if (!target) return;
+      if (isSyntheticHoverAfterClick(event)) return;
+      if (event.relatedTarget instanceof Node && target.contains(event.relatedTarget)) {
+        return;
+      }
+      audioService.play('ui-hover');
+    },
+    true,
+  );
+
+  window.addEventListener(
+    'pointerdown',
+    (event) => {
+      if (event.button !== 0) return;
+      const target = closestUiSoundTarget(event.target, UI_SOUND_CLICK_SELECTOR);
+      if (!target) return;
+      suppressHoverUntil = performance.now() + UI_SOUND_HOVER_SUPPRESS_AFTER_CLICK_MS;
+      suppressHoverX = event.clientX;
+      suppressHoverY = event.clientY;
+      if (target.getAttribute('data-ui-click-sound') === 'language-change') {
+        const language = target.getAttribute('data-language-option');
+        if (language === 'ru' || language === 'en') {
+          if (language !== getLanguage()) audioService.play('ui-language-change');
+          return;
+        }
+      }
+      if (target.getAttribute('data-ui-click-sound') === 'none') return;
+      audioService.play('ui-click');
+    },
+    true,
+  );
+};
+
 const applyAudioSettings = (settings: PlayerSettings): void => {
-  audioService.setEffectsVolume(settings.audio.effectsVolume);
-  musicService.setMusicVolume(settings.audio.musicVolume);
+  audioService.setEffectsVolume(settings.audio.masterVolume * settings.audio.effectsVolume);
+  musicService.setMusicVolume(settings.audio.masterVolume * settings.audio.musicVolume);
 };
 
 const saveAudioSettings = (audio: AudioSettings): void => {
@@ -226,11 +361,13 @@ const saveAudioSettings = (audio: AudioSettings): void => {
 applyAudioSettings(getPlayerSettings());
 
 audioService.bindUnlockListeners();
+installUiSoundFeedback();
 
 musicService.start();
 
 onPlayerSettingsChange((settings) => {
   applyAudioSettings(settings);
+  syncQuickSearchClockSound();
   activeGame?.setPlayerSettings(settings);
 });
 
@@ -242,6 +379,7 @@ const cleanupSettingsUi = (): void => {
 const startLocalMatch = async (
   localMatchConfig: LocalMatchConfig,
 ): Promise<void> => {
+  cancelQuickSearch({ render: false });
   destroyMenuDiceScene();
   showLoadingOverlay();
   try {
@@ -260,6 +398,7 @@ const startLocalMatch = async (
       mode: 'local',
       localMatchConfig,
       playerSettings: getPlayerSettings(),
+      playerDisplayName: currentDisplayName(),
       onSurrender: returnToLobby,
     });
     app.appendChild(game.renderer.domElement);
@@ -281,6 +420,7 @@ const startNetwork = async (
   gameName?: string,
   password?: string,
 ): Promise<void> => {
+  cancelQuickSearch({ render: false });
   const network = await connectNetwork();
   activeNetwork = network;
   let state: RoomState;
@@ -311,6 +451,7 @@ const startQuickMatch = async (): Promise<void> => {
   if (quickSearchConnecting || quickSearchNetwork) return;
   const token = ++quickSearchToken;
   quickSearchConnecting = true;
+  syncQuickSearchClockSound();
   renderHome();
   let network: NetworkService | null = null;
   let state: RoomState;
@@ -323,6 +464,7 @@ const startQuickMatch = async (): Promise<void> => {
     activeNetwork = network;
     quickSearchNetwork = network;
     quickSearchConnecting = false;
+    syncQuickSearchClockSound();
     renderHome();
     await waitForQuickMatchPreload();
     void audioService.preloadGroup('gameplay');
@@ -343,6 +485,7 @@ const startQuickMatch = async (): Promise<void> => {
     if (quickSearchToken === token) quickSearchConnecting = false;
     if (network && quickSearchNetwork === network) quickSearchNetwork = null;
     if (network && activeNetwork === network) activeNetwork = null;
+    syncQuickSearchClockSound();
     network?.disconnect();
     if (!searchStillCurrent) return;
     renderHome();
@@ -375,18 +518,19 @@ const waitForQuickMatchPreload = (): Promise<void> => {
   return Promise.race([preload, timeout]).then(() => undefined);
 };
 
-const cancelQuickSearch = (): void => {
+const cancelQuickSearch = (options: { render?: boolean } = {}): void => {
   if (!quickSearchConnecting && !quickSearchNetwork) return;
   quickSearchToken += 1;
   quickSearchConnecting = false;
   const network = quickSearchNetwork;
   quickSearchNetwork = null;
+  syncQuickSearchClockSound();
   if (network) {
     if (activeNetwork === network) activeNetwork = null;
     network.leaveRoom().catch(() => undefined);
     network.disconnect();
   }
-  renderHome();
+  if (options.render ?? true) renderHome();
 };
 
 const connectNetwork = async (): Promise<NetworkService> => {
@@ -483,33 +627,13 @@ const clearLanguageControls = (): void => {
   if (existing) existing.remove();
 };
 
-const clearGameSoundControls = (): void => {
-  const existing = document.getElementById(GAME_SOUND_CONTROLS_ID);
-  if (existing) existing.remove();
+const clearProfilePopup = (): void => {
+  document.getElementById(PROFILE_POPUP_ID)?.remove();
 };
 
-const renderGameSoundControls = (): void => {
-  clearGameSoundControls();
-  const wrap = document.createElement('div');
-  wrap.id = GAME_SOUND_CONTROLS_ID;
-  Object.assign(wrap.style, {
-    position: 'fixed',
-    top: '12px',
-    right: '12px',
-    zIndex: '45',
-    padding: '8px',
-    width: 'min(260px, calc(100vw - 24px))',
-    background: 'rgba(12,12,18,0.78)',
-    border: '1px solid rgba(255,255,255,0.12)',
-    borderRadius: UI_RADIUS,
-    pointerEvents: 'auto',
-  } satisfies Partial<CSSStyleDeclaration>);
-  wrap.appendChild(
-    createSoundSliders(getPlayerSettings().audio, saveAudioSettings, {
-      compact: true,
-    }),
-  );
-  document.body.appendChild(wrap);
+const clearTopPopupLayer = (): void => {
+  clearSettingsModal();
+  clearProfilePopup();
 };
 
 const isInteractiveKeyboardTarget = (target: EventTarget | null): boolean => {
@@ -575,9 +699,8 @@ const returnToLobbyAsync = async (): Promise<void> => {
   clearRoomBadge();
   clearBackButton();
   clearAuthModal();
-  clearSettingsModal();
+  clearTopPopupLayer();
   clearRoomListModal();
-  clearGameSoundControls();
   closeLobbyListNetwork();
   renderHome();
   returningToLobby = false;
@@ -681,179 +804,827 @@ const canOpenMainMenuSettings = (): boolean => {
   );
 };
 
+const toggleProfilePopup = (): void => {
+  if (document.getElementById(PROFILE_POPUP_ID)) {
+    clearProfilePopup();
+    return;
+  }
+  closeTopMenuDropdowns();
+  clearSettingsModal();
+  prepareMainMenuTopPopup();
+  document.body.appendChild(createProfilePopup());
+  audioService.play('ui-settings-open');
+};
+
+const toggleSettingsPopup = (): void => {
+  if (document.getElementById(SETTINGS_MODAL_ID)) {
+    clearSettingsModal();
+    return;
+  }
+  closeTopMenuDropdowns();
+  clearProfilePopup();
+  prepareMainMenuTopPopup();
+  renderSettingsModal();
+  audioService.play('ui-settings-open');
+};
+
+const rerenderOpenTopPopup = (popup: 'profile' | 'settings' | null): void => {
+  if (popup === 'profile') {
+    clearProfilePopup();
+    document.body.appendChild(createProfilePopup());
+    return;
+  }
+  if (popup === 'settings') {
+    renderSettingsModal();
+  }
+};
+
 const toggleSettingsMenu = (): void => {
-  if (!canOpenMainMenuSettings() && currentLobbyView !== 'settings') return;
-  if (currentLobbyView === 'settings') {
-    renderHome();
+  toggleSettingsPopup();
+};
+
+const prepareMainMenuTopPopup = (): void => {
+  if (
+    activeGame ||
+    (currentLobbyView !== 'create-room' &&
+      currentLobbyView !== 'multiplayer-join' &&
+      currentLobbyView !== 'settings')
+  ) {
     return;
   }
   closeLobbyListNetwork();
-  renderSettingsMenu();
+  renderHome();
+};
+
+const currentDisplayName = (): string => {
+  const saved = getSavedDisplayName();
+  if (saved) return saved;
+  const user = getStoredUser();
+  return user?.displayName.trim() || user?.username.trim() || 'Player';
+};
+
+const isGameplayTopMenu = (): boolean => {
+  const roomStatus = activeNetwork?.getRoomState()?.status;
+  return (
+    activeGame !== null ||
+    roomStatus === ROOM_STATUS.ACTIVE ||
+    roomStatus === ROOM_STATUS.PAUSED ||
+    roomStatus === ROOM_STATUS.FINISHED
+  );
+};
+
+const masterVolume = (): number => {
+  return getPlayerSettings().audio.masterVolume;
+};
+
+const saveMasterVolume = (volume: number): void => {
+  const clamped = Math.max(0, Math.min(1, volume));
+  saveAudioSettings({ ...getPlayerSettings().audio, masterVolume: clamped });
+};
+
+interface TopMenuDropdownCloseOptions {
+  silentSound?: boolean;
+}
+
+const closeTopMenuDropdowns = (
+  except?: HTMLElement,
+  options: TopMenuDropdownCloseOptions = {},
+): void => {
+  document
+    .querySelectorAll<HTMLElement>(`#${LANG_CONTROLS_ID} [data-top-dropdown]`)
+    .forEach((dropdown) => {
+      if (dropdown !== except) closeTopMenuDropdown(dropdown, options);
+    });
+};
+
+const isAudioTopMenuDropdown = (dropdown: HTMLElement): boolean => {
+  return dropdown.dataset.topDropdown === 'sound' || dropdown.dataset.topDropdown === 'language';
+};
+
+const playTopMenuDropdownToggleSound = (dropdown: HTMLElement): void => {
+  if (isAudioTopMenuDropdown(dropdown)) audioService.play('ui-dropdown-toggle');
+};
+
+const closeTopMenuDropdown = (
+  dropdown: HTMLElement,
+  options: TopMenuDropdownCloseOptions = {},
+): void => {
+  if (dropdown.dataset.closing === 'true') return;
+  if (dropdown.dataset.topDropdown === 'language') {
+    languageDropdownPinnedOpen = false;
+  }
+  if (!options.silentSound) playTopMenuDropdownToggleSound(dropdown);
+  dropdown.dataset.closing = 'true';
+  dropdown.style.pointerEvents = 'none';
+  dropdown.style.opacity = '0';
+  dropdown.style.transform = 'translateY(-10px)';
+  dropdown.style.maxHeight = '0px';
+  window.setTimeout(() => dropdown.remove(), TOP_DROPDOWN_ANIMATION_MS);
+};
+
+const openTopMenuDropdown = (dropdown: HTMLElement): void => {
+  const targetHeight = dropdown.offsetHeight || dropdown.scrollHeight;
+  playTopMenuDropdownToggleSound(dropdown);
+  dropdown.style.overflow = 'hidden';
+  dropdown.style.transformOrigin = 'top center';
+  dropdown.style.transition = [
+    `opacity ${TOP_DROPDOWN_ANIMATION_MS}ms ease`,
+    `transform ${TOP_DROPDOWN_ANIMATION_MS}ms ease`,
+    `max-height ${TOP_DROPDOWN_ANIMATION_MS}ms ease`,
+  ].join(', ');
+  dropdown.style.opacity = '0';
+  dropdown.style.transform = 'translateY(-10px)';
+  dropdown.style.maxHeight = '0px';
+  void dropdown.offsetHeight;
+  requestAnimationFrame(() => {
+    dropdown.style.opacity = '1';
+    dropdown.style.transform = 'translateY(0)';
+    dropdown.style.maxHeight = `${targetHeight}px`;
+  });
+};
+
+const showTopMenuDropdown = (dropdown: HTMLElement): void => {
+  const targetHeight = dropdown.offsetHeight || dropdown.scrollHeight;
+  dropdown.style.overflow = 'hidden';
+  dropdown.style.transformOrigin = 'top center';
+  dropdown.style.transition = [
+    `opacity ${TOP_DROPDOWN_ANIMATION_MS}ms ease`,
+    `transform ${TOP_DROPDOWN_ANIMATION_MS}ms ease`,
+    `max-height ${TOP_DROPDOWN_ANIMATION_MS}ms ease`,
+  ].join(', ');
+  dropdown.style.opacity = '1';
+  dropdown.style.transform = 'translateY(0)';
+  dropdown.style.maxHeight = `${targetHeight}px`;
+};
+
+const closeDropdownsOnOutsidePointer = (event: PointerEvent): void => {
+  if (event.target instanceof Element && event.target.closest('[data-top-dropdown]')) {
+    return;
+  }
+  if (
+    event.target instanceof Element &&
+    event.target.closest('[data-top-dropdown-trigger]')
+  ) {
+    return;
+  }
+  closeTopMenuDropdowns();
+};
+
+const shouldAnimateLanguageTextNode = (node: Text): boolean => {
+  if (!node.data.trim()) return false;
+  const parent = node.parentElement;
+  if (!parent) return false;
+  if (
+    parent.closest(
+      [
+        `#${LANG_CONTROLS_ID}`,
+        'input',
+        'textarea',
+        'select',
+        'option',
+        'script',
+        'style',
+      ].join(','),
+    )
+  ) {
+    return false;
+  }
+  return true;
+};
+
+const collectLanguageTextNodes = (): Text[] => {
+  const nodes: Text[] = [];
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let node = walker.nextNode();
+  while (node) {
+    if (node instanceof Text && shouldAnimateLanguageTextNode(node)) nodes.push(node);
+    node = walker.nextNode();
+  }
+  return nodes;
+};
+
+const randomLanguageMatrixChar = (): string =>
+  LANGUAGE_MATRIX_CHARS[
+    Math.floor(Math.random() * LANGUAGE_MATRIX_CHARS.length)
+  ]!;
+
+const languageMatrixFrameText = (
+  targetChars: string[],
+  revealCount: number,
+): string =>
+  targetChars
+    .map((char, index) => {
+      if (/\s/u.test(char) || index < revealCount) return char;
+      return randomLanguageMatrixChar();
+    })
+    .join('');
+
+const runLanguageMatrixAnimation = (): void => {
+  const runId = ++languageMatrixRunId;
+  requestAnimationFrame(() => {
+    if (runId !== languageMatrixRunId) return;
+    const entries = collectLanguageTextNodes().map((node) => {
+      const targetChars = Array.from(node.data);
+      return {
+        node,
+        parent: node.parentElement,
+        target: node.data,
+        targetChars,
+        revealEvery: Math.max(1, Math.ceil(targetChars.length / LANGUAGE_MATRIX_ROUNDS)),
+      };
+    });
+    for (const entry of entries) {
+      entry.parent?.classList.add('language-matrix-text', 'language-matrix-text-active');
+    }
+    for (let round = 0; round <= LANGUAGE_MATRIX_ROUNDS; round += 1) {
+      window.setTimeout(() => {
+        if (runId !== languageMatrixRunId) return;
+        for (const entry of entries) {
+          const revealCount = Math.min(
+            entry.targetChars.length,
+            round * entry.revealEvery,
+          );
+          entry.node.data = languageMatrixFrameText(entry.targetChars, revealCount);
+        }
+      }, round * LANGUAGE_MATRIX_STEP_MS);
+    }
+    window.setTimeout(() => {
+      if (runId !== languageMatrixRunId) return;
+      for (const entry of entries) {
+        entry.node.data = entry.target;
+        entry.parent?.classList.remove(
+          'language-matrix-text-active',
+          'language-matrix-text',
+        );
+      }
+    }, (LANGUAGE_MATRIX_ROUNDS + 1) * LANGUAGE_MATRIX_STEP_MS);
+  });
+};
+
+const selectLanguageFromDropdown = (language: Language): void => {
+  languageDropdownPinnedOpen = true;
+  if (language === getLanguage()) return;
+  setLanguage(language);
+};
+
+const createTopMenuItem = (): HTMLDivElement => {
+  const item = document.createElement('div');
+  Object.assign(item.style, {
+    position: 'relative',
+    width: `${TOP_MENU_ICON_SIZE}px`,
+    height: `${TOP_MENU_ICON_SIZE}px`,
+    flex: `0 0 ${TOP_MENU_ICON_SIZE}px`,
+  } satisfies Partial<CSSStyleDeclaration>);
+  return item;
+};
+
+const createPlainIconButton = (
+  label: string,
+  iconSrc: string,
+  onClick: () => void,
+): HTMLButtonElement => {
+  const btn = document.createElement('button');
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+  Object.assign(btn.style, {
+    width: `${TOP_MENU_ICON_SIZE}px`,
+    height: `${TOP_MENU_ICON_SIZE}px`,
+    padding: '0',
+    background: `url("${iconSrc}") center / ${TOP_MENU_ICON_SIZE}px ${TOP_MENU_ICON_SIZE}px no-repeat`,
+    border: 'none',
+    borderRadius: '0',
+    display: 'block',
+    boxSizing: 'border-box',
+  } satisfies Partial<CSSStyleDeclaration>);
+  addSmallFrameHoverOverlay(btn, TOP_MENU_ICON_IMAGE_SIZE);
+  bindMouseOnlyClick(btn, onClick);
+  return btn;
+};
+
+const addSmallFrameHoverOverlay = (
+  host: HTMLElement,
+  maskSize: number,
+): void => {
+  host.style.position = 'relative';
+  host.style.isolation = 'isolate';
+  const overlay = document.createElement('span');
+  Object.assign(overlay.style, {
+    position: 'absolute',
+    left: '50%',
+    top: '50%',
+    width: `${maskSize}px`,
+    height: `${maskSize}px`,
+    transform: 'translate(-50%, -50%)',
+    background: 'rgba(255,255,255,0.22)',
+    opacity: '0',
+    pointerEvents: 'none',
+    transition: 'opacity 180ms ease',
+    zIndex: '2',
+  } satisfies Partial<CSSStyleDeclaration>);
+  overlay.style.maskImage = `url("${AVATAR_MASK_SRC}")`;
+  overlay.style.maskSize = `${maskSize}px ${maskSize}px`;
+  overlay.style.maskRepeat = 'no-repeat';
+  overlay.style.maskPosition = 'center';
+  overlay.style.setProperty('-webkit-mask-image', `url("${AVATAR_MASK_SRC}")`);
+  overlay.style.setProperty('-webkit-mask-size', `${maskSize}px ${maskSize}px`);
+  overlay.style.setProperty('-webkit-mask-repeat', 'no-repeat');
+  overlay.style.setProperty('-webkit-mask-position', 'center');
+  const show = (): void => {
+    overlay.style.opacity = '1';
+  };
+  const hide = (): void => {
+    overlay.style.opacity = '0';
+  };
+  host.addEventListener('mouseenter', show);
+  host.addEventListener('mouseleave', hide);
+  host.addEventListener('focusin', show);
+  host.addEventListener('focusout', hide);
+  host.appendChild(overlay);
+};
+
+const createFrameImageButton = (
+  label: string,
+  iconSrc: string,
+  onClick: () => void,
+): HTMLButtonElement => {
+  const btn = document.createElement('button');
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+  Object.assign(btn.style, {
+    width: `${TOP_MENU_ICON_SIZE}px`,
+    height: `${TOP_MENU_ICON_SIZE}px`,
+    padding: '0',
+    background: `url("${SMALL_FRAME_SRC}") center / ${TOP_MENU_ICON_SIZE}px ${TOP_MENU_ICON_SIZE}px no-repeat`,
+    border: 'none',
+    borderRadius: '0',
+    color: '#fff',
+    display: 'grid',
+    placeItems: 'center',
+    fontFamily: FONT_FAMILY.ui,
+    fontSize: '25px',
+    lineHeight: '1',
+    boxSizing: 'border-box',
+    alignSelf: 'center',
+  } satisfies Partial<CSSStyleDeclaration>);
+  const icon = document.createElement('img');
+  icon.src = iconSrc;
+  icon.alt = '';
+  icon.draggable = false;
+  Object.assign(icon.style, {
+    width: `${TOP_MENU_ICON_IMAGE_SIZE}px`,
+    height: `${TOP_MENU_ICON_IMAGE_SIZE}px`,
+    display: 'block',
+    objectFit: 'contain',
+    pointerEvents: 'none',
+    userSelect: 'none',
+    position: 'relative',
+    zIndex: '1',
+  } satisfies Partial<CSSStyleDeclaration>);
+  btn.appendChild(icon);
+  addSmallFrameHoverOverlay(btn, TOP_MENU_ICON_IMAGE_SIZE);
+  bindMouseOnlyClick(btn, onClick);
+  return btn;
+};
+
+const appendMaskedAvatar = (
+  host: HTMLElement,
+  avatarIndex: number,
+  label: string,
+  imageSize = TOP_MENU_ICON_IMAGE_SIZE,
+): void => {
+  const url = AVATAR_URLS[avatarIndex] ?? AVATAR_URLS[0];
+  if (!url) {
+    host.textContent = (label.trim()[0] ?? '?').toUpperCase();
+    return;
+  }
+  const image = document.createElement('img');
+  image.src = url;
+  image.alt = '';
+  image.draggable = false;
+  Object.assign(image.style, {
+    display: 'block',
+    width: `${imageSize}px`,
+    height: `${imageSize}px`,
+    objectFit: 'cover',
+    pointerEvents: 'none',
+    userSelect: 'none',
+    position: 'relative',
+    zIndex: '1',
+  } satisfies Partial<CSSStyleDeclaration>);
+  image.style.maskImage = `url("${AVATAR_MASK_SRC}")`;
+  image.style.maskSize = `${imageSize}px ${imageSize}px`;
+  image.style.maskRepeat = 'no-repeat';
+  image.style.maskPosition = 'center';
+  image.style.setProperty('-webkit-mask-image', `url("${AVATAR_MASK_SRC}")`);
+  image.style.setProperty('-webkit-mask-size', `${imageSize}px ${imageSize}px`);
+  image.style.setProperty('-webkit-mask-repeat', 'no-repeat');
+  image.style.setProperty('-webkit-mask-position', 'center');
+  host.appendChild(image);
+};
+
+const createAvatarFrame = (
+  editable: boolean,
+  onClick: () => void,
+): HTMLElement => {
+  const el = editable ? document.createElement('button') : document.createElement('div');
+  const name = currentDisplayName();
+  el.title = name;
+  if (editable) el.setAttribute('aria-label', t('avatar'));
+  Object.assign(el.style, {
+    width: `${TOP_MENU_ICON_SIZE}px`,
+    height: `${TOP_MENU_ICON_SIZE}px`,
+    padding: '0',
+    background: `url("${SMALL_FRAME_SRC}") center / ${TOP_MENU_ICON_SIZE}px ${TOP_MENU_ICON_SIZE}px no-repeat`,
+    border: 'none',
+    borderRadius: '0',
+    color: '#fff',
+    display: 'grid',
+    placeItems: 'center',
+    fontFamily: FONT_FAMILY.ui,
+    fontSize: '16px',
+    lineHeight: '1',
+    boxSizing: 'border-box',
+  } satisfies Partial<CSSStyleDeclaration>);
+  appendMaskedAvatar(el, getPlayerSettings().profile.avatarIndex, name);
+  if (editable && el instanceof HTMLButtonElement) {
+    addSmallFrameHoverOverlay(el, TOP_MENU_ICON_IMAGE_SIZE);
+    bindMouseOnlyClick(el, onClick);
+  }
+  return el;
 };
 
 const renderLanguageControls = (): void => {
   clearLanguageControls();
 
-  const current = getLanguage();
-  const nextLanguage: Language = current === 'ru' ? 'en' : 'ru';
-  const roomStatus = activeNetwork?.getRoomState()?.status;
-  const gameplayActive =
-    activeGame !== null ||
-    roomStatus === ROOM_STATUS.ACTIVE ||
-    roomStatus === ROOM_STATUS.PAUSED;
-
-  if (gameplayActive) {
-    renderGameSoundControls();
-    return;
-  }
-  clearGameSoundControls();
-
+  const gameplayActive = isGameplayTopMenu();
+  const canEditProfile = !gameplayActive && currentLobbyView !== 'player-name';
+  if (!canEditProfile) clearProfilePopup();
   const wrap = document.createElement('div');
   wrap.id = LANG_CONTROLS_ID;
   Object.assign(wrap.style, {
     position: 'fixed',
-    top: '12px',
-    right: '12px',
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'stretch',
-    gap: '8px',
-    padding: '8px',
-    background: 'rgba(12,12,18,0.78)',
-    border: '1px solid rgba(255,255,255,0.12)',
-    borderRadius: UI_RADIUS,
-    zIndex: '45',
-    fontFamily: FONT_FAMILY.ui,
-    color: '#eee',
-  } satisfies Partial<CSSStyleDeclaration>);
-
-  const topRow = document.createElement('div');
-  Object.assign(topRow.style, {
+    top: `${TOP_MENU_EDGE_OFFSET}px`,
+    right: `${TOP_MENU_EDGE_OFFSET}px`,
     display: 'flex',
     alignItems: 'center',
-    gap: '8px',
-  } satisfies Partial<CSSStyleDeclaration>);
-  wrap.appendChild(topRow);
-
-  const user = getStoredUser();
-  if (!user && currentLobbyView !== 'player-name') {
-    const nameInput = textInput(t('displayName'));
-    nameInput.value = getSavedDisplayName();
-    nameInput.maxLength = 32;
-    nameInput.setAttribute('aria-label', t('displayName'));
-    Object.assign(nameInput.style, {
-      flex: `0 1 ${scaledPx(160)}`,
-      width: scaledPx(160),
-      height: UI_SIZE.authButtonHeight,
-      fontSize: FONT_SIZE.auth,
-      background: 'rgba(255,255,255,0.06)',
-      border: '1px solid #555',
-      color: '#eee',
-    } satisfies Partial<CSSStyleDeclaration>);
-
-    const saveName = (): void => {
-      const next = nameInput.value.trim();
-      if (!next) {
-        nameInput.value = getSavedDisplayName();
-        return;
-      }
-      nameInput.value = saveDisplayName(next);
-    };
-    nameInput.addEventListener('blur', saveName);
-    nameInput.addEventListener('keydown', (event) => {
-      if (event.code !== 'Enter') return;
-      event.preventDefault();
-      saveName();
-      nameInput.blur();
-    });
-    topRow.appendChild(nameInput);
-  }
-
-  const languageBtn = document.createElement('button');
-  languageBtn.type = 'button';
-  languageBtn.title = LANG_ICON_LABEL[nextLanguage];
-  languageBtn.setAttribute('aria-label', LANG_ICON_LABEL[nextLanguage]);
-  Object.assign(languageBtn.style, {
-    padding: '0',
-    display: 'grid',
-    placeItems: 'center',
-    background: 'transparent',
-    color: '#fff',
-    border: 'none',
-    borderRadius: UI_RADIUS,
+    gap: '16px',
+    zIndex: '45',
     fontFamily: FONT_FAMILY.ui,
-    lineHeight: '1',
-    width: LANG_ICON_BUTTON_SIZE,
-    height: LANG_ICON_BUTTON_SIZE,
-    boxSizing: 'border-box',
+    color: '#fff',
+    pointerEvents: 'auto',
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  const name = document.createElement('div');
+  name.textContent = currentDisplayName();
+  Object.assign(name.style, {
+    maxWidth: '180px',
     overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '25px',
+    lineHeight: `${TOP_MENU_ICON_SIZE}px`,
+    textShadow: '0 3px 12px rgba(0,0,0,0.8)',
   } satisfies Partial<CSSStyleDeclaration>);
-  const icon = document.createElement('img');
-  icon.src = LANG_ICON_SRC[nextLanguage];
-  icon.alt = '';
-  icon.draggable = false;
-  Object.assign(icon.style, {
-    width: '100%',
-    height: '100%',
-    display: 'block',
-    objectFit: 'cover',
-    pointerEvents: 'none',
-  } satisfies Partial<CSSStyleDeclaration>);
-  languageBtn.appendChild(icon);
-  languageBtn.addEventListener('click', () => setLanguage(nextLanguage));
-  topRow.appendChild(languageBtn);
+  wrap.appendChild(name);
 
-  if (user) {
-    const label = document.createElement('span');
-    label.textContent = user.username;
-    Object.assign(label.style, {
-      fontFamily: FONT_FAMILY.title,
-      fontSize: FONT_SIZE.playerName,
-      lineHeight: '1',
-    } satisfies Partial<CSSStyleDeclaration>);
-    topRow.insertBefore(label, languageBtn);
+  const avatarItem = createTopMenuItem();
+  avatarItem.appendChild(
+    createAvatarFrame(canEditProfile, () => {
+      toggleProfilePopup();
+    }),
+  );
+  wrap.appendChild(avatarItem);
 
-    const logoutBtn = button('×', () => {
-      logoutAccount()
-        .then(() => loadPlayerSettings())
-        .then(() => {
-          renderLanguageControls();
-          if (!activeGame) renderHome();
-        })
-        .catch(showError);
-    });
-    logoutBtn.title = t('authLogout');
-    logoutBtn.setAttribute('aria-label', t('authLogout'));
-    logoutBtn.style.background = 'transparent';
-    logoutBtn.style.border = 'none';
-    logoutBtn.style.color = '#b8b8c8';
-    applyAuthIconButtonSize(logoutBtn);
-    topRow.appendChild(logoutBtn);
+  const settingsItem = createTopMenuItem();
+  settingsItem.appendChild(
+    createPlainIconButton(t('settings'), SETTINGS_ICON_SRC, () => {
+      toggleSettingsPopup();
+    }),
+  );
+  wrap.appendChild(settingsItem);
+
+  const soundItem = createTopMenuItem();
+  const soundButton = createPlainIconButton(t('sounds'), SOUND_ICON_SRC, () => {
+    const existing = soundItem.querySelector<HTMLElement>('[data-top-dropdown="sound"]');
+    if (existing) {
+      closeTopMenuDropdown(existing);
+      return;
+    }
+    const dropdown = createSoundDropdown();
+    closeTopMenuDropdowns(undefined, { silentSound: true });
+    soundItem.appendChild(dropdown);
+    openTopMenuDropdown(dropdown);
+  });
+  soundButton.dataset.uiClickSound = 'none';
+  soundButton.dataset.topDropdownTrigger = 'sound';
+  soundItem.appendChild(soundButton);
+  wrap.appendChild(soundItem);
+
+  const languageItem = createTopMenuItem();
+  const current = getLanguage();
+  let pinnedLanguageDropdown: HTMLDivElement | null = null;
+  const languageButton = createFrameImageButton(LANG_ICON_LABEL[current], LANG_ICON_SRC[current], () => {
+    const existing = languageItem.querySelector<HTMLElement>('[data-top-dropdown="language"]');
+    if (existing) {
+      closeTopMenuDropdown(existing);
+      return;
+    }
+    const dropdown = createLanguageDropdown();
+    closeTopMenuDropdowns(undefined, { silentSound: true });
+    languageDropdownPinnedOpen = true;
+    languageItem.appendChild(dropdown);
+    openTopMenuDropdown(dropdown);
+  });
+  languageButton.dataset.uiClickSound = 'none';
+  languageButton.dataset.topDropdownTrigger = 'language';
+  languageItem.appendChild(languageButton);
+  if (languageDropdownPinnedOpen) {
+    pinnedLanguageDropdown = createLanguageDropdown();
+    languageItem.appendChild(pinnedLanguageDropdown);
   }
-
-  const settingsBtn = button('S', toggleSettingsMenu);
-  settingsBtn.title = t('settings');
-  settingsBtn.setAttribute('aria-label', t('settings'));
-  settingsBtn.style.background = SETTINGS_BUTTON_BG;
-  settingsBtn.style.border = '1px solid rgba(255,255,255,0.18)';
-  applyAuthIconButtonSize(settingsBtn);
-  topRow.appendChild(settingsBtn);
-
-  if (currentLobbyView === 'home') {
-    wrap.appendChild(
-      createSoundSliders(getPlayerSettings().audio, saveAudioSettings, {
-        compact: true,
-      }),
-    );
-  }
+  wrap.appendChild(languageItem);
 
   document.body.appendChild(wrap);
+  if (pinnedLanguageDropdown) showTopMenuDropdown(pinnedLanguageDropdown);
+};
+
+const createProfilePopup = (): HTMLDivElement => {
+  const overlay = document.createElement('div');
+  overlay.id = PROFILE_POPUP_ID;
+  Object.assign(overlay.style, {
+    position: 'fixed',
+    inset: '0',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: APP_BACKGROUND_OVERLAY,
+    zIndex: '40',
+    pointerEvents: 'auto',
+    fontFamily: FONT_FAMILY.ui,
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  const panel = document.createElement('div');
+  Object.assign(panel.style, {
+    width: 'min(520px, calc(100vw - 32px))',
+    maxHeight: 'calc(100vh - 32px)',
+    overflow: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: scaledPx(12),
+    padding: scaledPx(22),
+    background: APP_PANEL_BACKGROUND,
+    color: '#eee',
+    borderRadius: UI_RADIUS,
+    boxSizing: 'border-box',
+    fontFamily: FONT_FAMILY.ui,
+    boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  const title = appendTitle(panel, t('playerSettings'));
+  title.style.textAlign = 'center';
+
+  const nameInput = textInput(t('displayName'));
+  nameInput.value = currentDisplayName();
+  nameInput.maxLength = 32;
+  Object.assign(nameInput.style, {
+    width: '345px',
+    height: UI_SIZE.menuButtonHeight,
+    alignSelf: 'center',
+    padding: '0',
+    border: 'none',
+    borderRadius: '0',
+    outline: 'none',
+    boxShadow: 'none',
+    appearance: 'none',
+    backgroundColor: 'transparent',
+    backgroundImage: `url("${UI_ASSET_BASE}/Button_L.svg")`,
+    backgroundPosition: 'center',
+    backgroundRepeat: 'no-repeat',
+    backgroundSize: '345px 60px',
+    color: '#fff',
+    textAlign: 'center',
+    fontFamily: FONT_FAMILY.ui,
+    fontSize: '25px',
+    lineHeight: '1',
+    boxSizing: 'border-box',
+    caretColor: '#fff',
+  } satisfies Partial<CSSStyleDeclaration>);
+  nameInput.style.setProperty('-webkit-appearance', 'none');
+  nameInput.addEventListener('focus', () => {
+    nameInput.style.outline = 'none';
+    nameInput.style.boxShadow = 'none';
+  });
+  panel.appendChild(nameInput);
+
+  const avatarGrid = document.createElement('div');
+  Object.assign(avatarGrid.style, {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(5, minmax(0, 1fr))',
+    gap: '12px',
+    width: '100%',
+  } satisfies Partial<CSSStyleDeclaration>);
+  panel.appendChild(avatarGrid);
+
+  const renderAvatarButtons = (): void => {
+    avatarGrid.replaceChildren();
+    for (let index = 0; index < AVATAR_URLS.length; index++) {
+      const avatarBtn = document.createElement('button');
+      avatarBtn.title = `${t('avatar')} ${index + 1}`;
+      avatarBtn.setAttribute('aria-label', `${t('avatar')} ${index + 1}`);
+      Object.assign(avatarBtn.style, {
+        width: '100%',
+        aspectRatio: '1 / 1',
+        padding: '0',
+        background: `url("${SMALL_FRAME_SRC}") center / 100% 100% no-repeat`,
+        border: 'none',
+        borderRadius: '0',
+        display: 'grid',
+        placeItems: 'center',
+        opacity: getPlayerSettings().profile.avatarIndex === index ? '1' : '0.68',
+      } satisfies Partial<CSSStyleDeclaration>);
+      appendMaskedAvatar(
+        avatarBtn,
+        index,
+        `${t('avatar')} ${index + 1}`,
+        PROFILE_AVATAR_IMAGE_SIZE,
+      );
+      addSmallFrameHoverOverlay(avatarBtn, PROFILE_AVATAR_IMAGE_SIZE);
+      bindMouseOnlyClick(avatarBtn, () => {
+        savePlayerSettings({
+          ...getPlayerSettings(),
+          profile: { avatarIndex: index },
+        })
+          .then(() => {
+            renderAvatarButtons();
+            renderLanguageControls();
+          })
+          .catch(showError);
+      });
+      avatarGrid.appendChild(avatarBtn);
+    }
+  };
+
+  const saveProfileName = (): void => {
+    const next = nameInput.value.trim();
+    if (!next) {
+      nameInput.value = currentDisplayName();
+      showError(new Error(t('displayNameRequired')));
+      return;
+    }
+    nameInput.value = saveDisplayName(next);
+    renderLanguageControls();
+  };
+
+  nameInput.addEventListener('blur', saveProfileName);
+  nameInput.addEventListener('keydown', (event) => {
+    if (event.code !== 'Enter') return;
+    event.preventDefault();
+    nameInput.blur();
+  });
+
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) clearProfilePopup();
+  });
+  panel.addEventListener('click', (event) => event.stopPropagation());
+  overlay.appendChild(panel);
+  renderAvatarButtons();
+  return overlay;
+};
+
+const createSoundDropdown = (): HTMLDivElement => {
+  const dropdown = document.createElement('div');
+  dropdown.dataset.topDropdown = 'sound';
+  Object.assign(dropdown.style, {
+    position: 'absolute',
+    top: `${TOP_MENU_ICON_SIZE + 5}px`,
+    left: `${(TOP_MENU_ICON_SIZE - TOP_DROPDOWN_WIDTH) / 2}px`,
+    width: `${TOP_DROPDOWN_WIDTH}px`,
+    height: `${SOUND_DROPDOWN_HEIGHT}px`,
+    background: `url("${SOUND_DROPDOWN_SRC}") center / ${TOP_DROPDOWN_WIDTH}px ${SOUND_DROPDOWN_HEIGHT}px no-repeat`,
+    pointerEvents: 'auto',
+    touchAction: 'none',
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  const picker = document.createElement('img');
+  picker.src = SOUND_PICKER_SRC;
+  picker.alt = '';
+  picker.draggable = false;
+  Object.assign(picker.style, {
+    position: 'absolute',
+    left: `${(TOP_DROPDOWN_WIDTH - SOUND_PICKER_WIDTH) / 2}px`,
+    width: `${SOUND_PICKER_WIDTH}px`,
+    height: `${SOUND_PICKER_HEIGHT}px`,
+    pointerEvents: 'none',
+    userSelect: 'none',
+    opacity: '0',
+    transform: 'translateY(-10px)',
+    transition: [
+      `opacity ${TOP_DROPDOWN_ANIMATION_MS}ms ease`,
+      `transform ${TOP_DROPDOWN_ANIMATION_MS}ms ease`,
+    ].join(', '),
+  } satisfies Partial<CSSStyleDeclaration>);
+  dropdown.appendChild(picker);
+
+  const minTop = SOUND_TRACK_TOP;
+  const maxTop = SOUND_TRACK_BOTTOM - SOUND_PICKER_HEIGHT;
+  const topFromVolume = (volume: number): number =>
+    minTop + (1 - Math.max(0, Math.min(1, volume))) * (maxTop - minTop);
+  const volumeFromClientY = (clientY: number): number => {
+    const rect = dropdown.getBoundingClientRect();
+    const top = Math.max(
+      minTop,
+      Math.min(maxTop, clientY - rect.top - SOUND_PICKER_HEIGHT / 2),
+    );
+    picker.style.top = `${top}px`;
+    return 1 - (top - minTop) / (maxTop - minTop);
+  };
+  picker.style.top = `${topFromVolume(masterVolume())}px`;
+  requestAnimationFrame(() => {
+    picker.style.opacity = '1';
+    picker.style.transform = 'translateY(0)';
+  });
+
+  dropdown.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    saveMasterVolume(volumeFromClientY(event.clientY));
+    const onMove = (moveEvent: PointerEvent): void => {
+      moveEvent.preventDefault();
+      saveMasterVolume(volumeFromClientY(moveEvent.clientY));
+    };
+    const onUp = (): void => {
+      window.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', onUp, true);
+      window.removeEventListener('pointercancel', onUp, true);
+    };
+    window.addEventListener('pointermove', onMove, true);
+    window.addEventListener('pointerup', onUp, true);
+    window.addEventListener('pointercancel', onUp, true);
+  });
+
+  return dropdown;
+};
+
+const createLanguageDropdown = (): HTMLDivElement => {
+  const dropdown = document.createElement('div');
+  dropdown.dataset.topDropdown = 'language';
+  Object.assign(dropdown.style, {
+    position: 'absolute',
+    top: `${TOP_MENU_ICON_SIZE + 5}px`,
+    left: `${(TOP_MENU_ICON_SIZE - TOP_DROPDOWN_WIDTH) / 2}px`,
+    width: `${TOP_DROPDOWN_WIDTH}px`,
+    height: `${LANGUAGE_DROPDOWN_HEIGHT}px`,
+    background: `url("${LANGUAGE_DROPDOWN_SRC}") center / ${TOP_DROPDOWN_WIDTH}px ${LANGUAGE_DROPDOWN_HEIGHT}px no-repeat`,
+    display: 'grid',
+    gridTemplateRows: `${LANGUAGE_DROPDOWN_HEIGHT / 2}px ${LANGUAGE_DROPDOWN_HEIGHT / 2}px`,
+    pointerEvents: 'auto',
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  for (const language of ['ru', 'en'] satisfies Language[]) {
+    const btn = document.createElement('button');
+    btn.dataset.uiClickSound = 'language-change';
+    btn.dataset.languageOption = language;
+    btn.title = LANG_ICON_LABEL[language];
+    btn.setAttribute('aria-label', LANG_ICON_LABEL[language]);
+    Object.assign(btn.style, {
+      width: `${TOP_DROPDOWN_WIDTH}px`,
+      height: `${LANGUAGE_DROPDOWN_HEIGHT / 2}px`,
+      padding: '0',
+      background: 'transparent',
+      border: 'none',
+      borderRadius: '0',
+      display: 'grid',
+      placeItems: 'center',
+      opacity: '1',
+    } satisfies Partial<CSSStyleDeclaration>);
+    const icon = document.createElement('img');
+    icon.src = LANG_ICON_SRC[language];
+    icon.alt = '';
+    icon.draggable = false;
+    Object.assign(icon.style, {
+      width: `${TOP_MENU_ICON_IMAGE_SIZE}px`,
+      height: `${TOP_MENU_ICON_IMAGE_SIZE}px`,
+      display: 'block',
+      objectFit: 'contain',
+      pointerEvents: 'none',
+      userSelect: 'none',
+    } satisfies Partial<CSSStyleDeclaration>);
+    btn.appendChild(icon);
+    bindMouseOnlyClick(btn, () => selectLanguageFromDropdown(language));
+    dropdown.appendChild(btn);
+  }
+
+  return dropdown;
 };
 
 const handleRoomState = (network: NetworkService, state: RoomState): void => {
   if (activeNetwork !== network) return;
 
   if (isClosedRoomState(state)) {
+    if (network === quickSearchNetwork) {
+      quickSearchNetwork = null;
+      quickSearchConnecting = false;
+      syncQuickSearchClockSound();
+    }
     if (activeGame && activeNetwork === network) return;
     scheduleFinishedRoomReturn(network);
     return;
@@ -868,6 +1639,11 @@ const handleRoomState = (network: NetworkService, state: RoomState): void => {
   }
 
   if (state.status === ROOM_STATUS.FINISHED) {
+    if (network === quickSearchNetwork) {
+      quickSearchNetwork = null;
+      quickSearchConnecting = false;
+      syncQuickSearchClockSound();
+    }
     if (activeGame && activeNetwork === network) return;
     scheduleFinishedRoomReturn(network);
     return;
@@ -881,6 +1657,7 @@ const handleRoomState = (network: NetworkService, state: RoomState): void => {
 
   if (network === quickSearchNetwork) {
     quickSearchNetwork = null;
+    syncQuickSearchClockSound();
   }
 
   if (state.status === ROOM_STATUS.WAITING) {
@@ -912,7 +1689,7 @@ const mountNetworkGame = async (network: NetworkService): Promise<void> => {
   if (activeGame) return;
   if (networkGameMounting) return networkGameMounting;
 
-  showLoadingOverlay();
+  showLoadingOverlay('LOADING', { backdrop: 'transparent' });
   networkGameMounting = Promise.all([
     assetPreloader.preloadGroup('gameplay'),
     audioService.preloadGroup('gameplay'),
@@ -941,11 +1718,12 @@ const mountNetworkGame = async (network: NetworkService): Promise<void> => {
 };
 
 const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
-  destroyMenuDiceScene();
   clearLobby();
   clearAuthControls();
   clearRoomScreen();
-  renderBackButton();
+  clearBackButton();
+  renderLanguageControls();
+  ensureMenuDiceScene();
 
   const screen = document.createElement('div');
   screen.id = 'room-screen';
@@ -955,23 +1733,27 @@ const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    background: 'rgba(10,10,15,0.9)',
+    background: APP_BACKGROUND_OVERLAY,
     zIndex: '20',
     fontFamily: FONT_FAMILY.ui,
     color: '#eee',
   } satisfies Partial<CSSStyleDeclaration>);
+  screen.addEventListener('click', (event) => {
+    if (event.target === screen) returnToLobby();
+  });
 
   const panel = document.createElement('div');
   Object.assign(panel.style, {
     width: 'min(460px, calc(100vw - 32px))',
     padding: '22px',
-    background: '#1c1c24',
+    background: APP_PANEL_BACKGROUND,
     borderRadius: UI_RADIUS,
     boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
     display: 'flex',
     flexDirection: 'column',
     gap: '16px',
   } satisfies Partial<CSSStyleDeclaration>);
+  panel.addEventListener('click', (event) => event.stopPropagation());
 
   const title = document.createElement('div');
   title.textContent = `${state.gameName || t('room')} · ${state.code}`;
@@ -1026,7 +1808,7 @@ const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
     minHeight: '18px',
   } satisfies Partial<CSSStyleDeclaration>);
 
-  const startBtn = button(t('startGame'), () => {
+  const startBtn = createMenuFrameButton(t('startGame'), () => {
     startBtn.disabled = true;
     network
       .startRoom()
@@ -1041,10 +1823,8 @@ const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
   });
   startBtn.disabled =
     state.ownerId !== network.getUserId() || onlinePlayers.length < 2;
-  if (startBtn.disabled) {
-    startBtn.style.opacity = '0.45';
-  }
   panel.appendChild(startBtn);
+  panel.appendChild(createMenuFrameButton(t('back'), returnToLobby));
   panel.appendChild(error);
 
   screen.appendChild(panel);
@@ -1128,17 +1908,6 @@ const roomOptionsLabel = (
   )}: ${t('enabled')}`;
 };
 
-const applyAuthIconButtonSize = (btn: HTMLButtonElement): void => {
-  Object.assign(btn.style, {
-    flex: `0 0 ${UI_SIZE.authIconButtonSize}`,
-    width: UI_SIZE.authIconButtonSize,
-    height: UI_SIZE.authIconButtonSize,
-    padding: '0',
-    borderRadius: UI_RADIUS,
-    fontSize: FONT_SIZE.menuButton,
-  } satisfies Partial<CSSStyleDeclaration>);
-};
-
 const renderAuthControls = (): void => {
   clearAuthControls();
 };
@@ -1154,7 +1923,7 @@ const renderAuthModal = (): void => {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    background: 'rgba(0,0,0,0.58)',
+    background: APP_BACKGROUND_OVERLAY,
     zIndex: '40',
     fontFamily: FONT_FAMILY.ui,
   } satisfies Partial<CSSStyleDeclaration>);
@@ -1166,7 +1935,7 @@ const renderAuthModal = (): void => {
     flexDirection: 'column',
     gap: '12px',
     padding: '22px',
-    background: '#1c1c24',
+    background: APP_PANEL_BACKGROUND,
     color: '#eee',
     borderRadius: UI_RADIUS,
     boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
@@ -1286,7 +2055,6 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
   let draftAudio: AudioSettings = { ...current.audio };
   let capturing: ControlAction | null = null;
   const rowButtons = new Map<ControlAction, HTMLButtonElement>();
-  const avatarButtons: HTMLButtonElement[] = [];
 
   appendSectionTitle(card, t('soundSettings'));
   const soundSlidersHost = document.createElement('div');
@@ -1335,85 +2103,28 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
   } satisfies Partial<CSSStyleDeclaration>);
   card.appendChild(autoRollBtn);
 
-  appendSectionTitle(card, t('avatar'));
-  const avatarGrid = document.createElement('div');
-  Object.assign(avatarGrid.style, {
-    display: 'grid',
-    gridTemplateColumns: `repeat(auto-fill, minmax(${scaledPx(56)}, 1fr))`,
-    gap: scaledPx(8),
-  } satisfies Partial<CSSStyleDeclaration>);
-  if (AVATAR_URLS.length === 0) {
-    const empty = document.createElement('div');
-    empty.textContent = t('noValue');
-    Object.assign(empty.style, {
-      color: '#8e8e9d',
-      fontSize: FONT_SIZE.label,
-    } satisfies Partial<CSSStyleDeclaration>);
-    avatarGrid.appendChild(empty);
-  } else {
-    for (let index = 0; index < AVATAR_URLS.length; index++) {
-      const avatarUrl = AVATAR_URLS[index]!;
-      const avatarBtn = button('', () => {
-        applyDraft(
-          draftControls,
-          draftGameplay,
-          { avatarIndex: index },
-          draftAudio,
-        );
-      });
-      avatarBtn.title = `${t('avatar')} ${index + 1}`;
-      avatarBtn.setAttribute('aria-label', `${t('avatar')} ${index + 1}`);
-      Object.assign(avatarBtn.style, {
-        width: scaledPx(56),
-        height: scaledPx(56),
-        padding: '0',
-        background: SETTINGS_BUTTON_BG,
-        border: '1px solid rgba(255,255,255,0.18)',
-        overflow: 'hidden',
-      } satisfies Partial<CSSStyleDeclaration>);
-
-      const image = document.createElement('img');
-      image.src = avatarUrl;
-      image.alt = '';
-      image.draggable = false;
-      Object.assign(image.style, {
-        display: 'block',
-        width: '100%',
-        height: '100%',
-        objectFit: 'cover',
-        pointerEvents: 'none',
-        userSelect: 'none',
-      } satisfies Partial<CSSStyleDeclaration>);
-      avatarBtn.replaceChildren(image);
-      avatarButtons.push(avatarBtn);
-      avatarGrid.appendChild(avatarBtn);
-    }
-  }
-  card.appendChild(avatarGrid);
-
   const error = appendLobbyError(card);
   const actions = document.createElement('div');
   Object.assign(actions.style, {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: scaledPx(8),
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '20px',
   } satisfies Partial<CSSStyleDeclaration>);
 
-  const resetBtn = button(t('resetDefaults'), () => {
+  const resetBtn = createMenuFrameButton(t('resetDefaults'), () => {
     capturing = null;
     const reset = applyDraft(
       { ...DEFAULT_PLAYER_SETTINGS.controls },
       { ...DEFAULT_PLAYER_SETTINGS.gameplay },
-      { ...DEFAULT_PLAYER_SETTINGS.profile },
+      draftProfile,
       { ...DEFAULT_PLAYER_SETTINGS.audio },
     );
     if (reset) renderSoundSliders();
   });
-  resetBtn.style.background = SETTINGS_BUTTON_BG;
   actions.appendChild(resetBtn);
 
-  const closeBtn = button(t('back'), close);
-  closeBtn.style.background = SETTINGS_BUTTON_BG;
+  const closeBtn = createMenuFrameButton(t('back'), close);
   actions.appendChild(closeBtn);
   card.appendChild(actions);
 
@@ -1482,15 +2193,6 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
     autoRollBtn.textContent = `${t('autoRollAfterContinue')}: ${
       draftGameplay.autoRollAfterContinue ? t('settingOn') : t('settingOff')
     }`;
-    for (let index = 0; index < avatarButtons.length; index++) {
-      const avatarBtn = avatarButtons[index]!;
-      const active = draftProfile.avatarIndex === index;
-      avatarBtn.style.border = active
-        ? '2px solid #22c55e'
-        : '1px solid rgba(255,255,255,0.18)';
-      avatarBtn.style.background = active ? '#14532d' : SETTINGS_BUTTON_BG;
-    }
-
     const settings: PlayerSettings = {
       version: 1,
       controls: { ...draftControls },
@@ -1521,8 +2223,8 @@ const renderSettingsModal = (): void => {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    background: 'rgba(0,0,0,0.58)',
-    zIndex: '45',
+    background: APP_BACKGROUND_OVERLAY,
+    zIndex: '40',
     fontFamily: FONT_FAMILY.ui,
   } satisfies Partial<CSSStyleDeclaration>);
 
@@ -1535,13 +2237,14 @@ const renderSettingsModal = (): void => {
     flexDirection: 'column',
     gap: scaledPx(12),
     padding: scaledPx(22),
-    background: '#1c1c24',
+    background: APP_PANEL_BACKGROUND,
     color: '#eee',
     borderRadius: UI_RADIUS,
     boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
   } satisfies Partial<CSSStyleDeclaration>);
 
-  appendTitle(panel, t('settings'));
+  const title = appendTitle(panel, t('settings'));
+  title.style.textAlign = 'center';
   const close = (): void => clearSettingsModal();
   renderSettingsContent(panel, close);
 
@@ -1553,10 +2256,14 @@ const renderSettingsModal = (): void => {
   document.body.appendChild(overlay);
 };
 
-const createLobbyFrame = (widthPx = 340): HTMLDivElement => {
+const createLobbyFrame = (
+  widthPx = 340,
+  onBackdropClick?: () => void,
+): HTMLDivElement => {
   clearLobby();
   clearBackButton();
   clearRoomBadge();
+  const chromeFree = currentLobbyView === 'home';
   const lobby = document.createElement('div');
   lobby.id = 'lobby';
   Object.assign(lobby.style, {
@@ -1567,26 +2274,35 @@ const createLobbyFrame = (widthPx = 340): HTMLDivElement => {
     alignItems: 'center',
     justifyContent: 'center',
     gap: scaledPx(22),
-    background: 'rgba(10,10,15,0.62)',
+    background: chromeFree ? 'transparent' : APP_BACKGROUND_OVERLAY,
     zIndex: '20',
   } satisfies Partial<CSSStyleDeclaration>);
+
+  if (onBackdropClick) {
+    lobby.addEventListener('click', (event) => {
+      if (event.target === lobby) onBackdropClick();
+    });
+  }
 
   const card = document.createElement('div');
   Object.assign(card.style, {
     display: 'flex',
     flexDirection: 'column',
-    gap: scaledPx(12),
-    padding: scaledPx(24),
-    width: scaledPx(widthPx),
+    gap: chromeFree ? '20px' : scaledPx(12),
+    padding: chromeFree ? '0' : scaledPx(24),
+    width: chromeFree ? 'auto' : scaledPx(widthPx),
     maxWidth: 'calc(100vw - 32px)',
     boxSizing: 'border-box',
-    background: '#1c1c24',
-    borderRadius: UI_RADIUS,
+    background: chromeFree ? 'transparent' : APP_PANEL_BACKGROUND,
+    borderRadius: chromeFree ? '0' : UI_RADIUS,
     color: '#eee',
     fontFamily: FONT_FAMILY.ui,
     fontSize: FONT_SIZE.card,
-    boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
+    boxShadow: chromeFree ? 'none' : '0 12px 32px rgba(0,0,0,0.5)',
   } satisfies Partial<CSSStyleDeclaration>);
+  if (onBackdropClick) {
+    card.addEventListener('click', (event) => event.stopPropagation());
+  }
 
   lobby.appendChild(card);
   document.body.appendChild(lobby);
@@ -1594,31 +2310,44 @@ const createLobbyFrame = (widthPx = 340): HTMLDivElement => {
 };
 
 const appendBrand = (card: HTMLElement): void => {
-  const brand = document.createElement('div');
-  brand.textContent = 'FARKLEPIT';
+  const brand = document.createElement('img');
+  brand.src = MAIN_LOGO_SRC;
+  brand.alt = 'Farklepit';
+  brand.draggable = false;
   Object.assign(brand.style, {
-    color: '#f4f4f5',
-    fontFamily: FONT_FAMILY.title,
-    fontSize: FONT_SIZE.logo,
-    fontWeight: '800',
-    letterSpacing: '0.08em',
-    textTransform: 'uppercase',
-    textAlign: 'center',
+    display: 'block',
+    width: '741px',
+    height: '251px',
+    maxWidth: 'calc(100vw - 32px)',
+    objectFit: 'contain',
+    pointerEvents: 'none',
+    userSelect: 'none',
   } satisfies Partial<CSSStyleDeclaration>);
   card.parentElement?.insertBefore(brand, card);
 };
 
 const applyLoadingDotsLabel = (el: HTMLElement, label: string): void => {
   el.classList.add('loading-dots');
-  el.replaceChildren(document.createTextNode(label));
+  const labelEl = document.createElement('span');
+  labelEl.textContent = label;
+  Object.assign(labelEl.style, {
+    position: 'relative',
+    zIndex: '1',
+  } satisfies Partial<CSSStyleDeclaration>);
+  el.replaceChildren(labelEl);
   for (let i = 0; i < 3; i += 1) {
     const dot = document.createElement('span');
+    dot.className = 'loading-dot';
     dot.textContent = '.';
+    Object.assign(dot.style, {
+      position: 'relative',
+      zIndex: '1',
+    } satisfies Partial<CSSStyleDeclaration>);
     el.appendChild(dot);
   }
 };
 
-const appendTitle = (card: HTMLElement, text: string): void => {
+const appendTitle = (card: HTMLElement, text: string): HTMLHeadingElement => {
   const title = document.createElement('h2');
   title.textContent = text;
   Object.assign(title.style, {
@@ -1628,6 +2357,7 @@ const appendTitle = (card: HTMLElement, text: string): void => {
     lineHeight: '1.2',
   } satisfies Partial<CSSStyleDeclaration>);
   card.appendChild(title);
+  return title;
 };
 
 const appendLobbyError = (card: HTMLElement): HTMLDivElement => {
@@ -1656,7 +2386,7 @@ const renderLeaderboard = (): void => {
     maxWidth: 'calc(50vw - 240px)',
     padding: scaledPx(14),
     boxSizing: 'border-box',
-    background: 'rgba(28,28,36,0.92)',
+    background: 'rgba(21,20,20,0.92)',
     border: '1px solid rgba(255,255,255,0.08)',
     borderRadius: UI_RADIUS,
     color: '#eee',
@@ -1713,10 +2443,28 @@ const renderLeaderboard = (): void => {
 const applyLargeMenuButtonStyle = (btn: HTMLButtonElement): void => {
   Object.assign(btn.style, {
     fontSize: FONT_SIZE.menuButton,
-    padding: scaledPx(12),
+    padding: '0',
     height: UI_SIZE.menuButtonHeight,
-    width: '100%',
+    width: '345px',
+    alignSelf: 'center',
   } satisfies Partial<CSSStyleDeclaration>);
+};
+
+const createMenuFrameButton = (
+  label: string,
+  onClick: () => void,
+): HTMLButtonElement => {
+  const btn = button(label, onClick);
+  btn.classList.add('menu-frame-button');
+  const text = document.createElement('span');
+  text.textContent = label;
+  Object.assign(text.style, {
+    position: 'relative',
+    zIndex: '1',
+  } satisfies Partial<CSSStyleDeclaration>);
+  btn.replaceChildren(text);
+  applyLargeMenuButtonStyle(btn);
+  return btn;
 };
 
 const appendMenuButton = (
@@ -1724,10 +2472,70 @@ const appendMenuButton = (
   label: string,
   onClick: () => void,
 ): HTMLButtonElement => {
-  const btn = button(label, onClick);
-  applyLargeMenuButtonStyle(btn);
-  btn.style.background = MENU_BUTTON_BG;
+  const btn = createMenuFrameButton(label, onClick);
   card.appendChild(btn);
+  return btn;
+};
+
+const createSmallMenuButton = (
+  label: string,
+  onClick: () => void,
+): HTMLButtonElement => {
+  const btn = document.createElement('button');
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+  Object.assign(btn.style, {
+    position: 'relative',
+    width: `${SMALL_MENU_BUTTON_WIDTH}px`,
+    height: `${SMALL_MENU_BUTTON_HEIGHT}px`,
+    padding: '0',
+    background: `url("${BUTTON_S_SRC}") center / ${SMALL_MENU_BUTTON_WIDTH}px ${SMALL_MENU_BUTTON_HEIGHT}px no-repeat`,
+    border: 'none',
+    borderRadius: '0',
+    color: '#fff',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontFamily: FONT_FAMILY.ui,
+    fontSize: '16px',
+    lineHeight: '1',
+    boxSizing: 'border-box',
+    alignSelf: 'center',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+  } satisfies Partial<CSSStyleDeclaration>);
+  const overlay = document.createElement('span');
+  Object.assign(overlay.style, {
+    position: 'absolute',
+    inset: '0',
+    background: `url("${BUTTON_S_OVERLAY_SRC}") center / 119px 32px no-repeat`,
+    opacity: '0',
+    pointerEvents: 'none',
+    transition: 'opacity 180ms ease',
+  } satisfies Partial<CSSStyleDeclaration>);
+  const text = document.createElement('span');
+  text.textContent = label;
+  Object.assign(text.style, {
+    position: 'relative',
+    zIndex: '1',
+    maxWidth: '112px',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  } satisfies Partial<CSSStyleDeclaration>);
+  btn.replaceChildren(overlay, text);
+  btn.addEventListener('mouseenter', () => {
+    overlay.style.opacity = '1';
+  });
+  btn.addEventListener('mouseleave', () => {
+    overlay.style.opacity = '0';
+  });
+  btn.addEventListener('focus', () => {
+    overlay.style.opacity = '1';
+  });
+  btn.addEventListener('blur', () => {
+    overlay.style.opacity = '0';
+  });
+  bindMouseOnlyClick(btn, onClick);
   return btn;
 };
 
@@ -1761,7 +2569,7 @@ const appendSectionTitle = (
 };
 
 const appendBackTo = (card: HTMLElement, onClick: () => void): void => {
-  const backBtn = button(t('back'), onClick);
+  const backBtn = createMenuFrameButton(t('back'), onClick);
   card.appendChild(backBtn);
 };
 
@@ -1880,12 +2688,11 @@ const renderLobby = (): void => {
   ensureMenuDiceScene();
 
   const quickSearching = isQuickSearchActive();
-  const singleBtn = appendMenuButton(card, t('singleplayerGame'), () =>
+  appendMenuButton(card, t('singleplayerGame'), () =>
     startLocalMatch(createLocalMatchConfig(DEFAULT_ROOM_OPTIONS)).catch(
       showError,
     ),
   );
-  singleBtn.style.background = '#0f766e';
   const quickBtn = appendMenuButton(
     card,
     quickSearching ? t('quickSearchCancel') : t('quickGame'),
@@ -1893,19 +2700,39 @@ const renderLobby = (): void => {
       ? cancelQuickSearch
       : () => startQuickMatch().catch(showError),
   );
-  quickBtn.style.background = quickSearching ? '#b91c1c' : '#0f766e';
   if (quickSearching) {
+    quickBtn.classList.add('menu-frame-button-danger');
     applyLoadingDotsLabel(quickBtn, t('quickSearchCancel'));
   }
-  appendMenuButton(card, t('createRoomMenu'), renderCreateRoomMenu);
-  appendMenuButton(card, t('joinRoom'), renderMultiplayerJoin);
+  appendMenuButton(card, t('createRoomMenu'), openCreateRoomMenu);
+  appendMenuButton(card, t('joinRoom'), openMultiplayerJoin);
 };
 
 const renderCreateRoomMenu = (): void => {
   renderMultiplayerCreate();
 };
 
+const playMenuPopupOpenSound = (): void => {
+  audioService.play('ui-settings-open');
+};
+
+const openCreateRoomMenu = (): void => {
+  playMenuPopupOpenSound();
+  renderCreateRoomMenu();
+};
+
+const openMultiplayerCreate = (): void => {
+  playMenuPopupOpenSound();
+  renderMultiplayerCreate();
+};
+
+const openMultiplayerJoin = (): void => {
+  playMenuPopupOpenSound();
+  renderMultiplayerJoin();
+};
+
 const renderMultiplayerMenu = (): void => {
+  cancelQuickSearch({ render: false });
   currentLobbyView = 'multiplayer';
   destroyMenuDiceScene();
   renderAuthControls();
@@ -1917,17 +2744,18 @@ const renderMultiplayerMenu = (): void => {
   // appendDisabledMenuButton(card, t('normalMode'));
   // appendDisabledMenuButton(card, t('hardcoreMode'));
   appendSectionTitle(card, t('room'));
-  appendMenuButton(card, t('createRoomAction'), renderMultiplayerCreate);
-  appendMenuButton(card, t('joinRoom'), renderMultiplayerJoin);
+  appendMenuButton(card, t('createRoomAction'), openMultiplayerCreate);
+  appendMenuButton(card, t('joinRoom'), openMultiplayerJoin);
   appendBackTo(card, renderCreateRoomMenu);
 };
 
 const renderMultiplayerCreate = (): void => {
+  cancelQuickSearch({ render: false });
   currentLobbyView = 'create-room';
   renderAuthControls();
   renderLanguageControls();
   ensureMenuDiceScene();
-  const card = createLobbyFrame(460);
+  const card = createLobbyFrame(460, renderHome);
   appendTitle(card, t('createRoomAction'));
 
   const gameNameInput = textInput(t('gameName'));
@@ -1949,7 +2777,7 @@ const renderMultiplayerCreate = (): void => {
   generatedCodeInput.style.color = '#8e8e9d';
   card.appendChild(labeledControl(t('roomCode'), generatedCodeInput));
 
-  const createBtn = button(t('createGame'), () => {
+  const createBtn = createMenuFrameButton(t('createGame'), () => {
     const gameName = gameNameInput.value.trim();
     if (!gameName) {
       showError(new Error(t('gameNameRequired')));
@@ -1971,16 +2799,23 @@ const renderMultiplayerCreate = (): void => {
 };
 
 const renderMultiplayerJoin = (): void => {
+  cancelQuickSearch({ render: false });
   currentLobbyView = 'multiplayer-join';
   renderAuthControls();
   renderLanguageControls();
   ensureMenuDiceScene();
-  const card = createLobbyFrame(900);
-  appendTitle(card, t('joinRoom'));
 
   closeLobbyListNetwork();
   let tempNetwork: NetworkService | null = null;
   let loadedRooms: RoomListItem[] = [];
+  const closeJoinPopup = (): void => {
+    closeLobbyListNetwork();
+    tempNetwork = null;
+    renderHome();
+  };
+
+  const card = createLobbyFrame(900, closeJoinPopup);
+  appendTitle(card, t('joinRoom'));
 
   const layout = document.createElement('div');
   Object.assign(layout.style, {
@@ -2009,7 +2844,7 @@ const renderMultiplayerJoin = (): void => {
   listTitle.textContent = t('lobbies');
   listTitle.style.fontWeight = '700';
   listHeader.appendChild(listTitle);
-  const refreshBtn = button(t('refresh'), () => refreshRooms());
+  const refreshBtn = createSmallMenuButton(t('refresh'), () => refreshRooms());
   listHeader.appendChild(refreshBtn);
   listPanel.appendChild(listHeader);
 
@@ -2038,21 +2873,29 @@ const renderMultiplayerJoin = (): void => {
     borderRadius: UI_RADIUS,
   } satisfies Partial<CSSStyleDeclaration>);
   const codeInput = roomCodeInput();
-  codePanel.appendChild(labeledControl(t('roomCode'), codeInput));
-  const codeJoinBtn = button(t('joinByCode'), () => {
+  const roomCodeControlWidth = '240px';
+  const codeControl = labeledControl(t('roomCode'), codeInput);
+  Object.assign(codeControl.style, {
+    width: roomCodeControlWidth,
+    maxWidth: '100%',
+    alignSelf: 'center',
+  } satisfies Partial<CSSStyleDeclaration>);
+  Object.assign(codeInput.style, {
+    width: '100%',
+  } satisfies Partial<CSSStyleDeclaration>);
+  codePanel.appendChild(codeControl);
+  const codeJoinBtn = createMenuFrameButton(t('joinByCode'), () => {
     const code = codeInput.value.trim().toUpperCase();
     if (!code) return;
     joinByCode(code, undefined, codeJoinBtn);
   });
+  codeJoinBtn.classList.add('menu-frame-button-fit');
+  codeJoinBtn.style.setProperty('--menu-frame-button-fit-width', roomCodeControlWidth);
   codePanel.appendChild(codeJoinBtn);
   layout.appendChild(codePanel);
   card.appendChild(layout);
 
-  appendBackTo(card, () => {
-    closeLobbyListNetwork();
-    tempNetwork = null;
-    renderHome();
-  });
+  appendBackTo(card, closeJoinPopup);
   appendLobbyError(card);
 
   const ensureNetwork = (): Promise<NetworkService> => {
@@ -2201,8 +3044,9 @@ const renderSettingsMenu = (): void => {
   renderAuthControls();
   renderLanguageControls();
   ensureMenuDiceScene();
-  const card = createLobbyFrame(520);
-  appendTitle(card, t('settings'));
+  const card = createLobbyFrame(520, renderHome);
+  const title = appendTitle(card, t('settings'));
+  title.style.textAlign = 'center';
   renderSettingsContent(card, renderHome);
 };
 
@@ -2215,7 +3059,7 @@ const textInput = (placeholder: string): HTMLInputElement => {
     height: UI_SIZE.controlHeight,
     boxSizing: 'border-box',
     border: '1px solid #444',
-    background: '#111',
+    background: APP_BACKGROUND_COLOR,
     color: '#eee',
     borderRadius: UI_RADIUS,
     fontFamily: FONT_FAMILY.ui,
@@ -2294,7 +3138,17 @@ const showError = (err: unknown): void => {
   if (el) el.textContent = err instanceof Error ? err.message : String(err);
 };
 
-onLanguageChange(rerenderCurrentShell);
+onLanguageChange(() => {
+  const openPopup = document.getElementById(PROFILE_POPUP_ID)
+    ? 'profile'
+    : document.getElementById(SETTINGS_MODAL_ID)
+      ? 'settings'
+      : null;
+  rerenderCurrentShell();
+  rerenderOpenTopPopup(openPopup);
+  runLanguageMatrixAnimation();
+});
+window.addEventListener('pointerdown', closeDropdownsOnOutsidePointer, true);
 window.addEventListener('keydown', (event) => {
   if (
     event.code === 'KeyS' &&
@@ -2318,9 +3172,20 @@ window.addEventListener('keydown', (event) => {
     clearSettingsModal();
     return;
   }
+  if (document.getElementById(PROFILE_POPUP_ID)) {
+    event.preventDefault();
+    clearProfilePopup();
+    return;
+  }
   if (!activeGame && currentLobbyView === 'settings') {
     event.preventDefault();
     renderHome();
+    return;
+  }
+  const roomState = activeNetwork?.getRoomState();
+  if (!activeGame && roomState?.status === ROOM_STATUS.WAITING) {
+    event.preventDefault();
+    returnToLobby();
     return;
   }
   if (
@@ -2334,11 +3199,6 @@ window.addEventListener('keydown', (event) => {
     return;
   }
   if (isInteractiveKeyboardTarget(event.target)) return;
-  const roomState = activeNetwork?.getRoomState();
-  if (!activeGame && roomState?.status === ROOM_STATUS.WAITING) {
-    event.preventDefault();
-    returnToLobby();
-  }
 });
 loadPlayerSettings()
   .catch((err: Error) => {

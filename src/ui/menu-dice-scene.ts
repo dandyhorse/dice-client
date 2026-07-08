@@ -4,9 +4,16 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { createDiceMesh } from '../engine/assets/dice-visual.factory';
 
 const CAMERA_Z = 6.2;
-const DICE_SIZE = 1.77;
+const DICE_SIZE = 1.35;
 const MENU_DICE_MODEL_URL = '/assets/dice/dice-stone-2/dice-stone.glb';
-const POINTER_EASE = 0.08;
+const POINTER_EASE = 0.035;
+const DICE_PARALLAX_X = 0.08;
+const DICE_PARALLAX_Y = 0.045;
+const BACKGROUND_PARALLAX_X = 6;
+const BACKGROUND_PARALLAX_Y = 4;
+const DICE_ROTATION_X = 0.07;
+const DICE_ROTATION_Y = 0.11;
+const MENU_DICE_SHADE = 'rgba(21, 20, 20, 0.6)';
 
 export class MenuDiceScene {
   private static modelTemplateLoading: Promise<THREE.Group | null> | null = null;
@@ -18,6 +25,7 @@ export class MenuDiceScene {
     alpha: true,
     powerPreference: 'high-performance',
   });
+  private readonly shadeElement = document.createElement('div');
   private readonly dice: THREE.Object3D[] = [];
   private readonly diceGroup = new THREE.Group();
   private readonly pointerTarget = new THREE.Vector2();
@@ -71,6 +79,16 @@ export class MenuDiceScene {
       zIndex: '1',
       pointerEvents: 'none',
     } satisfies Partial<CSSStyleDeclaration>);
+    this.shadeElement.id = 'menu-dice-shade';
+    Object.assign(this.shadeElement.style, {
+      position: 'fixed',
+      inset: '0',
+      width: '100vw',
+      height: '100vh',
+      zIndex: '2',
+      background: MENU_DICE_SHADE,
+      pointerEvents: 'none',
+    } satisfies Partial<CSSStyleDeclaration>);
 
     this.scene.background = null;
     this.camera.position.set(0, 0.4, CAMERA_Z);
@@ -93,6 +111,7 @@ export class MenuDiceScene {
 
   mount(parent: HTMLElement = document.body): void {
     if (!this.renderer.domElement.parentElement) parent.appendChild(this.renderer.domElement);
+    if (!this.shadeElement.parentElement) parent.appendChild(this.shadeElement);
     window.addEventListener('resize', this.onResize);
     window.addEventListener('mousemove', this.onPointerMove);
     window.addEventListener('pointermove', this.onPointerMove);
@@ -106,6 +125,8 @@ export class MenuDiceScene {
     window.removeEventListener('resize', this.onResize);
     window.removeEventListener('mousemove', this.onPointerMove);
     window.removeEventListener('pointermove', this.onPointerMove);
+    this.setBackgroundParallax(0, 0);
+    this.shadeElement.remove();
     this.renderer.domElement.remove();
     this.renderer.dispose();
   }
@@ -117,13 +138,15 @@ export class MenuDiceScene {
   }
 
   private addModelDice(template: THREE.Group): void {
-    this.addDicePair(template.clone(true), template.clone(true));
+    const left = template.clone(true);
+    const right = template.clone(true);
+    this.addDicePair(left, right);
   }
 
   private addDicePair(left: THREE.Object3D, right: THREE.Object3D): void {
-    left.position.set(-1.35, -0.25, 0);
+    left.position.set(-1.08, -0.22, 0);
     left.rotation.set(0.34, -0.66, 0.18);
-    right.position.set(1.35, 0.18, -0.25);
+    right.position.set(1.08, 0.15, -0.25);
     right.rotation.set(-0.22, 0.52, -0.12);
 
     this.dice.push(left, right);
@@ -134,16 +157,20 @@ export class MenuDiceScene {
     const dt = Math.min(0.05, Math.max(0, (now - this.lastTime) / 1000));
     this.lastTime = now;
     this.pointer.lerp(this.pointerTarget, POINTER_EASE);
-    this.diceGroup.position.x += (this.pointer.x * 0.32 - this.diceGroup.position.x) * 0.06;
-    this.diceGroup.position.y += (this.pointer.y * 0.18 - this.diceGroup.position.y) * 0.06;
+    this.diceGroup.position.x += (this.pointer.x * DICE_PARALLAX_X - this.diceGroup.position.x) * 0.035;
+    this.diceGroup.position.y += (this.pointer.y * DICE_PARALLAX_Y - this.diceGroup.position.y) * 0.035;
+    this.setBackgroundParallax(
+      this.pointer.x * BACKGROUND_PARALLAX_X,
+      this.pointer.y * BACKGROUND_PARALLAX_Y,
+    );
     this.camera.position.set(0, 0.4, CAMERA_Z);
     this.camera.lookAt(0, 0, 0);
 
     for (let i = 0; i < this.dice.length; i++) {
       const die = this.dice[i]!;
       const dir = i === 0 ? 1 : -1;
-      die.rotation.x += dt * 0.18 * dir;
-      die.rotation.y += dt * 0.28 * -dir;
+      die.rotation.x += dt * DICE_ROTATION_X * dir;
+      die.rotation.y += dt * DICE_ROTATION_Y * -dir;
     }
 
     this.renderer.render(this.scene, this.camera);
@@ -154,6 +181,11 @@ export class MenuDiceScene {
     this.pointerTarget.x = (event.clientX / Math.max(1, window.innerWidth)) * 2 - 1;
     this.pointerTarget.y = -((event.clientY / Math.max(1, window.innerHeight)) * 2 - 1);
   };
+
+  private setBackgroundParallax(x: number, y: number): void {
+    document.documentElement.style.setProperty('--menu-bg-x', `${x.toFixed(2)}px`);
+    document.documentElement.style.setProperty('--menu-bg-y', `${y.toFixed(2)}px`);
+  }
 
   private onResize = (): void => {
     this.camera.aspect = window.innerWidth / window.innerHeight;

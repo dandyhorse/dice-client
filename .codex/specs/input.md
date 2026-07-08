@@ -29,8 +29,8 @@
 ## Cursor
 
 - Игровой canvas управляет курсором внутри `ShakeInputService`, а не глобальным CSS для всех `<canvas>`.
-- Source cursor assets остаются `128×128` PNG в `public/assets/cursors/`, чтобы не упереться в browser limit на native CSS cursor.
-- На desktop `src/ui/custom-cursor.ts` скрывает native cursor после первого pointer movement и рисует DOM overlay `147×147` (`+15%`) поверх страницы; overlay имеет `pointer-events: none`.
+- Source gameplay hand assets (`open-hand`/`close-hand`) остаются `128×128` PNG в `public/assets/cursors/`; базовый `target-hand` runtime asset уменьшен до `50×50`, чтобы быть чуть крупнее обычного системного курсора.
+- На desktop `src/ui/custom-cursor.ts` скрывает native cursor после первого pointer movement и рисует DOM overlay поверх страницы; overlay имеет `pointer-events: none`. `open-hand`/`close-hand` остаются `147×147` (`+15%`), базовый `target-hand` — `50×50`.
 - Базовый cursor всего клиента: `target-hand`; он действует в меню, паузах, выборе костей и любых состояниях без активного hold/release.
 - Когда input включён, кости ещё не взяты, pointer находится над throw-zone стола и поверх нет DOM-меню/модалки: `open-hand`.
 - Когда игрок держит кости и pointer остаётся над throw-zone стола без DOM-меню/модалки поверх: `close-hand`.
@@ -78,7 +78,7 @@
    - старт выбирается с одной из 4 сторон стола, позиция вдоль стороны рандомится
    - старт расположен ближе к центру стороны: `58–76%` от центра к краю, spread вдоль стороны `22%`
    - цель выбирается ближе к центру: в противоположную сторону только на `8–28%` глубины от центра, spread по поперечной оси `25%`
-   - горизонтальная скорость = `THROW_MAX_SPEED * 0.46`
+   - горизонтальная скорость = `THROW_MAX_SPEED * 0.41`
    - вертикальная составляющая = `+3.7`, чтобы Space/автобросок давал размеренную дугу вверх
 
 ## `update(currentTime)`

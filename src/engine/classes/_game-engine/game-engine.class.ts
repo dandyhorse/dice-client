@@ -44,7 +44,7 @@ import {
   recordLocalMatchContinue,
 } from '../../../domain/local-match';
 import { isBust, scoreRoll, validateSelection } from '../../../domain/scorer';
-import { t } from '../../../ui/i18n';
+import { onLanguageChange, t } from '../../../ui/i18n';
 import { DEFAULT_PLAYER_SETTINGS, type PlayerSettings } from '../../../player-settings';
 import type {
   MatchPhase,
@@ -80,6 +80,7 @@ export interface GameEngineOptions {
   network?: NetworkService;
   localMatchConfig?: LocalMatchConfig;
   playerSettings?: PlayerSettings;
+  playerDisplayName?: string;
   onSurrender?: () => void;
   onExit?: () => void;
 }
@@ -176,6 +177,8 @@ export class GameEngine {
   private networkActionsBlockTimer: number | null = null;
   private readonly onSurrender?: () => void;
   private readonly onExit?: () => void;
+  private readonly playerDisplayName: string;
+  private readonly unsubscribeLanguage: () => void;
   private playerSettings: PlayerSettings;
   private networkRematchRequestedBy: string[] = [];
   private networkRoomClosed = false;
@@ -200,6 +203,8 @@ export class GameEngine {
     this.localMatchConfig = this.mode === 'local' ? (options.localMatchConfig ?? null) : null;
     this.onSurrender = options.onSurrender;
     this.onExit = options.onExit;
+    this.playerDisplayName = options.playerDisplayName?.trim() || t('player');
+    this.unsubscribeLanguage = onLanguageChange(this.handleLanguageChange);
 
     this.scene = this.createScene();
     this.camera = this.createCamera();
@@ -332,6 +337,7 @@ export class GameEngine {
         // по костям и выключает hold/release; всё остальное — инверсно.
         // Без этого pickup() прячет кости как раз когда игрок хочет в них кликать.
         net.events.on('match-state', (state: MatchStatePayload) => {
+          this.playNetworkContinueSound(this.currentMatchState, state);
           this.currentMatchState = state;
           if (state.phase !== MATCH_PHASE.SELECTING) this.networkLastRolledFaces = [];
           if (state.phase !== MATCH_PHASE.FINISHED) {
@@ -409,6 +415,7 @@ export class GameEngine {
 
         net.events.on('match-turn-result', (r: MatchTurnResultPayload) => {
           this.clearNetworkTurnDice();
+          if (!r.bust && r.banked > 0) audioService.play('gameplay-bank');
           if (this.isRankedRoom() && r.bust) {
             this.blockNetworkActions(FARKLE_ACTION_BLOCK_MS);
             this.hud?.showError('BUST');
@@ -561,6 +568,19 @@ export class GameEngine {
     this.networkCollisionPairLastPlayedMs.clear();
   }
 
+  private playNetworkContinueSound(
+    previous: MatchStatePayload | null,
+    next: MatchStatePayload,
+  ): void {
+    if (!previous) return;
+    if (previous.phase !== MATCH_PHASE.SELECTING || next.phase !== MATCH_PHASE.WAITING) {
+      return;
+    }
+    if (previous.currentPlayer !== next.currentPlayer) return;
+    if (next.turnPoints <= previous.turnPoints) return;
+    audioService.play('gameplay-continue');
+  }
+
   private localPlayerUserId(player: LocalMatchState['currentPlayer']): string {
     return player === 'human' ? LOCAL_HUMAN_USER_ID : LOCAL_BOT_USER_ID;
   }
@@ -588,7 +608,7 @@ export class GameEngine {
         {
           userId: LOCAL_HUMAN_USER_ID,
           socketId: LOCAL_HUMAN_USER_ID,
-          displayName: t('youPlayer'),
+          displayName: this.playerDisplayName,
           avatarIndex: this.playerSettings.profile.avatarIndex,
           role: ROOM_ROLE.PLAYER,
           online: true,
@@ -798,6 +818,7 @@ export class GameEngine {
     const selectedFaces = selectedRollIndices
       .map((rollIndex) => this.localLastRolledFaces[rollIndex])
       .filter((face): face is number => typeof face === 'number');
+    audioService.play('gameplay-continue');
     this.localMatchState = recordLocalMatchContinue(
       state,
       config,
@@ -818,6 +839,7 @@ export class GameEngine {
     const state = this.localMatchState;
     const config = this.localMatchConfig;
     if (!state || !config || isLocalMatchEnded(state)) return;
+    audioService.play('gameplay-bank');
     this.localMatchState = recordLocalMatchBank(state, config, points, diceUsed);
     this.dice.resetLocalForNewTurn();
     this.clearLocalMatchRollUi();
@@ -959,7 +981,7 @@ export class GameEngine {
       alignItems: 'center',
       justifyContent: 'center',
       padding: '24px',
-      background: 'rgba(0,0,0,0.46)',
+      background: 'rgba(21,20,20,0.5)',
       pointerEvents: 'auto',
       boxSizing: 'border-box',
     } satisfies Partial<CSSStyleDeclaration>);
@@ -969,7 +991,7 @@ export class GameEngine {
       width: 'min(360px, calc(100vw - 48px))',
       padding: '18px',
       borderRadius: UI_RADIUS,
-      background: 'rgba(20,20,24,0.96)',
+      background: '#151414',
       color: '#fff',
       boxShadow: '0 18px 48px rgba(0,0,0,0.38)',
       textAlign: 'center',
@@ -977,6 +999,7 @@ export class GameEngine {
     } satisfies Partial<CSSStyleDeclaration>);
 
     const question = document.createElement('div');
+    question.dataset.surrenderConfirmQuestion = 'true';
     question.textContent = t('surrenderConfirm');
     Object.assign(question.style, {
       fontSize: '20px',
@@ -986,27 +1009,34 @@ export class GameEngine {
 
     const actions = document.createElement('div');
     Object.assign(actions.style, {
-      display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
+      display: 'flex',
+      justifyContent: 'center',
+      flexWrap: 'nowrap',
       gap: '10px',
     } satisfies Partial<CSSStyleDeclaration>);
 
-    const makeConfirmButton = (label: string, background: string): HTMLButtonElement => {
+    const makeConfirmButton = (label: string, kind: 'yes' | 'no'): HTMLButtonElement => {
       const btn = document.createElement('button');
-      btn.textContent = label;
+      btn.classList.add('menu-frame-button', 'menu-frame-button-small');
+      const text = document.createElement('span');
+      text.dataset.surrenderConfirmLabel = kind;
+      text.textContent = label;
       Object.assign(btn.style, {
-        minHeight: '44px',
-        border: 'none',
-        borderRadius: UI_RADIUS,
-        background,
-        color: '#fff',
-        fontSize: '18px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
       } satisfies Partial<CSSStyleDeclaration>);
+      Object.assign(text.style, {
+        position: 'relative',
+        zIndex: '1',
+      } satisfies Partial<CSSStyleDeclaration>);
+      btn.appendChild(text);
       return btn;
     };
 
-    const yesBtn = makeConfirmButton(t('confirmYes'), '#b91c1c');
-    const noBtn = makeConfirmButton(t('confirmNo'), '#374151');
+    const yesBtn = makeConfirmButton(t('confirmYes'), 'yes');
+    yesBtn.classList.add('menu-frame-button-danger');
+    const noBtn = makeConfirmButton(t('confirmNo'), 'no');
     yesBtn.addEventListener('click', () => {
       this.closeSurrenderConfirm();
       if (!this.canUseSurrender()) return;
@@ -1028,7 +1058,6 @@ export class GameEngine {
     document.body.appendChild(overlay);
     this.surrenderConfirmEl = overlay;
     window.addEventListener('keydown', this.handleSurrenderConfirmKeyDown, true);
-    noBtn.focus();
   }
 
   private closeSurrenderConfirm(): void {
@@ -1036,6 +1065,34 @@ export class GameEngine {
     this.surrenderConfirmEl?.remove();
     this.surrenderConfirmEl = null;
   }
+
+  private updateSurrenderConfirmLanguage(): void {
+    const overlay = this.surrenderConfirmEl;
+    if (!overlay) return;
+    const question = overlay.querySelector<HTMLElement>(
+      '[data-surrender-confirm-question="true"]',
+    );
+    if (question) question.textContent = t('surrenderConfirm');
+    const yes = overlay.querySelector<HTMLElement>('[data-surrender-confirm-label="yes"]');
+    if (yes) yes.textContent = t('confirmYes');
+    const no = overlay.querySelector<HTMLElement>('[data-surrender-confirm-label="no"]');
+    if (no) no.textContent = t('confirmNo');
+  }
+
+  private handleLanguageChange = (): void => {
+    this.updateSurrenderConfirmLanguage();
+
+    if (this.mode === 'local') {
+      const phase = this.currentMatchState?.phase ?? (
+        this.localRolling ? MATCH_PHASE.ROLLING : MATCH_PHASE.WAITING
+      );
+      this.syncLocalMatchHud(phase);
+      return;
+    }
+
+    if (this.currentRoomState) this.hud?.setRoomState(this.currentRoomState);
+    if (this.currentMatchState) this.hud?.setMatchState(this.currentMatchState);
+  };
 
   private handleNetworkContinue = (): void => {
     const selection = this.selection;
@@ -1414,6 +1471,7 @@ export class GameEngine {
   destroy(): void {
     this.stop();
     this.closeSurrenderConfirm();
+    this.unsubscribeLanguage();
     this.clearLocalBotActionTimer();
     if (this.networkActionsBlockTimer !== null) clearTimeout(this.networkActionsBlockTimer);
     this.networkActionsBlockTimer = null;

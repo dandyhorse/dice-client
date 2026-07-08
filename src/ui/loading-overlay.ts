@@ -3,7 +3,15 @@ import { FONT_FAMILY } from './theme';
 const LOADING_OVERLAY_ID = 'loading-overlay';
 let visibleRequests = 0;
 
-export const showLoadingOverlay = (label = 'LOADING'): void => {
+interface LoadingOverlayOptions {
+  backdrop?: 'solid' | 'transparent';
+}
+
+export const showLoadingOverlay = (
+  label = 'LOADING',
+  options: LoadingOverlayOptions = {},
+): void => {
+  const transparent = options.backdrop === 'transparent';
   visibleRequests += 1;
   let overlay = document.getElementById(LOADING_OVERLAY_ID) as HTMLDivElement | null;
   if (!overlay) {
@@ -19,7 +27,7 @@ export const showLoadingOverlay = (label = 'LOADING'): void => {
     display: 'grid',
     placeItems: 'center',
     zIndex: '1000',
-    background: '#050507',
+    background: transparent ? 'rgba(21,20,20,0.58)' : '#151414',
     color: '#f4f4f5',
     fontFamily: FONT_FAMILY.title,
     fontSize: 'clamp(28px, 6vw, 58px)',

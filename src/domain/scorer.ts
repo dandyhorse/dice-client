@@ -1,7 +1,7 @@
 // ⚠️ DUPLICATE — keep in sync with dice-server/src/domain/scorer.ts
 //
 /**
- * KCD-style Farkle scorer. Чистая математика над массивом значений граней (1..6).
+ * Farkle scorer. Чистая математика над массивом значений граней (1..6).
  * Без зависимостей от cannon, сети и БД — только подсчёт очков и валидация выбора.
  *
  * Источник правил: текущий dev spec правил костей и `.codex/specs/match-rules.md`.

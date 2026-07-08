@@ -5,10 +5,9 @@ import {
   DICE_BOTTOM_MAGNET_TORQUE,
   DICE_COUNT,
   DICE_ANGULAR_DAMPING,
+  DICE_CONTACT_MIN_HORIZONTAL_NORMAL,
   DICE_DICE_CONTACT_KICK_MAX_DELTA,
   DICE_DICE_CONTACT_KICK_SPEED,
-  DICE_DICE_FACE_CONTACT_DOT_MIN,
-  DICE_DICE_FACE_CONTACT_MIN_HORIZONTAL_NORMAL,
   DICE_EDGE_REPULSION_DISTANCE,
   DICE_EDGE_REPULSION_FORCE,
   DICE_EDGE_REPULSION_KICK_SPEED,
@@ -30,6 +29,8 @@ import {
   TABLE_WIDTH,
   THROW_ANGULAR_RANDOM,
   THROW_ANGULAR_DIE_VARIATION,
+  THROW_SELF_SPIN_MAX,
+  THROW_SELF_SPIN_MIN,
   THROW_POSITION_PADDING,
   WALL_INSET,
 } from '../../../config';
@@ -104,6 +105,16 @@ export interface DiceServiceOptions {
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
+const SELF_SPIN_LOCAL_AXES: readonly [number, number, number][] = [
+  [1, 0, 0],
+  [0, 1, 0],
+  [0, 0, 1],
+];
+
+const randomSignedHalf = (): number => Math.random() - 0.5;
+const randomSign = (): number => (Math.random() < 0.5 ? -1 : 1);
+const randomBetween = (min: number, max: number): number => min + Math.random() * (max - min);
+
 export class DiceService {
   private scene: THREE.Scene;
   private world: CANNON.World | null;
@@ -118,10 +129,9 @@ export class DiceService {
   private readonly tmpMagnetAxis = new CANNON.Vec3();
   private readonly tmpBestMagnetAxis = new CANNON.Vec3();
   private readonly tmpMagnetTorque = new CANNON.Vec3();
-  private readonly tmpContactNormal = new CANNON.Vec3();
-  private readonly tmpOppositeContactNormal = new CANNON.Vec3();
-  private readonly tmpFaceNormal = new CANNON.Vec3();
   private readonly tmpSupportAxis = new CANNON.Vec3();
+  private readonly tmpLocalAngularVelocity = new CANNON.Vec3();
+  private readonly tmpWorldAngularVelocity = new CANNON.Vec3();
   private readonly worldUp = new CANNON.Vec3(0, 1, 0);
   private readonly contactKickPairs = new Set<string>();
 
@@ -273,12 +283,7 @@ export class DiceService {
       );
       die.body.wakeUp();
       die.body.velocity.set(velocity.x, velocity.y, velocity.z);
-      const spinScale = 1 + (Math.random() - 0.5) * THROW_ANGULAR_DIE_VARIATION;
-      die.body.angularVelocity.set(
-        (Math.random() - 0.5) * THROW_ANGULAR_RANDOM * spinScale,
-        (Math.random() - 0.5) * THROW_ANGULAR_RANDOM * spinScale,
-        (Math.random() - 0.5) * THROW_ANGULAR_RANDOM * spinScale,
-      );
+      this.applyLocalReleaseAngularVelocity(die.body);
       die.mesh.position.set(die.body.position.x, die.body.position.y, die.body.position.z);
       die.mesh.quaternion.set(
         die.body.quaternion.x,
@@ -287,6 +292,20 @@ export class DiceService {
         die.body.quaternion.w,
       );
     }
+  }
+
+  private applyLocalReleaseAngularVelocity(body: CANNON.Body): void {
+    const axis = SELF_SPIN_LOCAL_AXES[Math.floor(Math.random() * SELF_SPIN_LOCAL_AXES.length)]!;
+    const spinScale = 1 + randomSignedHalf() * THROW_ANGULAR_DIE_VARIATION;
+    const selfSpinSpeed = randomBetween(THROW_SELF_SPIN_MIN, THROW_SELF_SPIN_MAX) * spinScale;
+    const selfSpin = selfSpinSpeed * randomSign();
+    this.tmpLocalAngularVelocity.set(
+      axis[0] * selfSpin + randomSignedHalf() * THROW_ANGULAR_RANDOM,
+      axis[1] * selfSpin + randomSignedHalf() * THROW_ANGULAR_RANDOM,
+      axis[2] * selfSpin + randomSignedHalf() * THROW_ANGULAR_RANDOM,
+    );
+    body.quaternion.vmult(this.tmpLocalAngularVelocity, this.tmpWorldAngularVelocity);
+    body.angularVelocity.copy(this.tmpWorldAngularVelocity);
   }
 
   private clampReleasePosition(
@@ -375,12 +394,19 @@ export class DiceService {
     for (const contact of this.world.contacts) {
       const a = contact.bi;
       const b = contact.bj;
-      if (!activeBodies.has(a) || !activeBodies.has(b)) continue;
-      if (!this.isLocalDiceFaceToFaceContact(a, b, contact.ni)) continue;
+      const aActive = activeBodies.has(a);
+      const bActive = activeBodies.has(b);
+      if (!aActive && !bActive) continue;
+
       const key = a.id < b.id ? `${a.id}:${b.id}` : `${b.id}:${a.id}`;
       if (this.contactKickPairs.has(key)) continue;
       this.contactKickPairs.add(key);
-      this.applyLocalDiceContactNormalKick(a, b, contact.ni);
+
+      if (aActive && bActive) {
+        this.applyLocalDiceContactNormalKick(a, b, contact.ni);
+      } else {
+        this.applyLocalStaticContactNormalKick(aActive ? a : b, contact.ni, aActive);
+      }
     }
   }
 
@@ -420,29 +446,26 @@ export class DiceService {
     b.wakeUp();
   }
 
-  private isLocalDiceFaceToFaceContact(
-    a: CANNON.Body,
-    b: CANNON.Body,
+  private applyLocalStaticContactNormalKick(
+    body: CANNON.Body,
     normal: CANNON.Vec3,
-  ): boolean {
-    const len = normal.length();
-    if (len <= 1e-6) return false;
+    bodyIsContactBi: boolean,
+  ): void {
+    let nx = bodyIsContactBi ? -normal.x : normal.x;
+    let nz = bodyIsContactBi ? -normal.z : normal.z;
+    const len = Math.hypot(nx, nz);
+    if (len < DICE_CONTACT_MIN_HORIZONTAL_NORMAL) return;
+    nx /= len;
+    nz /= len;
 
-    this.tmpContactNormal.set(normal.x / len, normal.y / len, normal.z / len);
-    const horizontalLen = Math.hypot(this.tmpContactNormal.x, this.tmpContactNormal.z);
-    if (horizontalLen < DICE_DICE_FACE_CONTACT_MIN_HORIZONTAL_NORMAL) return false;
-    if (!this.hasLocalFaceAlong(a, this.tmpContactNormal)) return false;
+    const outwardSpeed = body.velocity.x * nx + body.velocity.z * nz;
+    const targetSpeed = DICE_EDGE_REPULSION_KICK_SPEED;
+    if (outwardSpeed >= targetSpeed) return;
 
-    this.tmpContactNormal.negate(this.tmpOppositeContactNormal);
-    return this.hasLocalFaceAlong(b, this.tmpOppositeContactNormal);
-  }
-
-  private hasLocalFaceAlong(body: CANNON.Body, direction: CANNON.Vec3): boolean {
-    for (const { axis } of FACE_AXES) {
-      body.quaternion.vmult(axis, this.tmpFaceNormal);
-      if (this.tmpFaceNormal.dot(direction) >= DICE_DICE_FACE_CONTACT_DOT_MIN) return true;
-    }
-    return false;
+    const delta = Math.min(targetSpeed - outwardSpeed, targetSpeed);
+    body.velocity.x += nx * delta;
+    body.velocity.z += nz * delta;
+    body.wakeUp();
   }
 
   private applyLocalBottomMagnet(body: CANNON.Body): void {

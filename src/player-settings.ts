@@ -20,8 +20,10 @@ export interface PlayerProfileSettings {
 }
 
 export interface AudioSettings {
+  masterVolume: number;
   effectsVolume: number;
   musicVolume: number;
+  quickSearchClockEnabled: boolean;
 }
 
 export interface PlayerSettings {
@@ -48,8 +50,10 @@ export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
     avatarIndex: 0,
   },
   audio: {
+    masterVolume: 1,
     effectsVolume: 1,
     musicVolume: 1,
+    quickSearchClockEnabled: true,
   },
 };
 
@@ -121,6 +125,10 @@ export const normalizePlayerSettings = (value: unknown): PlayerSettings => {
 
   const audio = { ...DEFAULT_PLAYER_SETTINGS.audio };
   if (isObject(value.audio)) {
+    audio.masterVolume = normalizeVolume(
+      value.audio.masterVolume,
+      audio.masterVolume,
+    );
     audio.effectsVolume = normalizeVolume(
       value.audio.effectsVolume,
       audio.effectsVolume,
@@ -129,6 +137,9 @@ export const normalizePlayerSettings = (value: unknown): PlayerSettings => {
       value.audio.musicVolume,
       audio.musicVolume,
     );
+    if (typeof value.audio.quickSearchClockEnabled === 'boolean') {
+      audio.quickSearchClockEnabled = value.audio.quickSearchClockEnabled;
+    }
   }
 
   return hasDuplicateBindings(controls)
@@ -162,10 +173,13 @@ export const validatePlayerSettings = (
   }
   if (
     !isObject(settings.audio) ||
+    normalizeVolume(settings.audio.masterVolume, -1) !==
+      settings.audio.masterVolume ||
     normalizeVolume(settings.audio.effectsVolume, -1) !==
       settings.audio.effectsVolume ||
     normalizeVolume(settings.audio.musicVolume, -1) !==
-      settings.audio.musicVolume
+      settings.audio.musicVolume ||
+    typeof settings.audio.quickSearchClockEnabled !== 'boolean'
   ) {
     return { valid: false, message: 'Invalid audio settings' };
   }

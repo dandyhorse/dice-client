@@ -19,8 +19,8 @@
 3. `createRenderer()` — настройка теней и PR
 4. `createPhysicsWorld()` — gravity `(0, WORLD_GRAVITY, 0)`, broadphase, sleep
 5. `setupContactMaterials()`:
-   - dice ↔ table: `friction 0.45, restitution 0.35, contactEquationStiffness 1e8, contactEquationRelaxation 3`
-   - dice ↔ dice: `friction 0.35, restitution 0.12`
+   - dice ↔ table/walls: `friction 0.88, restitution 0.10, contactEquationStiffness 1e8, contactEquationRelaxation 2`
+   - dice ↔ dice: `friction 0.34, restitution 0.46`
 6. `createPlayArea()` — **один раз** создаёт стол `TABLE_WIDTH × TABLE_DEPTH`, 4 невидимые физические стены (с `WALL_INSET` от кромки) и невидимый потолок на высоте `WALL_HEIGHT`
 7. `new DiceService(...).spawn()` — спавн костей
 8. `new ShakeInputService(...)` — подписка на `hold-start` → `dice.pickup()` и `release` → `dice.release(velocity, position)`. `hold-move` сервис эмитит, но движок его не слушает.
@@ -98,34 +98,34 @@ camera.y  = max(hForDepth, hForWidth)   // contain — берём большую
 
 | Константа | Значение | Назначение |
 |-----------|----------|------------|
-| `WORLD_GRAVITY` | -34 | Сильнее реальной — кости резче падают |
+| `WORLD_GRAVITY` | -30 | Сильнее реальной, но мягче прежнего профиля — кости летят спокойнее |
 | `TABLE_WIDTH` | 9 | Ширина стола в world-units (по X) |
 | `TABLE_DEPTH` | 9 | Глубина стола в world-units (по Z), 16:9 |
 | `TABLE_THICKNESS` | 0.4 | Толщина стола |
 | `WALL_HEIGHT` | 4 | Высота стен (и потолка) |
-| `WALL_THICKNESS` | 0.22 | Толщина стен и потолка (страховка от tunneling) |
-| `WALL_INSET` | 0.22 | Сдвиг внутренней грани стены от кромки стола; равен WALL_THICKNESS — внешняя грань ровно на кромке |
+| `WALL_THICKNESS` | 0.10 | Толщина стен и потолка |
+| `WALL_INSET` | 0.10 | Сдвиг внутренней грани стены от кромки стола |
 | `DICE_COUNT` | 6 | Сколько костей спавнить |
 | `DICE_HALF_SIZE` | 0.273 | Полуразмер ребра кости (куб 0.546×0.546×0.546) |
-| `DICE_MASS` | 0.72 | Масса кости |
+| `DICE_MASS` | 4.86 | Масса кости; quick-rollback values are commented in config as `1.62` and `1.08` |
 | `DICE_SPACING` | 0.76 | Разнос костей в release-row; сверху/снизу ряд идёт по X, слева/справа по Z |
-| `DICE_LINEAR_DAMPING` / `DICE_ANGULAR_DAMPING` | 0.19 / 0.18 | Торможение полёта и вращения |
-| `DICE_TABLE_FRICTION` / `DICE_TABLE_RESTITUTION` | 0.72 / 0.14 | Трение и отскок кости от стола |
-| `DICE_DICE_FRICTION` / `DICE_DICE_RESTITUTION` | 0.24 / 0.10 | Трение и отскок кость ↔ кость |
-| `DICE_DICE_FACE_CONTACT_DOT_MIN` / `DICE_DICE_FACE_CONTACT_MIN_HORIZONTAL_NORMAL` | 0.98 / 0.35 | Face-to-face фильтр для dice-dice kick: normal контакта должен совпасть с гранью обеих костей и иметь боковую составляющую |
-| `DICE_DICE_CONTACT_KICK_SPEED` / `DICE_DICE_CONTACT_KICK_MAX_DELTA` | 2.8 / 1.6 | Прямой velocity kick по real Cannon contact normal только при контакте грань ↔ грань |
-| `DICE_EDGE_REPULSION_DISTANCE` / `DICE_EDGE_REPULSION_FORCE` / `DICE_EDGE_REPULSION_KICK_SPEED` | `DICE_HALF_SIZE * 2.6` / 6.0 / 1.05 | Отталкивание от бортов: меньше постоянного давления, плюс inward velocity kick от края |
+| `DICE_LINEAR_DAMPING` / `DICE_ANGULAR_DAMPING` | 0.27 / 0.35 | Торможение полёта и вращения; более плотное и спокойное движение после контакта |
+| `DICE_TABLE_FRICTION` / `DICE_TABLE_RESTITUTION` | 0.88 / 0.10 | Высокое сцепление и низкий отскок кости от стола |
+| `DICE_DICE_FRICTION` / `DICE_DICE_RESTITUTION` | 0.34 / 0.46 | Трение и умеренный отскок кость ↔ кость |
+| `DICE_CONTACT_MIN_HORIZONTAL_NORMAL` | 0.35 | Минимальная боковая составляющая normal для contact-kick от статичных стен; floor/ceiling не пинаем |
+| `DICE_DICE_CONTACT_KICK_SPEED` / `DICE_DICE_CONTACT_KICK_MAX_DELTA` | 6 / 3.5 | Velocity kick по любому real Cannon contact кость ↔ кость |
+| `DICE_EDGE_REPULSION_DISTANCE` / `DICE_EDGE_REPULSION_FORCE` / `DICE_EDGE_REPULSION_KICK_SPEED` | 0 / 12 / 4.2 | Inward kick/force от стен; дополнительно wall contacts отпинывают кость по real Cannon contact normal |
 | `DICE_REROLL_FALL_Y` | `-DICE_HALF_SIZE` | Невидимая trigger-зона ниже стола; упавшая активная кость перебрасывается отдельно |
 | `DICE_BOTTOM_MAGNET_TORQUE` / `DICE_BOTTOM_MAGNET_MAX_HEIGHT` | 0.11 / `DICE_HALF_SIZE * 3.1` | Лёгкий bottom-heavy torque возле стола, чтобы кости лучше ложились на грань |
 | `HOLD_HEIGHT` | 2.85 | Y-уровень hold-плоскости (куда проецируется мышь) |
 | `HOLD_JITTER_SCALE` | 0.04 | (legacy, не используется в новом флоу pickup/release) |
 | `VELOCITY_BUFFER_MS` | 90 | Окно сэмплов для расчёта скорости броска |
-| `THROW_LINEAR_SCALE` | 0.68 | Масштаб линейной скорости броска (мышь → мир) |
+| `THROW_LINEAR_SCALE` | 0.60 | Масштаб линейной скорости броска (мышь → мир) |
 | `THROW_DOWNWARD_BIAS` | -2.8 | Принудительная Y-составляющая вниз при release |
 | `THROW_MIN_SPEED` | 0.4 | Минимальная скорость, иначе добавляется forward камеры |
 | `THROW_POSITION_PADDING` | 0.2 | Запас от внутренней грани стены при clamp release-позиции |
-| `THROW_MAX_SPEED` | 10.5 | Жёсткий потолок \|velocity\| перед emit — гарантия отсутствия tunneling сквозь стены |
-| `THROW_ANGULAR_RANDOM` / `THROW_ANGULAR_DIE_VARIATION` | 5.8 / 0.35 | Диапазон случайной угловой скорости и per-die spin multiplier при release |
+| `THROW_MAX_SPEED` | 9.3 | Жёсткий потолок \|velocity\| перед emit — гарантия отсутствия tunneling сквозь стены |
+| `THROW_ANGULAR_RANDOM` / `THROW_SELF_SPIN_MIN` / `THROW_SELF_SPIN_MAX` / `THROW_ANGULAR_DIE_VARIATION` | 3.2 / 6.75 / 10.125 / 0.25 | Небольшой random tumble плюс доминирующий self-spin вокруг локальной оси каждой кости |
 | `CAMERA_FOV` | 45 | Vertical FOV перспективной камеры |
 | `CAMERA_X`, `CAMERA_Z` | 0, 0 | Горизонтальная позиция камеры (по центру стола) |
 | `CAMERA_TARGET` | `[0, 0, 0]` | Куда смотрит камера |

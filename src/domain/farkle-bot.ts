@@ -29,7 +29,7 @@ interface EvaluatedSelection extends FarkleBotSelection {
   immediateWin: boolean;
 }
 
-const BASE_BANK_THRESHOLDS = [0, 300, 250, 450, 1050, 3400, 10000] as const;
+const BASE_BANK_THRESHOLDS = [0, 150, 250, 450, 1050, 3400, 10000] as const;
 const ROLL_POTENTIAL = [0, 20, 60, 160, 360, 720, 1000] as const;
 const DEFAULT_TURN_TARGET_RATIO = 0.45;
 const SCORE_LEAD_MARGIN = 500;

@@ -83,11 +83,24 @@
 - [x] Cursor resolving state added: after release, `open-hand` stays active until local faces are read or network roll result/non-ROLLING state arrives; selection/menus return to base `target-hand`.
 - [x] Cursor resolving state reverted to the previous feel: after release the game canvas returns to base `target-hand`. The resolving approach is preserved as an `IMPORTANT: do not delete` commented note in `ShakeInputService`.
 - [x] Desktop cursors enlarged by ~15% via `src/ui/custom-cursor.ts`: source PNGs stay `128×128`, native cursor is hidden after pointer movement, and a `147×147` DOM overlay renders target/open/closed cursor states. Hand variants only show over the table throw-zone and downgrade to target-hand when pointer leaves the table or a DOM menu/modal covers the canvas.
+- [x] Base `target-hand` desktop cursor made slightly larger than gameplay hands: target overlay `160×160`, open/close overlays remain `147×147`.
+- [x] Base `target-hand` corrected to be only slightly larger than a normal system cursor: target runtime asset and overlay are now `42×42`; open/close gameplay hands remain `147×147`.
+- [x] Base `target-hand` nudged 20% larger from the small system-cursor-like size: target runtime asset and overlay are now `50×50`; open/close gameplay hands remain `147×147`.
 - [x] HUD transient overlays changed from timers to click-to-dismiss: turn banners and FARKLE/errors stay visible until the next pointerdown, while the click still reaches the intended game/UI action.
 - [x] FARKLE reverted to timer-driven flow: FARKLE ignores click-dismiss, blocks actions for `1200ms`, then hides and releases any queued turn banner. Local mode also delays the next turn until this timer ends.
 - [x] Turn banner behavior adjusted: own-turn banner stays until click, opponent-turn banner auto-hides after `1500ms`, non-FARKLE errors stay click-dismissed.
 - [x] Own-turn banner now also dismisses on the configured throw key (`Space` by default) without preventing the throw action.
 - [x] Surrender confirmation now treats repeat `Esc` or click/tap on the backdrop as `Нет`: closes the confirm and returns to the game without surrender.
+- [x] Dice-dice face-contact kick doubled for a visible shove: speed `8.4`, max delta `4.8`.
+- [x] Dice-dice and dice-wall contact behavior changed to rubber-ball-style shove: any real dice-dice Cannon contact now kicks, dice restitution is `0.55`, dice kick is `12 / 7`, wall force/kick is `24 / 8.4`, and wall contacts kick active dice away from side normals.
+- [x] Rubber-ball contact behavior kept, but contact strength reduced by 50%: dice kick `6 / 3.5`, wall force/kick `12 / 4.2`.
+- [x] Dice throw profile made weightier: mass `1.08`, damping `0.23/0.30`, table contact `0.88/0.10`, dice contact `0.34/0.46`, and release spin now uses local-axis self-spin `6..9` plus random tumble `3.2`.
+- [x] Release self-spin increased by 50% while keeping the weight/contact profile unchanged: local-axis self-spin `9..13.5`, random tumble still `3.2`.
+- [x] Release self-spin reduced by 25% from the boosted value: local-axis self-spin `6.75..10.125`, random tumble still `3.2`.
+- [x] Quick-search is now cancelled when entering singleplayer or multiplayer create/join/menu flows, so quick-match lookup cannot keep running behind another mode.
+- [x] Dice mass increased by 50% for a heavier feel: `DICE_MASS = 1.62`; previous `1.08` value is commented next to the config constant for quick rollback.
+- [x] Critical mass experiment added: `DICE_MASS = 4.86`; previous `1.62` and `1.08` values are commented next to the config constant for quick rollback.
+- [x] Dice motion slowed without time-scale: `WORLD_GRAVITY = -30`, damping `0.27/0.35`, `THROW_LINEAR_SCALE = 0.60`, `THROW_MAX_SPEED = 9.3`, Space throw scale `0.41`.
 
 ## Verification
 - [x] `npm run build` in `dice-client` passed after test-room changes.
@@ -143,6 +156,18 @@
 - [x] `npm run build` and `git diff --check` in `dice-client` passed after changing opponent-turn banners to a `1500ms` auto-hide timer.
 - [x] `npm run build` and `git diff --check` in `dice-client` passed after adding throw-key dismissal for the own-turn banner.
 - [x] `npm run build` and `git diff --check` in `dice-client` passed after adding `Esc`/backdrop cancel behavior to surrender confirmation.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after doubling dice-dice contact kick to `8.4 / 4.8`.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after rubber-ball-style dice/wall contact kicks.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after reducing contact kick strength by 50% while keeping contact behavior.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after adding local-axis self-spin and weightier dice contact/damping.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after increasing only release self-spin by 50%.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after reducing boosted self-spin by 25% and cancelling quick-search on mode entry.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after increasing dice mass by 50% and adding rollback comments.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after the critical mass experiment (`DICE_MASS = 4.86`) with rollback comments.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after slowing dice motion with lower throw speed, higher damping, and softer gravity.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after making only the base `target-hand` cursor slightly larger.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after reducing base `target-hand` to `42×42` while keeping gameplay hand cursors large.
+- [x] `npm run build` and `git diff --check` in `dice-client` passed after increasing base `target-hand` from `42×42` to `50×50`.
 
 ## Notes
 - Public routing target is nginx on `80/443`; client preview remains internal on `127.0.0.1:5174`.
@@ -162,11 +187,12 @@
 
 ## Current Physics Handoff
 
-- Current client/server physics constants are synced: `DICE_MASS = 0.72`, `DICE_SPACING = 0.76`, `DICE_LINEAR_DAMPING = 0.19`, `DICE_ANGULAR_DAMPING = 0.18`, `DICE_TABLE_RESTITUTION = 0.14`, `DICE_DICE_RESTITUTION = 0.10`, `WALL_THICKNESS = 0.10`, `WALL_INSET = 0.10`, `THROW_MAX_SPEED = 10.5`, `THROW_ANGULAR_RANDOM = 5.8`, `THROW_ANGULAR_DIE_VARIATION = 0.35`.
+- Current client/server physics constants are synced: `WORLD_GRAVITY = -30`, `DICE_MASS = 4.86`, `DICE_SPACING = 0.76`, `DICE_LINEAR_DAMPING = 0.27`, `DICE_ANGULAR_DAMPING = 0.35`, `DICE_TABLE_FRICTION = 0.88`, `DICE_TABLE_RESTITUTION = 0.10`, `DICE_DICE_FRICTION = 0.34`, `DICE_DICE_RESTITUTION = 0.46`, `WALL_THICKNESS = 0.10`, `WALL_INSET = 0.10`, `THROW_LINEAR_SCALE = 0.60`, `THROW_MAX_SPEED = 9.3`, `THROW_ANGULAR_RANDOM = 3.2`, `THROW_SELF_SPIN_MIN = 6.75`, `THROW_SELF_SPIN_MAX = 10.125`, `THROW_ANGULAR_DIE_VARIATION = 0.25`.
 - Dice-dice anti-sticking is now one layer: real Cannon `world.contacts` post-step contact kick only. Pre-contact distance force is removed.
-- Face-to-face filter values: `DICE_DICE_FACE_CONTACT_DOT_MIN = 0.98`, `DICE_DICE_FACE_CONTACT_MIN_HORIZONTAL_NORMAL = 0.35`, `DICE_DICE_CONTACT_KICK_SPEED = 4.2`, `DICE_DICE_CONTACT_KICK_MAX_DELTA = 2.4`.
-- Contact kick is intentionally skipped for edge/corner contacts and near-vertical stacked contacts.
-- Edge assist is contact-only: `DICE_EDGE_REPULSION_DISTANCE = 0`, `DICE_EDGE_REPULSION_FORCE = 8.4`, `DICE_EDGE_REPULSION_KICK_SPEED = 1.47`. Wall contact is evaluated by cube surface support (`position ± projected half-extent`), not by center distance.
-- Auto/Space throw now chooses one of four sides, but starts near the center of that side: start depth `58..76%` from table center to side, side-axis spread `22%`; target depth `8..28%`, target spread `25%`; horizontal speed `THROW_MAX_SPEED * 0.46`, upward velocity `3.7`.
+- Contact kick values: `DICE_CONTACT_MIN_HORIZONTAL_NORMAL = 0.35`, `DICE_DICE_CONTACT_KICK_SPEED = 6`, `DICE_DICE_CONTACT_KICK_MAX_DELTA = 3.5`.
+- Dice-dice contact kick applies to any real active dice contact, including edge/corner contacts and vertical stacked contacts. If the contact normal has no useful horizontal component, center-to-center horizontal direction is used.
+- Edge/wall assist is contact-only: `DICE_EDGE_REPULSION_DISTANCE = 0`, `DICE_EDGE_REPULSION_FORCE = 12`, `DICE_EDGE_REPULSION_KICK_SPEED = 4.2`. Wall contact also applies a post-step velocity kick from real Cannon side normals; floor/ceiling contacts are ignored.
+- Release spin is local-axis based: each die gets a dominant self-spin around one of its own principal axes, then a smaller random tumble, then the vector is transformed to world-space by the die's start quaternion. Network mode still uses server-generated spins only.
+- Auto/Space throw now chooses one of four sides, but starts near the center of that side: start depth `58..76%` from table center to side, side-axis spread `22%`; target depth `8..28%`, target spread `25%`; horizontal speed `THROW_MAX_SPEED * 0.41`, upward velocity `3.7`.
 - Release row orientation is side-aware: top/bottom releases lay dice along X, left/right releases lay dice along Z. Server authoritative path mirrors this with `ReleaseRowAxis`.
-- Last verification for this batch: client build passed, server build passed, server tests passed `109/109`.
+- Last verification for this batch: client build passed, server build passed, server tests passed `112/112`.

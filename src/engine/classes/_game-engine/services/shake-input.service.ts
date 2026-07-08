@@ -28,7 +28,7 @@ const clamp = (value: number, min: number, max: number): number =>
 
 const randomBetween = (min: number, max: number): number => min + (max - min) * Math.random();
 
-const SPACE_THROW_SPEED_SCALE = 0.46;
+const SPACE_THROW_SPEED_SCALE = 0.41;
 const SPACE_THROW_UPWARD_SPEED = 3.7;
 const SPACE_THROW_START_DEPTH_MIN = 0.58;
 const SPACE_THROW_START_DEPTH_MAX = 0.76;

@@ -59,7 +59,7 @@ interface Die {
    - Случайный начальный кватернион (ось `random.unit()`, угол `random * 2π`)
    - `body.wakeUp()`
    - `body.velocity = velocity` (одинаковая для всех)
-   - `body.angularVelocity` — случайный в диапазоне `±THROW_ANGULAR_RANDOM` по каждой оси
+   - `body.angularVelocity` — доминирующий self-spin вокруг одной локальной оси кости (`THROW_SELF_SPIN_MIN..MAX`) плюс небольшой random tumble `±THROW_ANGULAR_RANDOM` по локальным осям; результат переводится в world-space через стартовый кватернион
    - Синхронизировать mesh с body немедленно (иначе один кадр визуала на старой позиции)
 
 ### `syncMeshes()`

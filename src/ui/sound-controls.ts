@@ -12,7 +12,7 @@ interface SoundSlidersOptions {
   compact?: boolean;
 }
 
-type AudioKey = keyof AudioSettings;
+type AudioSliderKey = 'effectsVolume' | 'musicVolume';
 
 const clampVolume = (value: number): number => Math.max(0, Math.min(1, value));
 
@@ -23,8 +23,10 @@ export const createSoundSliders = (
 ): HTMLDivElement => {
   const compact = options.compact === true;
   let draft: AudioSettings = {
+    masterVolume: clampVolume(audio.masterVolume),
     effectsVolume: clampVolume(audio.effectsVolume),
     musicVolume: clampVolume(audio.musicVolume),
+    quickSearchClockEnabled: audio.quickSearchClockEnabled,
   };
 
   const wrap = document.createElement('div');
@@ -38,10 +40,11 @@ export const createSoundSliders = (
   wrap.append(
     createSlider(t('effects'), 'effectsVolume'),
     createSlider(t('music'), 'musicVolume'),
+    createSwitch(t('quickSearchClock')),
   );
   return wrap;
 
-  function createSlider(label: string, key: AudioKey): HTMLLabelElement {
+  function createSlider(label: string, key: AudioSliderKey): HTMLLabelElement {
     const row = document.createElement('label');
     Object.assign(row.style, {
       display: 'grid',
@@ -89,5 +92,45 @@ export const createSoundSliders = (
     updateText();
     row.append(text, input);
     return row;
+  }
+
+  function createSwitch(label: string): HTMLButtonElement {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.setAttribute('role', 'switch');
+    const update = (): void => {
+      btn.setAttribute('aria-checked', String(draft.quickSearchClockEnabled));
+      btn.textContent = `${label}: ${
+        draft.quickSearchClockEnabled ? t('settingOn') : t('settingOff')
+      }`;
+      btn.style.background = draft.quickSearchClockEnabled
+        ? 'rgba(34,197,94,0.16)'
+        : SETTINGS_BUTTON_BG;
+      btn.style.borderColor = draft.quickSearchClockEnabled
+        ? 'rgba(34,197,94,0.42)'
+        : 'rgba(255,255,255,0.18)';
+    };
+    Object.assign(btn.style, {
+      width: '100%',
+      minHeight: compact ? scaledPx(34) : scaledPx(42),
+      padding: compact ? `${scaledPx(6)} ${scaledPx(8)}` : scaledPx(10),
+      border: '1px solid rgba(255,255,255,0.18)',
+      borderRadius: UI_RADIUS,
+      color: '#d8d8e8',
+      fontFamily: FONT_FAMILY.ui,
+      fontSize: compact ? FONT_SIZE.roomMeta : FONT_SIZE.label,
+      textAlign: 'left',
+      cursor: 'pointer',
+    } satisfies Partial<CSSStyleDeclaration>);
+    btn.addEventListener('click', () => {
+      draft = {
+        ...draft,
+        quickSearchClockEnabled: !draft.quickSearchClockEnabled,
+      };
+      update();
+      onChange({ ...draft });
+    });
+    update();
+    return btn;
   }
 };
