@@ -251,6 +251,18 @@ canvas {
   background-size: 119px 32px;
 }
 
+.menu-frame-button.menu-frame-button-small.menu-frame-button-small-large {
+  width: 191px !important;
+  height: 60px !important;
+  background-size: 191px 60px !important;
+  font-size: 24px !important;
+  flex: 0 0 191px !important;
+}
+
+.menu-frame-button.menu-frame-button-small.menu-frame-button-small-large::after {
+  background-size: 179px 48px;
+}
+
 .menu-frame-button:hover::after,
 .menu-frame-button:focus-visible::after {
   opacity: 1;
@@ -297,6 +309,11 @@ canvas {
   -webkit-mask-size: 119px 32px;
 }
 
+.menu-frame-button.menu-frame-button-small.menu-frame-button-small-large.menu-frame-button-danger::before {
+  mask-size: 179px 48px;
+  -webkit-mask-size: 179px 48px;
+}
+
 .language-matrix-text {
   transition:
     opacity 60ms ease,
@@ -337,6 +354,14 @@ canvas {
     0 3px 0 rgba(78, 0, 0, 0.85),
     0 0 16px rgba(220, 40, 40, 0.55),
     0 4px 18px rgba(0, 0, 0, 0.75);
+}
+
+.status-frame.status-frame-large {
+  width: 630px;
+  height: 173px;
+  padding: 0 36px;
+  background-size: 630px 173px;
+  font-size: 75px;
 }
 
 .loading-dots .loading-dot {

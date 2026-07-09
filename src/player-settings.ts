@@ -11,6 +11,7 @@ export const CONTROL_ACTIONS = [
   'continueTurn',
   'bankTurn',
   'surrender',
+  'showRules',
 ] as const;
 
 export type ControlAction = (typeof CONTROL_ACTIONS)[number];
@@ -48,6 +49,7 @@ export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
     continueTurn: 'KeyQ',
     bankTurn: 'KeyE',
     surrender: 'Escape',
+    showRules: 'KeyC',
   },
   gameplay: {
     autoRollAfterContinue: true,

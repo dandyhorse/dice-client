@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { EventEmitter } from '../../event-emitter.class';
 import { DiceService } from './dice.service';
 import { validateSelection, type ScoringOption } from '../../../../domain/scorer';
+import { isGameInteractionBlocked } from '../../../../ui/game-modal-state';
 
 const HIGHLIGHT_PRIORITY = {
   straight: 3,
@@ -101,6 +102,7 @@ export class SelectionService {
 
   selectAllAvailable(): void {
     if (!this.enabled) return;
+    if (isGameInteractionBlocked()) return;
     this.selected.clear();
     this.orderedSelection.length = 0;
 
@@ -207,6 +209,7 @@ export class SelectionService {
 
   private onMouseUp = (event: MouseEvent): void => {
     if (!this.enabled) return;
+    if (isGameInteractionBlocked()) return;
     if (event.button !== 0) return;
 
     const rect = this.canvas.getBoundingClientRect();

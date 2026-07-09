@@ -39,6 +39,7 @@ import {
 import { bindMouseOnlyClick } from './ui/mouse-only-button';
 import { installCustomCursor } from './ui/custom-cursor';
 import { createSoundSliders } from './ui/sound-controls';
+import { closeGamePopups } from './ui/game-modal-state';
 import {
   FONT_FAMILY,
   FONT_SIZE,
@@ -1284,26 +1285,28 @@ const renderLanguageControls = (): void => {
     pointerEvents: 'auto',
   } satisfies Partial<CSSStyleDeclaration>);
 
-  const name = document.createElement('div');
-  name.textContent = currentDisplayName();
-  Object.assign(name.style, {
-    maxWidth: '180px',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-    fontSize: '25px',
-    lineHeight: `${TOP_MENU_ICON_SIZE}px`,
-    textShadow: '0 3px 12px rgba(0,0,0,0.8)',
-  } satisfies Partial<CSSStyleDeclaration>);
-  wrap.appendChild(name);
+  if (!gameplayActive) {
+    const name = document.createElement('div');
+    name.textContent = currentDisplayName();
+    Object.assign(name.style, {
+      maxWidth: '180px',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+      fontSize: '25px',
+      lineHeight: `${TOP_MENU_ICON_SIZE}px`,
+      textShadow: '0 3px 12px rgba(0,0,0,0.8)',
+    } satisfies Partial<CSSStyleDeclaration>);
+    wrap.appendChild(name);
 
-  const avatarItem = createTopMenuItem();
-  avatarItem.appendChild(
-    createAvatarFrame(canEditProfile, () => {
-      toggleProfilePopup();
-    }),
-  );
-  wrap.appendChild(avatarItem);
+    const avatarItem = createTopMenuItem();
+    avatarItem.appendChild(
+      createAvatarFrame(canEditProfile, () => {
+        toggleProfilePopup();
+      }),
+    );
+    wrap.appendChild(avatarItem);
+  }
 
   const settingsItem = createTopMenuItem();
   const settingsButton = createPlainIconButton(t('settings'), SETTINGS_ICON_SRC, () => {
@@ -2101,6 +2104,8 @@ const controlActionLabel = (action: ControlAction): string => {
       return t('bankAction');
     case 'surrender':
       return t('surrenderAction');
+    case 'showRules':
+      return t('showRules');
   }
 };
 
@@ -2279,6 +2284,7 @@ const renderSettingsContent = (card: HTMLElement): void => {
 };
 
 const renderSettingsModal = (): void => {
+  closeGamePopups();
   clearSettingsModal();
 
   const overlay = document.createElement('div');

@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 import { CLOSED_HAND_CURSOR_URL, OPEN_HAND_CURSOR_URL } from '../../../assets/asset-manifest';
 import { setCustomCursorVariant } from '../../../../ui/custom-cursor';
+import {
+  isGameInteractionBlocked,
+  isInteractiveGameTarget,
+} from '../../../../ui/game-modal-state';
 import { EventEmitter } from '../../event-emitter.class';
 import {
   DICE_COUNT,
@@ -41,13 +45,6 @@ const SPACE_THROW_TARGET_CROSS_AXIS_SPREAD = 0.25;
 const DEFAULT_THROW_KEY_CODE = 'Space';
 const OPEN_HAND_CURSOR = `url("${OPEN_HAND_CURSOR_URL}") 64 64, grab`;
 const CLOSED_HAND_CURSOR = `url("${CLOSED_HAND_CURSOR_URL}") 64 64, grabbing`;
-
-const isInteractiveKeyboardTarget = (target: EventTarget | null): boolean => {
-  if (!(target instanceof Element)) return false;
-  if (target.closest('input, textarea, select, button')) return true;
-  const editable = target.closest('[contenteditable]');
-  return editable instanceof HTMLElement && editable.isContentEditable;
-};
 
 export class ShakeInputService {
   readonly events = new EventEmitter();
@@ -123,6 +120,7 @@ export class ShakeInputService {
 
   triggerKeyboardThrow(): void {
     if (!this.enabled) return;
+    if (isGameInteractionBlocked()) return;
     if (this.isHolding) return;
     this.emitSpaceThrow();
   }
@@ -145,6 +143,7 @@ export class ShakeInputService {
 
   private onMouseDown = (event: MouseEvent): void => {
     if (!this.enabled) return;
+    if (isGameInteractionBlocked()) return;
     if (event.button !== 0) return;
     if (!this.projectToHoldPlane(event) || !this.pointerOverTable) {
       this.updateCursor();
@@ -161,6 +160,11 @@ export class ShakeInputService {
 
   private onMouseMove = (event: MouseEvent): void => {
     if (!this.enabled) return;
+    if (isGameInteractionBlocked()) {
+      this.pointerOverTable = false;
+      this.updateCursor();
+      return;
+    }
     if (!this.projectToHoldPlane(event)) {
       this.updateCursor();
       return;
@@ -187,6 +191,12 @@ export class ShakeInputService {
 
   private onMouseUp = (event: MouseEvent): void => {
     if (!this.enabled) return;
+    if (isGameInteractionBlocked()) {
+      this.isHolding = false;
+      this.samples.length = 0;
+      this.updateCursor();
+      return;
+    }
     if (event.button !== 0 || !this.isHolding) return;
     this.isHolding = false;
     this.releaseCursorSuppressed = true;
@@ -228,7 +238,7 @@ export class ShakeInputService {
     if (event.code !== this.throwKeyCode) return;
     if (event.repeat || event.defaultPrevented) return;
     if (this.isHolding) return;
-    if (isInteractiveKeyboardTarget(event.target)) return;
+    if (isInteractiveGameTarget(event.target) || isGameInteractionBlocked()) return;
 
     event.preventDefault();
     this.triggerKeyboardThrow();

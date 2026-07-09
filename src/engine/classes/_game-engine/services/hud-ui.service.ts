@@ -18,24 +18,49 @@ import {
 import type { MatchPhase, MatchStatePayload, RoomStatePayload } from '../../../../network/protocol/types';
 import type { MatchSelectionPreviewPayload } from '../../../../network/protocol/types';
 
-const PANEL_BG = 'rgba(0,0,0,0.6)';
 const PANEL_FG = '#eee';
 const PANEL_OFFLINE_FG = '#8e8e9d';
 const PANEL_RADIUS = UI_RADIUS;
 const PANEL_PAD = '18px 24px';
-const PANEL_ACTIVE_BORDER = '#22c55e';
 const PLAYER_PANEL_TOP_Y = 'calc(clamp(90px, 14vh, 170px) + 15px)';
 const PLAYER_PANEL_BOTTOM_Y = 'calc(clamp(90px, 14vh, 170px) + 25px)';
 const PLAYER_PANEL_TABLE_X = 'max(18px, calc(20vw - 14.4vh - 20px))';
+const HUD_AVATAR_SIZE = 128;
+const HUD_AVATAR_IMAGE_SIZE = 108;
+const HUD_AVATAR_FRAME_SRC = '/assets/ui/Small_frame.svg';
+const HUD_AVATAR_MASK_SRC = '/assets/ui/avatar_mask.svg';
+const HUD_BUTTON_S_FRAME_SRC = '/assets/ui/Button_S.svg';
+const TURN_STAT_TILE_WIDTH = 164;
+const TURN_STAT_TILE_HEIGHT = 88;
 
 const BTN_DISABLED_OPACITY = '0.4';
 const FARKLE_DURATION_MS = 1200;
 const OPPONENT_TURN_BANNER_DURATION_MS = 1500;
+const BLOCKING_OVERLAY_SELECTORS = [
+  '#settings-modal',
+  '#profile-popup',
+  '#auth-modal',
+  '#room-list-modal',
+  '#hud-surrender-confirm',
+  '[data-top-dropdown]',
+].join(',');
 
 const formatMember = (displayName: string): string => displayName.trim() || t('player');
 
 const formatActionLabel = (label: string, code: string): string =>
   `${label} (${controlCodeLabel(code)})`;
+
+const isInteractiveDismissTarget = (target: EventTarget | null): boolean => {
+  if (!(target instanceof Element)) return false;
+  if (target.closest('input, textarea, select, button, [contenteditable]')) return true;
+  return target.closest(BLOCKING_OVERLAY_SELECTORS) !== null;
+};
+
+const hasBlockingOverlay = (): boolean =>
+  document.querySelector(BLOCKING_OVERLAY_SELECTORS) !== null;
+
+const isGameFieldPointer = (event: PointerEvent): boolean =>
+  event.target instanceof HTMLCanvasElement;
 
 /**
  * HUD-оверлей для turn-based матча. Vanilla DOM, без UI-фреймворков
@@ -237,12 +262,12 @@ export class HudUiService {
     this.finalActionsPanel.id = 'hud-final-actions';
     Object.assign(this.finalActionsPanel.style, {
       position: 'fixed',
-      top: 'calc(50% + 108px)',
+      top: 'calc(50% + 140px)',
       left: '50%',
       transform: 'translateX(-50%)',
       display: 'none',
-      gap: '10px',
-      width: 'min(280px, calc(100vw - 24px))',
+      gap: '15px',
+      width: 'min(410px, calc(100vw - 24px))',
       justifyContent: 'center',
       flexWrap: 'nowrap',
       pointerEvents: 'auto',
@@ -252,12 +277,12 @@ export class HudUiService {
       if (this.finalExitBtn.disabled) return;
       this.events.emit('final-exit-clicked');
     });
-    this.finalExitBtn.classList.add('menu-frame-button-small');
+    this.finalExitBtn.classList.add('menu-frame-button-small', 'menu-frame-button-small-large');
     this.finalRematchBtn = this.makeButton('', () => {
       if (this.finalRematchBtn.disabled) return;
       this.events.emit('rematch-clicked');
     });
-    this.finalRematchBtn.classList.add('menu-frame-button-small');
+    this.finalRematchBtn.classList.add('menu-frame-button-small', 'menu-frame-button-small-large');
     this.finalActionsPanel.appendChild(this.finalExitBtn);
     this.finalActionsPanel.appendChild(this.finalRematchBtn);
 
@@ -340,6 +365,7 @@ export class HudUiService {
     if (this.finalResult !== null) return;
     const isFarkle = message.toUpperCase() === 'BUST';
     this.errorPanel.textContent = isFarkle ? t('farkle') : message;
+    this.errorPanel.classList.remove('status-frame-large');
     this.errorPanel.classList.toggle('status-frame-danger', isFarkle);
     this.errorPanel.style.display = 'grid';
     if (isFarkle) {
@@ -374,6 +400,7 @@ export class HudUiService {
     this.queuedTurnBannerUserId = '';
     this.actionsBlocked = true;
     this.errorPanel.textContent = result === 'FARKLE' ? t('farkle') : 'WIN';
+    this.errorPanel.classList.add('status-frame-large');
     this.errorPanel.classList.toggle('status-frame-danger', result === 'FARKLE');
     this.errorPanel.style.display = 'grid';
     this.turnBannerPanel.style.display = 'none';
@@ -514,14 +541,20 @@ export class HudUiService {
   private makeStatTile(label: string, value: string): HTMLDivElement {
     const tile = document.createElement('div');
     Object.assign(tile.style, {
-      padding: '11px 18px',
-      background: PANEL_BG,
+      width: `${TURN_STAT_TILE_WIDTH}px`,
+      height: `${TURN_STAT_TILE_HEIGHT}px`,
+      padding: '0 18px 2px',
+      backgroundImage: `url('${HUD_BUTTON_S_FRAME_SRC}')`,
+      backgroundRepeat: 'no-repeat',
+      backgroundPosition: 'center',
+      backgroundSize: '100% 100%',
       color: PANEL_FG,
-      border: '1px solid rgba(255,255,255,0.12)',
-      borderRadius: PANEL_RADIUS,
       textAlign: 'center',
-      minWidth: '156px',
       boxSizing: 'border-box',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
     } satisfies Partial<CSSStyleDeclaration>);
 
     const labelEl = document.createElement('div');
@@ -622,20 +655,21 @@ export class HudUiService {
   ): HTMLDivElement {
     const avatar = document.createElement('div');
     Object.assign(avatar.style, {
-      width: '128px',
-      height: '128px',
-      flex: '0 0 128px',
+      width: `${HUD_AVATAR_SIZE}px`,
+      height: `${HUD_AVATAR_SIZE}px`,
+      flex: `0 0 ${HUD_AVATAR_SIZE}px`,
       display: 'grid',
       placeItems: 'center',
-      overflow: 'hidden',
-      borderRadius: '6px',
-      background: 'transparent',
+      overflow: 'visible',
+      borderRadius: '0',
+      background: `url("${HUD_AVATAR_FRAME_SRC}") center / ${HUD_AVATAR_SIZE}px ${HUD_AVATAR_SIZE}px no-repeat`,
       border: 'none',
       color: '#fff',
       fontSize: '34px',
       fontWeight: '700',
       opacity: member.online === false ? '0.45' : '1',
       boxSizing: 'border-box',
+      position: 'relative',
     } satisfies Partial<CSSStyleDeclaration>);
 
     const url = avatarUrlForIndex(member.avatarIndex);
@@ -650,12 +684,25 @@ export class HudUiService {
     image.draggable = false;
     Object.assign(image.style, {
       display: 'block',
-      width: '100%',
-      height: '100%',
+      width: `${HUD_AVATAR_IMAGE_SIZE}px`,
+      height: `${HUD_AVATAR_IMAGE_SIZE}px`,
       objectFit: 'cover',
       pointerEvents: 'none',
       userSelect: 'none',
+      position: 'relative',
+      zIndex: '1',
     } satisfies Partial<CSSStyleDeclaration>);
+    image.style.maskImage = `url("${HUD_AVATAR_MASK_SRC}")`;
+    image.style.maskSize = `${HUD_AVATAR_IMAGE_SIZE}px ${HUD_AVATAR_IMAGE_SIZE}px`;
+    image.style.maskRepeat = 'no-repeat';
+    image.style.maskPosition = 'center';
+    image.style.setProperty('-webkit-mask-image', `url("${HUD_AVATAR_MASK_SRC}")`);
+    image.style.setProperty(
+      '-webkit-mask-size',
+      `${HUD_AVATAR_IMAGE_SIZE}px ${HUD_AVATAR_IMAGE_SIZE}px`,
+    );
+    image.style.setProperty('-webkit-mask-repeat', 'no-repeat');
+    image.style.setProperty('-webkit-mask-position', 'center');
     avatar.appendChild(image);
     return avatar;
   }
@@ -663,10 +710,10 @@ export class HudUiService {
   private stylePlayerPanel(
     panel: HTMLDivElement,
     member: NonNullable<RoomStatePayload['members'][number]> | null,
-    active: boolean,
+    _active: boolean,
   ): void {
     panel.style.color = member?.online === false ? PANEL_OFFLINE_FG : PANEL_FG;
-    panel.style.border = active ? `1px solid ${PANEL_ACTIVE_BORDER}` : '1px solid transparent';
+    panel.style.border = 'none';
   }
 
   private getOwnRole(): number | null {
@@ -821,12 +868,12 @@ export class HudUiService {
     Object.assign(el.style, {
       position: 'fixed',
       padding: PANEL_PAD,
-      background: PANEL_BG,
+      background: 'transparent',
       color: PANEL_FG,
       fontFamily: FONT_FAMILY.ui,
       fontSize: FONT_SIZE.hud,
       borderRadius: PANEL_RADIUS,
-      border: '1px solid transparent',
+      border: 'none',
       pointerEvents: 'none',
       lineHeight: '1.5',
     } satisfies Partial<CSSStyleDeclaration>);
@@ -917,7 +964,11 @@ export class HudUiService {
   private dismissTransientOverlays = (event: PointerEvent | KeyboardEvent): void => {
     if (this.finalResult !== null) return;
     const isKeyboard = event.type === 'keydown';
-    if (isKeyboard && (event as KeyboardEvent).code !== this.controls.throwDice) return;
+    const canDismissTurnBanner = isKeyboard
+      ? (event as KeyboardEvent).code === this.controls.throwDice &&
+        !hasBlockingOverlay() &&
+        !isInteractiveDismissTarget(event.target)
+      : isGameFieldPointer(event as PointerEvent);
 
     let dismissed = false;
     if (!isKeyboard && this.errorPanel.style.display !== 'none' && this.farkleTimer === null) {
@@ -928,7 +979,11 @@ export class HudUiService {
         this.renderActions();
       }
     }
-    if (this.turnBannerPanel.style.display !== 'none' && this.turnBannerClickDismissable) {
+    if (
+      canDismissTurnBanner &&
+      this.turnBannerPanel.style.display !== 'none' &&
+      this.turnBannerClickDismissable
+    ) {
       this.clearTurnBannerTimer();
       this.turnBannerPanel.style.display = 'none';
       this.turnBannerClickDismissable = false;
@@ -991,6 +1046,7 @@ export class HudUiService {
     this.finalRematchAvailable = true;
     this.actionsBlocked = false;
     this.errorPanel.style.display = 'none';
+    this.errorPanel.classList.remove('status-frame-large');
     this.turnBannerClickDismissable = false;
     this.turnBannerUserId = '';
     this.finalActionsPanel.style.display = 'none';

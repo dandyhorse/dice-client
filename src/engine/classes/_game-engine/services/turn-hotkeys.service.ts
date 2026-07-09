@@ -1,12 +1,9 @@
 import { EventEmitter } from '../../event-emitter.class';
 import { DEFAULT_PLAYER_SETTINGS, type ControlBindings } from '../../../../player-settings';
-
-const isInteractiveKeyboardTarget = (target: EventTarget | null): boolean => {
-  if (!(target instanceof Element)) return false;
-  if (target.closest('input, textarea, select, button')) return true;
-  const editable = target.closest('[contenteditable]');
-  return editable instanceof HTMLElement && editable.isContentEditable;
-};
+import {
+  isGameInteractionBlocked,
+  isInteractiveGameTarget,
+} from '../../../../ui/game-modal-state';
 
 export class TurnHotkeysService {
   readonly events = new EventEmitter();
@@ -35,7 +32,7 @@ export class TurnHotkeysService {
   private onKeyDown = (event: KeyboardEvent): void => {
     if (!this.enabled) return;
     if (event.repeat || event.defaultPrevented) return;
-    if (isInteractiveKeyboardTarget(event.target)) return;
+    if (isInteractiveGameTarget(event.target) || isGameInteractionBlocked()) return;
 
     const action = this.actionForCode(event.code);
     if (!action) return;

@@ -45,6 +45,7 @@ import {
 } from '../../../domain/local-match';
 import { isBust, scoreRoll, validateSelection } from '../../../domain/scorer';
 import { onLanguageChange, t } from '../../../ui/i18n';
+import { GAME_POPUP_CLOSE_EVENT } from '../../../ui/game-modal-state';
 import { DEFAULT_PLAYER_SETTINGS, type PlayerSettings } from '../../../player-settings';
 import type {
   MatchPhase,
@@ -246,10 +247,15 @@ export class GameEngine {
       preset: this.activeDicePreset,
     });
     this.dice.spawn();
-    this.rulesBoard = new RulesBoardService(this.scene, this.camera, this.renderer.domElement);
+    const playerSettings = this.playerSettings;
+    this.rulesBoard = new RulesBoardService(
+      this.scene,
+      this.camera,
+      this.renderer.domElement,
+      playerSettings.controls.showRules,
+    );
     this.perf = this.createPerfStats();
 
-    const playerSettings = this.playerSettings;
     this.input = new ShakeInputService(
       this.renderer.domElement,
       this.camera,
@@ -260,6 +266,7 @@ export class GameEngine {
     this.turnHotkeys.events.on('continue', this.handleHotkeyContinue);
     this.turnHotkeys.events.on('bank', this.handleHotkeyBank);
     this.turnHotkeys.events.on('surrender', this.handleHotkeySurrender);
+    window.addEventListener(GAME_POPUP_CLOSE_EVENT, this.handleCloseGamePopups);
     this.input.events.on('hold-start', (_position: THREE.Vector3, source?: HoldStartSource) => {
       if (source === 'pointer') audioService.play('dice-pickup');
       this.dice.pickup();
@@ -1014,6 +1021,10 @@ export class GameEngine {
     this.showSurrenderConfirm();
   };
 
+  private handleCloseGamePopups = (): void => {
+    this.closeSurrenderConfirm();
+  };
+
   private handleSurrenderConfirmKeyDown = (event: KeyboardEvent): void => {
     if (event.code !== 'Escape') return;
     if (event.repeat) return;
@@ -1026,6 +1037,7 @@ export class GameEngine {
     if (this.surrenderConfirmEl !== null || !this.canUseSurrender()) return;
 
     const overlay = document.createElement('div');
+    overlay.id = 'hud-surrender-confirm';
     Object.assign(overlay.style, {
       position: 'fixed',
       inset: '0',
@@ -1041,8 +1053,8 @@ export class GameEngine {
 
     const panel = document.createElement('div');
     Object.assign(panel.style, {
-      width: 'min(360px, calc(100vw - 48px))',
-      padding: '18px',
+      width: 'min(540px, calc(100vw - 48px))',
+      padding: '27px',
       borderRadius: UI_RADIUS,
       background: '#151414',
       color: '#fff',
@@ -1055,9 +1067,9 @@ export class GameEngine {
     question.dataset.surrenderConfirmQuestion = 'true';
     question.textContent = t('surrenderConfirm');
     Object.assign(question.style, {
-      fontSize: '20px',
+      fontSize: '30px',
       lineHeight: '1.25',
-      marginBottom: '16px',
+      marginBottom: '24px',
     } satisfies Partial<CSSStyleDeclaration>);
 
     const actions = document.createElement('div');
@@ -1065,12 +1077,12 @@ export class GameEngine {
       display: 'flex',
       justifyContent: 'center',
       flexWrap: 'nowrap',
-      gap: '10px',
+      gap: '15px',
     } satisfies Partial<CSSStyleDeclaration>);
 
     const makeConfirmButton = (label: string, kind: 'yes' | 'no'): HTMLButtonElement => {
       const btn = document.createElement('button');
-      btn.classList.add('menu-frame-button', 'menu-frame-button-small');
+      btn.classList.add('menu-frame-button', 'menu-frame-button-small', 'menu-frame-button-small-large');
       const text = document.createElement('span');
       text.dataset.surrenderConfirmLabel = kind;
       text.textContent = label;
@@ -1529,6 +1541,7 @@ export class GameEngine {
     if (this.networkActionsBlockTimer !== null) clearTimeout(this.networkActionsBlockTimer);
     this.networkActionsBlockTimer = null;
     window.removeEventListener('resize', this.onResize);
+    window.removeEventListener(GAME_POPUP_CLOSE_EVENT, this.handleCloseGamePopups);
     this.turnHotkeys.destroy();
     this.input.destroy();
     this.selection?.destroy();
@@ -1568,6 +1581,7 @@ export class GameEngine {
   setPlayerSettings(settings: PlayerSettings): void {
     this.playerSettings = settings;
     this.input.setThrowKeyCode(settings.controls.throwDice);
+    this.rulesBoard.setToggleKeyCode(settings.controls.showRules);
     this.turnHotkeys.setBindings(settings.controls);
     this.hud?.setControls(settings.controls);
   }

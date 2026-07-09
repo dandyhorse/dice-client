@@ -1,5 +1,7 @@
 import { DICE_RULE_ICON_URLS } from '../../../assets/asset-manifest';
+import { audioService } from '../../../audio/audio.service';
 import { onLanguageChange, t } from '../../../../ui/i18n';
+import { isGameInteractionBlocked } from '../../../../ui/game-modal-state';
 
 const RULES_BOARD_ASPECT_WIDTH = 299;
 const RULES_BOARD_ASPECT_HEIGHT = 511;
@@ -18,9 +20,16 @@ const RULE_BODY_FONT_SIZE = 13.8;
 const RULE_TITLE_FONT_SIZE = 15.2;
 const RULE_TEXT_COLOR = '#f4f0ea';
 const RULES_BOARD_TILT_TRANSITION = 'transform 140ms ease';
+const RULES_BOARD_TILT_RETURN_TRANSITION = 'transform 1200ms cubic-bezier(0.16, 1, 0.3, 1)';
+const LANGUAGE_MATRIX_STEP_MS = 84;
+const LANGUAGE_MATRIX_ROUNDS = 5;
+const LANGUAGE_MATRIX_CHARS =
+  'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789АБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЭЮЯабвгдежзиклмнопрстуфхцчшэюя';
 
 type DieFace = 1 | 2 | 3 | 4 | 5 | 6;
 const DIE_FACES: readonly DieFace[] = [1, 2, 3, 4, 5, 6];
+type RuleLabelKey = 'extraDiceLine1' | 'extraDiceLine2' | 'specialCombinations';
+type RuleLabels = Record<RuleLabelKey, string>;
 
 interface RuleScoreRow {
   faces: readonly DieFace[];
@@ -64,12 +73,23 @@ export class RulesBoardService {
   private shown = false;
   private tiltX = 0;
   private tiltY = 0;
+  private toggleKeyCode: string;
+  private languageMatrixRunId = 0;
+  private languageMatrixTimers: number[] = [];
+  private animatedLabels: RuleLabels | null = null;
+  private animatedScores: string[] | null = null;
   private removeLanguageListener: (() => void) | null = null;
 
-  constructor(_scene: unknown, _camera: unknown, _canvas: HTMLCanvasElement) {
+  constructor(
+    _scene: unknown,
+    _camera: unknown,
+    _canvas: HTMLCanvasElement,
+    toggleKeyCode = 'KeyC',
+  ) {
     void _scene;
     void _camera;
     void _canvas;
+    this.toggleKeyCode = toggleKeyCode;
 
     this.createDomOverlay();
     this.applyVisibility();
@@ -77,7 +97,8 @@ export class RulesBoardService {
 
     window.addEventListener('keydown', this.onKeyDown);
     this.panel.addEventListener('pointermove', this.onPointerMove);
-    this.removeLanguageListener = onLanguageChange(this.renderRulesBoard);
+    this.panel.addEventListener('pointerleave', this.onPointerLeave);
+    this.removeLanguageListener = onLanguageChange(this.runLanguageMatrixAnimation);
     void document.fonts?.ready.then(() => this.renderRulesBoard());
   }
 
@@ -87,9 +108,16 @@ export class RulesBoardService {
 
   updateLayout(): void {}
 
+  setToggleKeyCode(code: string): void {
+    this.toggleKeyCode = code;
+  }
+
   destroy(): void {
     window.removeEventListener('keydown', this.onKeyDown);
     this.panel.removeEventListener('pointermove', this.onPointerMove);
+    this.panel.removeEventListener('pointerleave', this.onPointerLeave);
+    this.clearLanguageMatrixTimers();
+    this.languageMatrixRunId += 1;
     this.removeLanguageListener?.();
     this.removeLanguageListener = null;
     this.root.remove();
@@ -133,7 +161,9 @@ export class RulesBoardService {
     Object.assign(this.canvas.style, {
       display: 'block',
       height: '100%',
+      opacity: '1',
       pointerEvents: 'none',
+      transition: 'opacity 60ms ease',
       userSelect: 'none',
       width: '100%',
     } satisfies Partial<CSSStyleDeclaration>);
@@ -158,15 +188,99 @@ export class RulesBoardService {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
 
-    for (const row of RULE_SCORE_ROWS) {
+    RULE_SCORE_ROWS.forEach((row, index) => {
       this.drawDiceRow(ctx, row);
-      this.drawScore(ctx, row);
+      this.drawScore(ctx, row, this.animatedScores?.[index] ?? row.score);
+    });
+
+    const labels = this.animatedLabels ?? this.currentRuleLabels();
+    this.drawLabel(ctx, labels.extraDiceLine1, 0, 204, RULE_BODY_FONT_SIZE);
+    this.drawLabel(ctx, labels.extraDiceLine2, 0, 224, RULE_BODY_FONT_SIZE);
+    this.drawLabel(ctx, labels.specialCombinations, 0, 385, RULE_TITLE_FONT_SIZE);
+  };
+
+  private runLanguageMatrixAnimation = (): void => {
+    const runId = ++this.languageMatrixRunId;
+    this.clearLanguageMatrixTimers();
+    this.canvas.style.opacity = '0.74';
+    const target = this.currentRuleLabels();
+    const scoreTargets = RULE_SCORE_ROWS.map((row) => row.score);
+    const labelEntries = Object.entries(target).map(([key, value]) => {
+      const targetChars = Array.from(value);
+      return {
+        key: key as RuleLabelKey,
+        targetChars,
+        revealEvery: Math.max(1, Math.ceil(targetChars.length / LANGUAGE_MATRIX_ROUNDS)),
+      };
+    });
+    const scoreEntries = scoreTargets.map((value, index) => ({
+      index,
+      targetChars: Array.from(value),
+      revealEvery: Math.max(1, Math.ceil(value.length / LANGUAGE_MATRIX_ROUNDS)),
+    }));
+
+    for (let round = 0; round <= LANGUAGE_MATRIX_ROUNDS; round += 1) {
+      this.languageMatrixTimers.push(window.setTimeout(() => {
+        if (runId !== this.languageMatrixRunId) return;
+        const labels = { ...target };
+        const scores = [...scoreTargets];
+        for (const entry of labelEntries) {
+          const revealCount = Math.min(
+            entry.targetChars.length,
+            round * entry.revealEvery,
+          );
+          labels[entry.key] = this.languageMatrixFrameText(entry.targetChars, revealCount);
+        }
+        for (const entry of scoreEntries) {
+          const revealCount = Math.min(
+            entry.targetChars.length,
+            round * entry.revealEvery,
+          );
+          scores[entry.index] = this.languageMatrixFrameText(entry.targetChars, revealCount);
+        }
+        this.animatedLabels = labels;
+        this.animatedScores = scores;
+        this.renderRulesBoard();
+      }, round * LANGUAGE_MATRIX_STEP_MS));
     }
 
-    this.drawLabel(ctx, t('rulesExtraDiceLine1'), 0, 204, RULE_BODY_FONT_SIZE);
-    this.drawLabel(ctx, t('rulesExtraDiceLine2'), 0, 224, RULE_BODY_FONT_SIZE);
-    this.drawLabel(ctx, t('rulesSpecialCombinations'), 0, 385, RULE_TITLE_FONT_SIZE);
+    this.languageMatrixTimers.push(window.setTimeout(() => {
+      if (runId !== this.languageMatrixRunId) return;
+      this.animatedLabels = null;
+      this.animatedScores = null;
+      this.canvas.style.opacity = '1';
+      this.renderRulesBoard();
+      this.clearLanguageMatrixTimers();
+    }, (LANGUAGE_MATRIX_ROUNDS + 1) * LANGUAGE_MATRIX_STEP_MS));
   };
+
+  private clearLanguageMatrixTimers(): void {
+    for (const timer of this.languageMatrixTimers) clearTimeout(timer);
+    this.languageMatrixTimers = [];
+  }
+
+  private currentRuleLabels(): RuleLabels {
+    return {
+      extraDiceLine1: t('rulesExtraDiceLine1'),
+      extraDiceLine2: t('rulesExtraDiceLine2'),
+      specialCombinations: t('rulesSpecialCombinations'),
+    };
+  }
+
+  private languageMatrixFrameText(targetChars: string[], revealCount: number): string {
+    return targetChars
+      .map((char, index) => {
+        if (/\s/u.test(char) || index < revealCount) return char;
+        return this.randomLanguageMatrixChar();
+      })
+      .join('');
+  }
+
+  private randomLanguageMatrixChar(): string {
+    return LANGUAGE_MATRIX_CHARS[
+      Math.floor(Math.random() * LANGUAGE_MATRIX_CHARS.length)
+    ]!;
+  }
 
   private loadDiceImages(): void {
     for (const face of DIE_FACES) {
@@ -192,11 +306,11 @@ export class RulesBoardService {
     });
   }
 
-  private drawScore(ctx: CanvasRenderingContext2D, row: RuleScoreRow): void {
+  private drawScore(ctx: CanvasRenderingContext2D, row: RuleScoreRow, score: string): void {
     this.applyTextStyle(ctx, RULE_SCORE_FONT_SIZE);
     ctx.textBaseline = 'middle';
     ctx.textAlign = row.scoreAnchor ?? 'start';
-    ctx.fillText(row.score, row.scoreX, row.y + RULE_DIE_SIZE / 2);
+    ctx.fillText(score, row.scoreX, row.y + RULE_DIE_SIZE / 2);
   }
 
   private drawLabel(
@@ -233,16 +347,19 @@ export class RulesBoardService {
   }
 
   private onKeyDown = (event: KeyboardEvent): void => {
-    if (event.repeat || event.defaultPrevented || event.code !== 'KeyH') return;
+    if (event.repeat || event.defaultPrevented || event.code !== this.toggleKeyCode) return;
+    if (isGameInteractionBlocked()) return;
     if (isInteractiveKeyboardTarget(event.target)) return;
 
     event.preventDefault();
+    audioService.play('ui-dropdown-toggle');
     this.shown = !this.shown;
     this.applyVisibility();
   };
 
   private onPointerMove = (event: PointerEvent): void => {
     if (!this.shown) return;
+    this.panel.style.transition = RULES_BOARD_TILT_TRANSITION;
 
     const rect = this.panel.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return;
@@ -258,6 +375,14 @@ export class RulesBoardService {
       -RULES_BOARD_HOVER_TILT_DEG,
       Math.min(RULES_BOARD_HOVER_TILT_DEG, (dx / RULES_BOARD_TILT_FULL_DISTANCE_PX) * RULES_BOARD_HOVER_TILT_DEG),
     );
+    this.applyTilt();
+  };
+
+  private onPointerLeave = (): void => {
+    if (!this.shown) return;
+    this.panel.style.transition = RULES_BOARD_TILT_RETURN_TRANSITION;
+    this.tiltX = 0;
+    this.tiltY = 0;
     this.applyTilt();
   };
 }
