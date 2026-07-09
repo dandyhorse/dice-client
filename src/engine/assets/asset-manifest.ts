@@ -19,6 +19,7 @@ export const TABLE_COLOR_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_l
 export const TABLE_NORMAL_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_long_nor_gl_1k.webp`;
 export const TABLE_ROUGHNESS_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_long_rough_1k.webp`;
 export const BACKGROUND_TEXTURE_URL = '/assets/background/background_texture_2.webp';
+// Static rules texture kept for rollback; runtime rules board is generated from dice icons + i18n.
 export const RULES_BOARD_TEXTURE_URL = '/assets/rules.svg';
 export const TARGET_HAND_CURSOR_URL = '/assets/cursors/target-hand.png';
 export const OPEN_HAND_CURSOR_URL = '/assets/cursors/open-hand.png';
@@ -81,7 +82,7 @@ export const ASSET_GROUPS: Record<AssetGroup, AssetGroupManifest> = {
     images: [
       ...DICE_PRESET_IMAGE_URLS,
       ...DICE_RULE_ICON_URLS,
-      RULES_BOARD_TEXTURE_URL,
+      // RULES_BOARD_TEXTURE_URL,
       TARGET_HAND_CURSOR_URL,
       OPEN_HAND_CURSOR_URL,
       CLOSED_HAND_CURSOR_URL,

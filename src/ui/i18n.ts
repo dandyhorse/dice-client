@@ -140,6 +140,9 @@ const tokens = {
     playerTurnPrefix: 'TURN',
     farkle: 'FARKLE',
     pause: 'Pause',
+    rulesExtraDiceLine1: 'Every extra die',
+    rulesExtraDiceLine2: 'in a combination doubles the score',
+    rulesSpecialCombinations: 'Special combinations',
   },
   ru: {
     mobileTitle: 'Farklepit',
@@ -276,6 +279,9 @@ const tokens = {
     playerTurnPrefix: 'ХОД',
     farkle: 'FARKLE',
     pause: 'Пауза',
+    rulesExtraDiceLine1: 'Каждая дополнительная кость',
+    rulesExtraDiceLine2: 'в комбинации удваивает результат',
+    rulesSpecialCombinations: 'Козырные комбинации',
   },
 } satisfies Record<Language, TokenMap>;
 
