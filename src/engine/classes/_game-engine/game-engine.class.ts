@@ -176,6 +176,7 @@ export class GameEngine {
   private localBotDecision: FarkleBotDecision | null = null;
   private localBotSelectedDiceIndices: number[] = [];
   private localBotActionTimer: number | null = null;
+  private pendingLocalBenchStagger = false;
   private networkLastRolledFaces: number[] = [];
   private pendingSelectionPreview: MatchSelectionPreviewPayload | null = null;
   private pendingNetworkAutoRoll = false;
@@ -336,7 +337,13 @@ export class GameEngine {
         ? null
         : new SelectionService(this.renderer.domElement, this.camera, this.dice, this.scene);
       this.benchDice = isTestRoom ? null : new BenchDiceService(this.scene);
-      this.hud = isTestRoom ? null : new HudUiService(ownUserId, playerSettings.controls);
+      this.hud = isTestRoom
+        ? null
+        : new HudUiService(
+          ownUserId,
+          playerSettings.controls,
+          (event) => this.input.isPointerInsideThrowZone(event),
+        );
       if (this.currentRoomState) this.hud?.setRoomState(this.currentRoomState);
 
       net.events.on('room-state', (state: RoomState) => {
@@ -365,7 +372,7 @@ export class GameEngine {
         // по костям и выключает hold/release; всё остальное — инверсно.
         // Без этого pickup() прячет кости как раз когда игрок хочет в них кликать.
         net.events.on('match-state', (state: MatchStatePayload) => {
-          this.playNetworkContinueSound(this.currentMatchState, state);
+          const staggerBench = this.shouldStaggerBenchAppend(this.currentMatchState, state);
           this.currentMatchState = state;
           this.syncActiveDicePreset();
           if (state.phase !== MATCH_PHASE.SELECTING) this.networkLastRolledFaces = [];
@@ -378,7 +385,7 @@ export class GameEngine {
             this.pendingSelectionPreview = null;
             this.hud?.setSelectionPreview(null);
           }
-          this.benchDice?.setFaces(state.bench);
+          this.syncBenchDice(state.bench, staggerBench);
           this.hud?.setMatchState(state);
           this.applyPendingSelectionPreview();
           const isOwnPlayer = this.isOwnPlayer(ownUserId);
@@ -493,7 +500,11 @@ export class GameEngine {
       this.selection = new SelectionService(this.renderer.domElement, this.camera, this.dice, this.scene);
       this.selection.disable();
       this.localMatchState = createLocalMatch();
-      this.hud = new HudUiService(LOCAL_HUMAN_USER_ID, playerSettings.controls);
+      this.hud = new HudUiService(
+        LOCAL_HUMAN_USER_ID,
+        playerSettings.controls,
+        (event) => this.input.isPointerInsideThrowZone(event),
+      );
       this.syncLocalMatchHud(MATCH_PHASE.WAITING);
 
       this.selection.events.on(
@@ -625,17 +636,27 @@ export class GameEngine {
     audioService.preloadCollisionSounds(sounds).catch(() => undefined);
   }
 
-  private playNetworkContinueSound(
+  private shouldStaggerBenchAppend(
     previous: MatchStatePayload | null,
     next: MatchStatePayload,
-  ): void {
-    if (!previous) return;
+  ): boolean {
+    if (!previous) return false;
     if (previous.phase !== MATCH_PHASE.SELECTING || next.phase !== MATCH_PHASE.WAITING) {
-      return;
+      return false;
     }
-    if (previous.currentPlayer !== next.currentPlayer) return;
-    if (next.turnPoints <= previous.turnPoints) return;
-    audioService.play('gameplay-continue');
+    if (previous.currentPlayer !== next.currentPlayer) return false;
+    if (next.turnPoints <= previous.turnPoints) return false;
+    if (next.bench.length <= previous.bench.length) return false;
+    return previous.bench.every((face, index) => next.bench[index] === face);
+  }
+
+  private syncBenchDice(faces: number[], staggerAdded = false): void {
+    this.benchDice?.setFaces(faces, {
+      staggerAdded,
+      onFaceAdded: () => {
+        audioService.play('gameplay-continue');
+      },
+    });
   }
 
   private localPlayerUserId(player: LocalMatchState['currentPlayer']): string {
@@ -728,7 +749,8 @@ export class GameEngine {
     this.currentRoomState = roomState;
     this.currentMatchState = matchState;
     this.syncActiveDicePreset();
-    this.benchDice?.setFaces(matchState.bench);
+    this.syncBenchDice(matchState.bench, this.pendingLocalBenchStagger);
+    this.pendingLocalBenchStagger = false;
     this.hud?.setRoomState(roomState);
     this.hud?.setMatchState(matchState);
   }
@@ -878,7 +900,6 @@ export class GameEngine {
     const selectedFaces = selectedRollIndices
       .map((rollIndex) => this.localLastRolledFaces[rollIndex])
       .filter((face): face is number => typeof face === 'number');
-    audioService.play('gameplay-continue');
     this.localMatchState = recordLocalMatchContinue(
       state,
       config,
@@ -886,6 +907,7 @@ export class GameEngine {
       selectedFaces.length,
       selectedFaces,
     );
+    this.pendingLocalBenchStagger = selectedFaces.length > 0;
     if (remaining.length === 0 || this.localMatchState.activeDiceCount === 6) {
       this.dice.resetLocalForNewTurn();
     } else {
@@ -952,7 +974,7 @@ export class GameEngine {
         return;
       }
       this.input.setEnabled(true);
-      this.input.triggerKeyboardThrow();
+      this.input.triggerAutomatedThrow();
       this.input.setEnabled(false);
     }, LOCAL_BOT_ROLL_DELAY_MS);
   }

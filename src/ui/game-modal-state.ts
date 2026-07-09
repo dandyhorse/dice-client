@@ -1,4 +1,5 @@
 export const GAME_POPUP_CLOSE_EVENT = 'dice:close-game-popups';
+export const TOP_MENU_DROPDOWN_CLOSE_EVENT = 'dice:close-top-menu-dropdowns';
 
 export const GAME_BLOCKING_OVERLAY_SELECTORS = [
   '#settings-modal',
@@ -6,11 +7,14 @@ export const GAME_BLOCKING_OVERLAY_SELECTORS = [
   '#auth-modal',
   '#room-list-modal',
   '#hud-surrender-confirm',
-  '[data-top-dropdown]',
 ].join(',');
 
 export const closeGamePopups = (): void => {
   window.dispatchEvent(new Event(GAME_POPUP_CLOSE_EVENT));
+};
+
+export const requestTopMenuDropdownClose = (): void => {
+  window.dispatchEvent(new Event(TOP_MENU_DROPDOWN_CLOSE_EVENT));
 };
 
 export const isGameInteractionBlocked = (): boolean =>

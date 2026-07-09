@@ -4,6 +4,7 @@ import {
   DICE_DICE_COLLISION_SOUND_URL,
   DICE_PICKUP_SOUND_URL,
   DICE_SURFACE_COLLISION_SOUND_URL,
+  DICE_THROW_SOUND_URL,
   GAMEPLAY_BANK_SOUND_URL,
   GAMEPLAY_CONTINUE_SOUND_URL,
   UI_CLICK_SOUND_URL,
@@ -52,11 +53,12 @@ const SOUND_DEFS: Record<SoundId, SoundDef> = {
     cooldownMs: 80,
   },
   'dice-throw': {
-    src: [],
+    src: DICE_THROW_SOUND_URL ? [DICE_THROW_SOUND_URL] : [],
     group: 'gameplay',
     bus: 'effects',
     volume: 0.62,
-    rateVariation: 0.06,
+    baseRate: 1.15,
+    rateVariation: 0,
     cooldownMs: 120,
   },
   'dice-collision-dice': {

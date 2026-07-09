@@ -71,8 +71,10 @@ export const DICE_PRESETS: readonly DicePreset[] = [
     },
     sounds: {
       dice: {
-        url: '/assets/sounds/stones_04.ogg',
+        url: '/assets/sounds/item_stone_02.ogg',
         volume: 0.5,
+        baseRate: 0.805,
+        // rateVariation: 0.035,
         cooldownMs: 35,
       },
       surface: {
@@ -110,8 +112,10 @@ export const DICE_PRESETS: readonly DicePreset[] = [
     },
     sounds: {
       dice: {
-        url: '/assets/sounds/stones_04.ogg',
+        url: '/assets/sounds/item_stone_02.ogg',
         volume: 0.46,
+        baseRate: 0.805,
+        // rateVariation: 0.035,
         cooldownMs: 35,
       },
       surface: {

@@ -3,6 +3,7 @@ import { DEFAULT_PLAYER_SETTINGS, type ControlBindings } from '../../../../playe
 import {
   isGameInteractionBlocked,
   isInteractiveGameTarget,
+  requestTopMenuDropdownClose,
 } from '../../../../ui/game-modal-state';
 
 export class TurnHotkeysService {
@@ -37,6 +38,7 @@ export class TurnHotkeysService {
     const action = this.actionForCode(event.code);
     if (!action) return;
     event.preventDefault();
+    requestTopMenuDropdownClose();
     this.events.emit(action);
   };
 

@@ -54,11 +54,12 @@ export const OST_TRACK_URLS: readonly string[] = [
 export const DICE_RULE_ICON_URLS = [1, 2, 3, 4, 5, 6].map(
   (face) => `/assets/dices/${face}.svg`,
 );
-export const DICE_DICE_COLLISION_SOUND_URL = '/assets/sounds/stones_04.ogg';
+export const DICE_DICE_COLLISION_SOUND_URL = '/assets/sounds/item_stone_02.ogg';
 export const DICE_SURFACE_COLLISION_SOUND_URL = '/assets/sounds/impactWood_medium_003.ogg';
 export const DICE_PICKUP_SOUND_URL = '/assets/sounds/hands_test.wav';
+export const DICE_THROW_SOUND_URL = '/assets/sounds/misc_02.ogg';
 export const GAMEPLAY_BANK_SOUND_URL = '/assets/sounds/bank.wav';
-export const GAMEPLAY_CONTINUE_SOUND_URL = '/assets/sounds/continue.wav';
+export const GAMEPLAY_CONTINUE_SOUND_URL = '/assets/sounds/lock_02.ogg';
 export const UI_HOVER_SOUND_URL = '/assets/sounds/impactWood_medium_000.ogg';
 export const UI_CLICK_SOUND_URL = '/assets/sounds/Timetick.ogg';
 export const UI_LANGUAGE_CHANGE_SOUND_URL = '/assets/sounds/change_language.mp3';

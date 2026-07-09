@@ -1,7 +1,10 @@
 import { DICE_RULE_ICON_URLS } from '../../../assets/asset-manifest';
 import { audioService } from '../../../audio/audio.service';
 import { onLanguageChange, t } from '../../../../ui/i18n';
-import { isGameInteractionBlocked } from '../../../../ui/game-modal-state';
+import {
+  isGameInteractionBlocked,
+  requestTopMenuDropdownClose,
+} from '../../../../ui/game-modal-state';
 
 const RULES_BOARD_ASPECT_WIDTH = 299;
 const RULES_BOARD_ASPECT_HEIGHT = 511;
@@ -352,6 +355,7 @@ export class RulesBoardService {
     if (isInteractiveKeyboardTarget(event.target)) return;
 
     event.preventDefault();
+    requestTopMenuDropdownClose();
     audioService.play('ui-dropdown-toggle');
     this.shown = !this.shown;
     this.applyVisibility();

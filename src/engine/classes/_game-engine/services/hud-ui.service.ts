@@ -43,7 +43,6 @@ const BLOCKING_OVERLAY_SELECTORS = [
   '#auth-modal',
   '#room-list-modal',
   '#hud-surrender-confirm',
-  '[data-top-dropdown]',
 ].join(',');
 
 const formatMember = (displayName: string): string => displayName.trim() || t('player');
@@ -60,8 +59,10 @@ const isInteractiveDismissTarget = (target: EventTarget | null): boolean => {
 const hasBlockingOverlay = (): boolean =>
   document.querySelector(BLOCKING_OVERLAY_SELECTORS) !== null;
 
-const isGameFieldPointer = (event: PointerEvent): boolean =>
+const isCanvasPointer = (event: PointerEvent): boolean =>
   event.target instanceof HTMLCanvasElement;
+
+type TurnBannerDismissPointerPredicate = (event: PointerEvent) => boolean;
 
 /**
  * HUD-оверлей для turn-based матча. Vanilla DOM, без UI-фреймворков
@@ -119,9 +120,15 @@ export class HudUiService {
   private finalRematchRequestedBy: string[] = [];
   private finalRematchAvailable = true;
   private readonly ownUserId: string;
+  private readonly isTurnBannerDismissPointer: TurnBannerDismissPointerPredicate;
 
-  constructor(ownUserId: string, controls: ControlBindings = DEFAULT_PLAYER_SETTINGS.controls) {
+  constructor(
+    ownUserId: string,
+    controls: ControlBindings = DEFAULT_PLAYER_SETTINGS.controls,
+    isTurnBannerDismissPointer: TurnBannerDismissPointerPredicate = isCanvasPointer,
+  ) {
     this.ownUserId = ownUserId;
+    this.isTurnBannerDismissPointer = isTurnBannerDismissPointer;
     this.controls = { ...controls };
     this.root = document.createElement('div');
     this.root.id = 'hud';
@@ -544,7 +551,7 @@ export class HudUiService {
     Object.assign(tile.style, {
       width: `${TURN_STAT_TILE_WIDTH}px`,
       height: `${TURN_STAT_TILE_HEIGHT}px`,
-      padding: '0 18px 2px',
+      padding: '0',
       backgroundImage: `url('${HUD_BUTTON_S_FRAME_SRC}')`,
       backgroundRepeat: 'no-repeat',
       backgroundPosition: 'center',
@@ -559,7 +566,7 @@ export class HudUiService {
     labelEl.textContent = label;
     Object.assign(labelEl.style, {
       position: 'absolute',
-      top: '-7px',
+      top: '-31px',
       left: '12px',
       right: '12px',
       fontSize: FONT_SIZE.hud,
@@ -572,9 +579,9 @@ export class HudUiService {
     valueEl.textContent = value;
     Object.assign(valueEl.style, {
       position: 'absolute',
-      top: '19px',
-      left: '12px',
-      right: '12px',
+      inset: '0',
+      display: 'grid',
+      placeItems: 'center',
       fontSize: '42px',
       lineHeight: '1',
       fontWeight: '700',
@@ -974,7 +981,7 @@ export class HudUiService {
       ? (event as KeyboardEvent).code === this.controls.throwDice &&
         !hasBlockingOverlay() &&
         !isInteractiveDismissTarget(event.target)
-      : isGameFieldPointer(event as PointerEvent);
+      : this.isTurnBannerDismissPointer(event as PointerEvent);
 
     let dismissed = false;
     if (!isKeyboard && this.errorPanel.style.display !== 'none' && this.farkleTimer === null) {

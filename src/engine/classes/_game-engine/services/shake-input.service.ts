@@ -4,6 +4,7 @@ import { setCustomCursorVariant } from '../../../../ui/custom-cursor';
 import {
   isGameInteractionBlocked,
   isInteractiveGameTarget,
+  requestTopMenuDropdownClose,
 } from '../../../../ui/game-modal-state';
 import { EventEmitter } from '../../event-emitter.class';
 import {
@@ -125,6 +126,30 @@ export class ShakeInputService {
     this.emitSpaceThrow();
   }
 
+  triggerAutomatedThrow(): void {
+    if (!this.enabled) return;
+    if (this.isHolding) return;
+    this.emitSpaceThrow();
+  }
+
+  isPointerInsideThrowZone(event: PointerEvent): boolean {
+    if (!this.enabled) return false;
+    if (event.target !== this.canvas) return false;
+    const rect = this.canvas.getBoundingClientRect();
+    this.ndc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    this.ndc.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    this.raycaster.setFromCamera(this.ndc, this.camera);
+    const hit = this.raycaster.ray.intersectPlane(this.holdPlane, this.tmpHit);
+    if (!hit) return false;
+    const { limitX, limitZ } = this.getThrowZoneLimits();
+    return (
+      hit.x >= -limitX &&
+      hit.x <= limitX &&
+      hit.z >= -limitZ &&
+      hit.z <= limitZ
+    );
+  }
+
   destroy(): void {
     this.setEnabled(false);
     this.canvas.removeEventListener('mousedown', this.onMouseDown);
@@ -230,7 +255,7 @@ export class ShakeInputService {
     }
 
     this.samples.length = 0;
-    this.events.emit('release', velocity, this.currentPos.clone());
+    this.events.emit('release', velocity, this.currentPos.clone(), 'pointer' satisfies HoldStartSource);
   };
 
   private onKeyDown = (event: KeyboardEvent): void => {
@@ -241,6 +266,7 @@ export class ShakeInputService {
     if (isInteractiveGameTarget(event.target) || isGameInteractionBlocked()) return;
 
     event.preventDefault();
+    requestTopMenuDropdownClose();
     this.triggerKeyboardThrow();
   };
 
@@ -259,7 +285,12 @@ export class ShakeInputService {
     this.releaseCursorSuppressed = true;
     this.updateCursor();
 
-    this.events.emit('release', throwSetup.velocity, this.currentPos.clone());
+    this.events.emit(
+      'release',
+      throwSetup.velocity,
+      this.currentPos.clone(),
+      'keyboard' satisfies HoldStartSource,
+    );
   }
 
   private updateCursor(): void {

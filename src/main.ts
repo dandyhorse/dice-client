@@ -39,7 +39,10 @@ import {
 import { bindMouseOnlyClick } from './ui/mouse-only-button';
 import { installCustomCursor } from './ui/custom-cursor';
 import { createSoundSliders } from './ui/sound-controls';
-import { closeGamePopups } from './ui/game-modal-state';
+import {
+  TOP_MENU_DROPDOWN_CLOSE_EVENT,
+  closeGamePopups,
+} from './ui/game-modal-state';
 import {
   FONT_FAMILY,
   FONT_SIZE,
@@ -3218,6 +3221,7 @@ onLanguageChange(() => {
   runLanguageMatrixAnimation();
 });
 window.addEventListener('pointerdown', closeDropdownsOnOutsidePointer, true);
+window.addEventListener(TOP_MENU_DROPDOWN_CLOSE_EVENT, () => closeTopMenuDropdowns());
 window.addEventListener('keydown', (event) => {
   if (
     event.code === 'KeyS' &&

@@ -19,10 +19,17 @@ const COLUMN_SPACING = 0.54;
 const DICE_PER_COLUMN = 6;
 const BENCH_X = -TABLE_WIDTH / 2 - 0.82;
 const BENCH_Y = DICE_HALF_SIZE + 0.04;
+const BENCH_STAGGER_DELAY_MS = 90;
+
+interface SetFacesOptions {
+  staggerAdded?: boolean;
+  onFaceAdded?: (face: number) => void;
+}
 
 export class BenchDiceService {
   private readonly dice: THREE.Mesh[] = [];
   private readonly currentFaces: number[] = [];
+  private readonly animationTimers: number[] = [];
   private readonly scene: THREE.Scene;
 
   constructor(scene: THREE.Scene) {
@@ -30,7 +37,7 @@ export class BenchDiceService {
     this.ensureDiceCount(DICE_PER_COLUMN);
   }
 
-  setFaces(faces: number[]): void {
+  setFaces(faces: number[], options: SetFacesOptions = {}): void {
     const normalized = faces.filter((face) => face >= 1 && face <= 6);
     if (
       normalized.length === this.currentFaces.length &&
@@ -39,13 +46,37 @@ export class BenchDiceService {
       return;
     }
 
+    const previousFaces = [...this.currentFaces];
+    this.clearAnimationTimers();
     this.currentFaces.length = 0;
     this.currentFaces.push(...normalized);
     this.ensureDiceCount(normalized.length);
 
+    const canStaggerAdded =
+      options.staggerAdded === true &&
+      normalized.length > previousFaces.length &&
+      previousFaces.every((face, index) => normalized[index] === face);
+
+    if (canStaggerAdded) {
+      this.renderFaces(previousFaces, normalized.length);
+      for (let i = previousFaces.length; i < normalized.length; i += 1) {
+        const timer = window.setTimeout(() => {
+          this.renderFaces(normalized.slice(0, i + 1), normalized.length);
+          options.onFaceAdded?.(normalized[i]!);
+        }, (i - previousFaces.length) * BENCH_STAGGER_DELAY_MS);
+        this.animationTimers.push(timer);
+      }
+      return;
+    }
+
+    this.renderFaces(normalized);
+  }
+
+  private renderFaces(faces: number[], layoutCount = faces.length): void {
+    this.ensureDiceCount(layoutCount);
     for (let i = 0; i < this.dice.length; i++) {
       const mesh = this.dice[i]!;
-      if (i >= normalized.length) {
+      if (i >= faces.length) {
         mesh.visible = false;
         continue;
       }
@@ -54,7 +85,7 @@ export class BenchDiceService {
       const row = i % DICE_PER_COLUMN;
       const rowsInColumn = Math.min(
         DICE_PER_COLUMN,
-        normalized.length - column * DICE_PER_COLUMN,
+        layoutCount - column * DICE_PER_COLUMN,
       );
       const startZ = -((rowsInColumn - 1) * SLOT_SPACING) / 2;
       mesh.visible = true;
@@ -63,7 +94,7 @@ export class BenchDiceService {
         BENCH_Y,
         startZ + row * SLOT_SPACING,
       );
-      this.orientFaceUp(mesh, normalized[i]!);
+      this.orientFaceUp(mesh, faces[i]!);
     }
   }
 
@@ -72,6 +103,7 @@ export class BenchDiceService {
   }
 
   destroy(): void {
+    this.clearAnimationTimers();
     for (const mesh of this.dice) {
       mesh.removeFromParent();
       const materials = Array.isArray(mesh.material)
@@ -96,5 +128,10 @@ export class BenchDiceService {
       this.scene.add(mesh);
       this.dice.push(mesh);
     }
+  }
+
+  private clearAnimationTimers(): void {
+    for (const timer of this.animationTimers) clearTimeout(timer);
+    this.animationTimers.length = 0;
   }
 }
