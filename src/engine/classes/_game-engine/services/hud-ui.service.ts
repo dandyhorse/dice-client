@@ -30,8 +30,9 @@ const HUD_AVATAR_IMAGE_SIZE = 108;
 const HUD_AVATAR_FRAME_SRC = '/assets/ui/Small_frame.svg';
 const HUD_AVATAR_MASK_SRC = '/assets/ui/avatar_mask.svg';
 const HUD_BUTTON_S_FRAME_SRC = '/assets/ui/Button_S.svg';
-const TURN_STAT_TILE_WIDTH = 164;
-const TURN_STAT_TILE_HEIGHT = 88;
+const TURN_STAT_TILE_WIDTH = 191;
+const TURN_STAT_TILE_HEIGHT = 60;
+const TURN_STAT_TILE_GAP = 16;
 
 const BTN_DISABLED_OPACITY = '0.4';
 const FARKLE_DURATION_MS = 1200;
@@ -162,13 +163,13 @@ export class HudUiService {
     this.turnStatsPanel.id = 'hud-turn-stats';
     Object.assign(this.turnStatsPanel.style, {
       position: 'fixed',
-      top: '16px',
+      top: '40px',
       left: '50%',
       transform: 'translateX(-50%)',
       display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
-      gap: '10px',
-      minWidth: '338px',
+      gridTemplateColumns: `repeat(2, ${TURN_STAT_TILE_WIDTH}px)`,
+      gap: `${TURN_STAT_TILE_GAP}px`,
+      minWidth: `${TURN_STAT_TILE_WIDTH * 2 + TURN_STAT_TILE_GAP}px`,
       pointerEvents: 'none',
     } satisfies Partial<CSSStyleDeclaration>);
 
@@ -551,24 +552,29 @@ export class HudUiService {
       color: PANEL_FG,
       textAlign: 'center',
       boxSizing: 'border-box',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
+      position: 'relative',
     } satisfies Partial<CSSStyleDeclaration>);
 
     const labelEl = document.createElement('div');
     labelEl.textContent = label;
     Object.assign(labelEl.style, {
+      position: 'absolute',
+      top: '-7px',
+      left: '12px',
+      right: '12px',
       fontSize: FONT_SIZE.hud,
       color: '#b8b8c8',
       lineHeight: '1.1',
+      whiteSpace: 'nowrap',
     } satisfies Partial<CSSStyleDeclaration>);
 
     const valueEl = document.createElement('div');
     valueEl.textContent = value;
     Object.assign(valueEl.style, {
-      marginTop: '5px',
+      position: 'absolute',
+      top: '19px',
+      left: '12px',
+      right: '12px',
       fontSize: '42px',
       lineHeight: '1',
       fontWeight: '700',
