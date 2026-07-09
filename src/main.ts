@@ -92,16 +92,16 @@ const RANKED_ENTRY_FEE = 10;
 const MOBILE_DEVICE_RE =
   /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
 const UI_ASSET_BASE = '/assets/ui';
-const MAIN_LOGO_SRC = `${UI_ASSET_BASE}/MainLogo.svg`;
-const SMALL_FRAME_SRC = `${UI_ASSET_BASE}/Small_frame.svg`;
-const AVATAR_MASK_SRC = `${UI_ASSET_BASE}/avatar_mask.svg`;
-const SETTINGS_ICON_SRC = `${UI_ASSET_BASE}/settings.svg`;
-const SOUND_ICON_SRC = `${UI_ASSET_BASE}/sound.svg`;
-const SOUND_DROPDOWN_SRC = `${UI_ASSET_BASE}/sound_dropdown.svg`;
-const SOUND_PICKER_SRC = `${UI_ASSET_BASE}/sound_picker.svg`;
-const LANGUAGE_DROPDOWN_SRC = `${UI_ASSET_BASE}/language_dropdown.svg`;
-const BUTTON_S_SRC = `${UI_ASSET_BASE}/Button_S.svg`;
-const BUTTON_S_OVERLAY_SRC = `${UI_ASSET_BASE}/Button_S_overlay.svg`;
+const MAIN_LOGO_SRC = `${UI_ASSET_BASE}/main-logo.svg`;
+const SMALL_FRAME_SRC = `${UI_ASSET_BASE}/small-icon-frame.svg`;
+const AVATAR_MASK_SRC = `${UI_ASSET_BASE}/avatar-frame-mask.svg`;
+const SETTINGS_ICON_SRC = `${UI_ASSET_BASE}/settings-icon.svg`;
+const SOUND_ICON_SRC = `${UI_ASSET_BASE}/sound-icon.svg`;
+const SOUND_DROPDOWN_SRC = `${UI_ASSET_BASE}/sound-dropdown-frame.svg`;
+const SOUND_PICKER_SRC = `${UI_ASSET_BASE}/sound-slider-thumb.svg`;
+const LANGUAGE_DROPDOWN_SRC = `${UI_ASSET_BASE}/language-dropdown-frame.svg`;
+const BUTTON_S_SRC = `${UI_ASSET_BASE}/menu-button-small-frame.svg`;
+const BUTTON_S_OVERLAY_SRC = `${UI_ASSET_BASE}/menu-button-small-hover-overlay.svg`;
 const TOP_MENU_EDGE_OFFSET = 40;
 const TOP_MENU_ICON_SIZE = 60;
 const TOP_MENU_ICON_IMAGE_SIZE = 48;
@@ -121,8 +121,8 @@ const LANGUAGE_MATRIX_ROUNDS = 5;
 const LANGUAGE_MATRIX_CHARS =
   'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789АБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЭЮЯабвгдежзиклмнопрстуфхцчшэюя';
 const LANG_ICON_SRC: Record<Language, string> = {
-  en: '/assets/lang/united-kingdom.png',
-  ru: '/assets/lang/russia.png',
+  en: '/assets/lang/language-en.png',
+  ru: '/assets/lang/language-ru.png',
 };
 const LANG_ICON_LABEL: Record<Language, string> = {
   en: 'English',
@@ -1413,7 +1413,7 @@ const createProfilePopup = (): HTMLDivElement => {
     boxShadow: 'none',
     appearance: 'none',
     backgroundColor: 'transparent',
-    backgroundImage: `url("${UI_ASSET_BASE}/Button_L.svg")`,
+    backgroundImage: `url("${UI_ASSET_BASE}/menu-button-large-frame.svg")`,
     backgroundPosition: 'center',
     backgroundRepeat: 'no-repeat',
     backgroundSize: '345px 60px',

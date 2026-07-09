@@ -48,10 +48,10 @@ export interface DicePreset {
   modelUrl?: string;
 }
 
-const DICE_TEXTURE_BASE_URL = '/assets/dice/plastered-stone-wall-1k/';
-export const DEFAULT_DICE_COLOR_MAP_URL = `${DICE_TEXTURE_BASE_URL}plastered_stone_wall_diff_1k.webp`;
-export const DEFAULT_DICE_NORMAL_MAP_URL = `${DICE_TEXTURE_BASE_URL}plastered_stone_wall_nor_gl_1k.webp`;
-export const DEFAULT_DICE_ROUGHNESS_MAP_URL = `${DICE_TEXTURE_BASE_URL}plastered_stone_wall_rough_1k.webp`;
+const DICE_TEXTURE_BASE_URL = '/assets/dice/stone-dice-texture-1k/';
+export const DEFAULT_DICE_COLOR_MAP_URL = `${DICE_TEXTURE_BASE_URL}stone-dice-color.webp`;
+export const DEFAULT_DICE_NORMAL_MAP_URL = `${DICE_TEXTURE_BASE_URL}stone-dice-normal.webp`;
+export const DEFAULT_DICE_ROUGHNESS_MAP_URL = `${DICE_TEXTURE_BASE_URL}stone-dice-roughness.webp`;
 
 export const DICE_PRESETS: readonly DicePreset[] = [
   {
@@ -71,14 +71,14 @@ export const DICE_PRESETS: readonly DicePreset[] = [
     },
     sounds: {
       dice: {
-        url: '/assets/sounds/item_stone_02.ogg',
+        url: '/assets/sounds/dice-collision-stone.ogg',
         volume: 0.5,
         baseRate: 0.805,
         // rateVariation: 0.035,
         cooldownMs: 35,
       },
       surface: {
-        url: '/assets/sounds/impactWood_medium_003.ogg',
+        url: '/assets/sounds/dice-surface-impact-wood.ogg',
         volume: 0.5,
         rateVariation: 0.1,
         cooldownMs: 35,
@@ -112,14 +112,14 @@ export const DICE_PRESETS: readonly DicePreset[] = [
     },
     sounds: {
       dice: {
-        url: '/assets/sounds/item_stone_02.ogg',
+        url: '/assets/sounds/dice-collision-stone.ogg',
         volume: 0.46,
         baseRate: 0.805,
         // rateVariation: 0.035,
         cooldownMs: 35,
       },
       surface: {
-        url: '/assets/sounds/impactWood_light_004.ogg',
+        url: '/assets/sounds/dice-surface-impact-light.ogg',
         volume: 0.42,
         rateVariation: 0.08,
         cooldownMs: 35,

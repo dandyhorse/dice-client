@@ -5,7 +5,7 @@ import { createDiceMesh } from '../engine/assets/dice-visual.factory';
 
 const CAMERA_Z = 6.2;
 const DICE_SIZE = 1.35;
-const MENU_DICE_MODEL_URL = '/assets/dice/dice-stone-2/dice-stone.glb';
+const MENU_DICE_MODEL_URL = '/assets/dice/stone-dice-model/stone-dice.glb';
 const POINTER_EASE = 0.035;
 const DICE_PARALLAX_X = 0.08;
 const DICE_PARALLAX_Y = 0.045;

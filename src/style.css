@@ -1,6 +1,6 @@
 @font-face {
   font-family: 'Chixa Demibold Local';
-  src: url('/assets/fonts/ChixaDemibold.ttf') format('truetype');
+  src: url('/assets/fonts/game-ui-display.ttf') format('truetype');
   font-style: normal;
   font-weight: 400 700;
   font-display: swap;
@@ -37,7 +37,7 @@
 :root {
   --font-ui: 'Chixa Demibold Local', 'EB Garamond Local', Georgia, serif;
   --font-title: 'Chixa Demibold Local', 'Uncial Antiqua Local', 'EB Garamond Local', Georgia, serif;
-  --cursor-target-hand: url('/assets/cursors/target-hand.png') 25 6, auto;
+  --cursor-target-hand: url('/assets/cursors/cursor-target-hand.png') 25 6, auto;
   --app-bg: #151414;
   --app-bg-overlay: rgba(21, 20, 20, 0.5);
   --menu-bg-x: 0px;
@@ -50,7 +50,7 @@ body {
   padding: 0;
   overflow: hidden;
   background:
-    var(--app-bg) url('/assets/ui/background.png')
+    var(--app-bg) url('/assets/ui/main-menu-background.png')
     calc(50% + var(--menu-bg-x)) calc(50% + var(--menu-bg-y)) / cover no-repeat fixed;
   height: 100%;
   font-family: var(--font-ui);
@@ -146,7 +146,7 @@ textarea::selection {
   width: 24px;
   height: 12px;
   margin-top: -5px;
-  background: url('/assets/ui/sound_picker.svg') center / 24px 12px no-repeat;
+  background: url('/assets/ui/sound-slider-thumb.svg') center / 24px 12px no-repeat;
   border: none;
   border-radius: 0;
   box-shadow: 0 0 8px rgba(255, 255, 255, 0.16);
@@ -169,7 +169,7 @@ textarea::selection {
 .settings-sound-slider::-moz-range-thumb {
   width: 24px;
   height: 12px;
-  background: url('/assets/ui/sound_picker.svg') center / 24px 12px no-repeat;
+  background: url('/assets/ui/sound-slider-thumb.svg') center / 24px 12px no-repeat;
   border: none;
   border-radius: 0;
   box-shadow: 0 0 8px rgba(255, 255, 255, 0.16);
@@ -186,7 +186,7 @@ canvas {
   height: 60px !important;
   padding: 0 !important;
   background-color: transparent !important;
-  background-image: url('/assets/ui/Button_L.svg') !important;
+  background-image: url('/assets/ui/menu-button-large-frame.svg') !important;
   background-position: center !important;
   background-repeat: no-repeat !important;
   background-size: 345px 60px !important;
@@ -205,7 +205,7 @@ canvas {
   content: '';
   position: absolute;
   inset: 0;
-  background: url('/assets/ui/Button_L_overlay.svg') center / 321px 48px no-repeat;
+  background: url('/assets/ui/menu-button-large-hover-overlay.svg') center / 321px 48px no-repeat;
   opacity: 0;
   pointer-events: none;
   transition: opacity 180ms ease;
@@ -239,7 +239,7 @@ canvas {
 .menu-frame-button.menu-frame-button-small {
   width: 127px !important;
   height: 40px !important;
-  background-image: url('/assets/ui/Button_S.svg') !important;
+  background-image: url('/assets/ui/menu-button-small-frame.svg') !important;
   background-size: 127px 40px !important;
   font-size: 16px !important;
   line-height: 1 !important;
@@ -247,7 +247,7 @@ canvas {
 }
 
 .menu-frame-button.menu-frame-button-small::after {
-  background-image: url('/assets/ui/Button_S_overlay.svg');
+  background-image: url('/assets/ui/menu-button-small-hover-overlay.svg');
   background-size: 119px 32px;
 }
 
@@ -286,8 +286,8 @@ canvas {
   position: absolute;
   inset: 0;
   background: rgba(255, 0, 0, 0.72);
-  mask: url('/assets/ui/Button_L_overlay.svg') center / 321px 48px no-repeat;
-  -webkit-mask: url('/assets/ui/Button_L_overlay.svg') center / 321px 48px no-repeat;
+  mask: url('/assets/ui/menu-button-large-hover-overlay.svg') center / 321px 48px no-repeat;
+  -webkit-mask: url('/assets/ui/menu-button-large-hover-overlay.svg') center / 321px 48px no-repeat;
   pointer-events: none;
   z-index: 0;
 }
@@ -303,9 +303,9 @@ canvas {
 }
 
 .menu-frame-button.menu-frame-button-small.menu-frame-button-danger::before {
-  mask-image: url('/assets/ui/Button_S_overlay.svg');
+  mask-image: url('/assets/ui/menu-button-small-hover-overlay.svg');
   mask-size: 119px 32px;
-  -webkit-mask-image: url('/assets/ui/Button_S_overlay.svg');
+  -webkit-mask-image: url('/assets/ui/menu-button-small-hover-overlay.svg');
   -webkit-mask-size: 119px 32px;
 }
 
@@ -332,7 +332,7 @@ canvas {
   box-sizing: border-box;
   display: grid;
   place-items: center;
-  background: url('/assets/ui/status_frame.svg') center / 420px 115px no-repeat;
+  background: url('/assets/ui/status-message-frame.svg') center / 420px 115px no-repeat;
   border: none;
   border-radius: 0;
   color: #fff;

@@ -175,7 +175,7 @@ export class RulesBoardService {
     this.loadDiceImages();
     this.renderRulesBoard();
 
-    // Previous static rules image for rollback: /assets/rules.svg.
+    // Previous static rules image for rollback: /assets/rules-board-static.svg.
     this.panel.append(this.canvas);
     this.root.append(this.panel);
     document.body.append(this.root);

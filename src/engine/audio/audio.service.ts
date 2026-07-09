@@ -56,7 +56,7 @@ const SOUND_DEFS: Record<SoundId, SoundDef> = {
     src: DICE_THROW_SOUND_URL ? [DICE_THROW_SOUND_URL] : [],
     group: 'gameplay',
     bus: 'effects',
-    volume: 0.62,
+    volume: 0.52,
     baseRate: 1.15,
     rateVariation: 0,
     cooldownMs: 120,
