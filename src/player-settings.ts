@@ -1,4 +1,9 @@
 import { normalizeAvatarIndex } from './avatars';
+import {
+  DEFAULT_DICE_PRESET_ID,
+  normalizeDicePresetId,
+  type DicePresetId,
+} from './network/protocol/types';
 
 export const CONTROL_ACTIONS = [
   'throwDice',
@@ -17,6 +22,7 @@ export interface GameplaySettings {
 
 export interface PlayerProfileSettings {
   avatarIndex: number;
+  dicePresetId: DicePresetId;
 }
 
 export interface AudioSettings {
@@ -48,6 +54,7 @@ export const DEFAULT_PLAYER_SETTINGS: PlayerSettings = {
   },
   profile: {
     avatarIndex: 0,
+    dicePresetId: DEFAULT_DICE_PRESET_ID,
   },
   audio: {
     masterVolume: 1,
@@ -121,6 +128,7 @@ export const normalizePlayerSettings = (value: unknown): PlayerSettings => {
   const profile = { ...DEFAULT_PLAYER_SETTINGS.profile };
   if (isObject(value.profile)) {
     profile.avatarIndex = normalizeAvatarIndex(value.profile.avatarIndex);
+    profile.dicePresetId = normalizeDicePresetId(value.profile.dicePresetId);
   }
 
   const audio = { ...DEFAULT_PLAYER_SETTINGS.audio };
@@ -167,7 +175,9 @@ export const validatePlayerSettings = (
   if (
     !isObject(settings.profile) ||
     normalizeAvatarIndex(settings.profile.avatarIndex) !==
-      settings.profile.avatarIndex
+      settings.profile.avatarIndex ||
+    normalizeDicePresetId(settings.profile.dicePresetId) !==
+      settings.profile.dicePresetId
   ) {
     return { valid: false, message: 'Invalid profile settings' };
   }

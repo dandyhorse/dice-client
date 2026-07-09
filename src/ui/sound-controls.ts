@@ -74,11 +74,12 @@ export const createSoundSliders = (
     input.max = '100';
     input.step = '1';
     input.value = String(Math.round(draft[key] * 100));
+    input.className = 'settings-sound-slider';
     Object.assign(input.style, {
       width: '100%',
-      accentColor: '#22c55e',
-      background: SETTINGS_BUTTON_BG,
-      borderRadius: UI_RADIUS,
+      height: compact ? scaledPx(18) : scaledPx(22),
+      background: 'transparent',
+      margin: '0',
     } satisfies Partial<CSSStyleDeclaration>);
     input.addEventListener('input', () => {
       draft = {
@@ -103,12 +104,13 @@ export const createSoundSliders = (
       btn.textContent = `${label}: ${
         draft.quickSearchClockEnabled ? t('settingOn') : t('settingOff')
       }`;
-      btn.style.background = draft.quickSearchClockEnabled
-        ? 'rgba(34,197,94,0.16)'
-        : SETTINGS_BUTTON_BG;
+      btn.style.background = SETTINGS_BUTTON_BG;
       btn.style.borderColor = draft.quickSearchClockEnabled
-        ? 'rgba(34,197,94,0.42)'
-        : 'rgba(255,255,255,0.18)';
+        ? 'rgba(255,255,255,0.28)'
+        : 'rgba(255,255,255,0.14)';
+      btn.style.color = draft.quickSearchClockEnabled
+        ? '#f4f4f5'
+        : 'rgba(216,216,232,0.68)';
     };
     Object.assign(btn.style, {
       width: '100%',

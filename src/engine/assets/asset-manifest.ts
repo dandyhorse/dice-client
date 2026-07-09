@@ -1,12 +1,18 @@
 // Previous collision test sound: impactWood_medium_000.ogg
 import { AVATAR_URLS } from '../../avatars';
+import {
+  DEFAULT_DICE_COLOR_MAP_URL,
+  DEFAULT_DICE_NORMAL_MAP_URL,
+  DEFAULT_DICE_ROUGHNESS_MAP_URL,
+  DICE_PRESET_IMAGE_URLS,
+  DICE_PRESET_TEXTURE_URLS,
+} from '../../dice-presets';
 
 export type AssetGroup = 'menu' | 'gameplay';
 
-export const DICE_TEXTURE_BASE_URL = '/assets/dice/plastered-stone-wall-1k/';
-export const DICE_COLOR_MAP_URL = `${DICE_TEXTURE_BASE_URL}plastered_stone_wall_diff_1k.webp`;
-export const DICE_NORMAL_MAP_URL = `${DICE_TEXTURE_BASE_URL}plastered_stone_wall_nor_gl_1k.webp`;
-export const DICE_ROUGHNESS_MAP_URL = `${DICE_TEXTURE_BASE_URL}plastered_stone_wall_rough_1k.webp`;
+export const DICE_COLOR_MAP_URL = DEFAULT_DICE_COLOR_MAP_URL;
+export const DICE_NORMAL_MAP_URL = DEFAULT_DICE_NORMAL_MAP_URL;
+export const DICE_ROUGHNESS_MAP_URL = DEFAULT_DICE_ROUGHNESS_MAP_URL;
 
 export const TABLE_TEXTURE_BASE_URL = '/assets/table/wood-cabinet-worn-long-1k/';
 export const TABLE_COLOR_MAP_URL = `${TABLE_TEXTURE_BASE_URL}wood_cabinet_worn_long_diff_1k.webp`;
@@ -47,7 +53,8 @@ export const OST_TRACK_URLS: readonly string[] = [
 export const DICE_RULE_ICON_URLS = [1, 2, 3, 4, 5, 6].map(
   (face) => `/assets/dices/${face}.svg`,
 );
-export const DICE_COLLISION_SOUND_URL = '/assets/sounds/impactWood_medium_003.ogg';
+export const DICE_DICE_COLLISION_SOUND_URL = '/assets/sounds/stones_04.ogg';
+export const DICE_SURFACE_COLLISION_SOUND_URL = '/assets/sounds/impactWood_medium_003.ogg';
 export const DICE_PICKUP_SOUND_URL = '/assets/sounds/hands_test.wav';
 export const GAMEPLAY_BANK_SOUND_URL = '/assets/sounds/bank.wav';
 export const GAMEPLAY_CONTINUE_SOUND_URL = '/assets/sounds/continue.wav';
@@ -66,13 +73,13 @@ export interface AssetGroupManifest {
 
 export const ASSET_GROUPS: Record<AssetGroup, AssetGroupManifest> = {
   menu: {
-    images: [DICE_COLOR_MAP_URL, TARGET_HAND_CURSOR_URL, ...UI_ASSET_URLS, ...AVATAR_URLS],
-    textures: [DICE_NORMAL_MAP_URL, DICE_ROUGHNESS_MAP_URL],
+    images: [...DICE_PRESET_IMAGE_URLS, TARGET_HAND_CURSOR_URL, ...UI_ASSET_URLS, ...AVATAR_URLS],
+    textures: DICE_PRESET_TEXTURE_URLS,
     models: [],
   },
   gameplay: {
     images: [
-      DICE_COLOR_MAP_URL,
+      ...DICE_PRESET_IMAGE_URLS,
       ...DICE_RULE_ICON_URLS,
       RULES_BOARD_TEXTURE_URL,
       TARGET_HAND_CURSOR_URL,
@@ -82,8 +89,7 @@ export const ASSET_GROUPS: Record<AssetGroup, AssetGroupManifest> = {
       ...AVATAR_URLS,
     ],
     textures: [
-      DICE_NORMAL_MAP_URL,
-      DICE_ROUGHNESS_MAP_URL,
+      ...DICE_PRESET_TEXTURE_URLS,
       TABLE_COLOR_MAP_URL,
       TABLE_NORMAL_MAP_URL,
       TABLE_ROUGHNESS_MAP_URL,

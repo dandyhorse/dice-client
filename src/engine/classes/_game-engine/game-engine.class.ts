@@ -31,7 +31,7 @@ import {
 } from '../../assets/asset-manifest';
 import { audioService } from '../../audio/audio.service';
 import { BenchDiceService } from './services/bench-dice.service';
-import { DiceService } from './services/dice.service';
+import { DiceService, type DiceCollisionKind } from './services/dice.service';
 import { HudUiService } from './services/hud-ui.service';
 import { NetworkService } from './services/network.service';
 import { RulesBoardService } from './services/rules-board.service';
@@ -72,6 +72,11 @@ import { ShakeInputService, type HoldStartSource } from './services/shake-input.
 import { TurnHotkeysService } from './services/turn-hotkeys.service';
 import { UI_RADIUS } from '../../../ui/theme';
 import { nextAvatarIndex } from '../../../avatars';
+import {
+  DEFAULT_DICE_PRESET,
+  dicePresetForId,
+  type DicePreset,
+} from '../../../dice-presets';
 
 export type GameMode = 'local' | 'network';
 
@@ -192,6 +197,7 @@ export class GameEngine {
   private readonly networkCollisionLastPlayedMs = new Map<number, number>();
   private readonly networkCollisionPairsTouching = new Set<string>();
   private readonly networkCollisionPairLastPlayedMs = new Map<string, number>();
+  private activeDicePreset: DicePreset = DEFAULT_DICE_PRESET;
 
   private lastTime = 0;
   private rafId: number | null = null;
@@ -205,6 +211,16 @@ export class GameEngine {
     this.onExit = options.onExit;
     this.playerDisplayName = options.playerDisplayName?.trim() || t('player');
     this.unsubscribeLanguage = onLanguageChange(this.handleLanguageChange);
+    this.playerSettings = options.playerSettings ?? DEFAULT_PLAYER_SETTINGS;
+    this.activeDicePreset = dicePresetForId(this.playerSettings.profile.dicePresetId);
+    audioService
+      .preloadCollisionSounds([
+        this.activeDicePreset.sounds.dice,
+        this.activeDicePreset.sounds.surface,
+        DEFAULT_DICE_PRESET.sounds.dice,
+        DEFAULT_DICE_PRESET.sounds.surface,
+      ])
+      .catch(() => undefined);
 
     this.scene = this.createScene();
     this.camera = this.createCamera();
@@ -227,12 +243,12 @@ export class GameEngine {
     this.dice = new DiceService(this.scene, this.physicsWorld, this.diceMaterial, this.mode, {
       shadowsEnabled: this.areShadowsEnabled(),
       onCollision: this.handleDiceCollision,
+      preset: this.activeDicePreset,
     });
     this.dice.spawn();
     this.rulesBoard = new RulesBoardService(this.scene, this.camera, this.renderer.domElement);
     this.perf = this.createPerfStats();
 
-    this.playerSettings = options.playerSettings ?? DEFAULT_PLAYER_SETTINGS;
     const playerSettings = this.playerSettings;
     this.input = new ShakeInputService(
       this.renderer.domElement,
@@ -307,6 +323,8 @@ export class GameEngine {
       this.currentRoomState = net.getRoomState();
       const ownUserId = net.getUserId() ?? '';
       const isTestRoom = this.currentRoomState?.mode === ROOM_MODE.TEST;
+      if (this.currentRoomState) this.preloadRoomDicePresetSounds(this.currentRoomState);
+      this.syncActiveDicePreset();
       this.selection = isTestRoom
         ? null
         : new SelectionService(this.renderer.domElement, this.camera, this.dice, this.scene);
@@ -316,6 +334,8 @@ export class GameEngine {
 
       net.events.on('room-state', (state: RoomState) => {
         this.currentRoomState = state;
+        this.preloadRoomDicePresetSounds(state);
+        this.syncActiveDicePreset();
         if (this.isClosedNetworkRoomState(state)) {
           this.hud?.setRoomState(state);
           this.handleNetworkRoomClosed();
@@ -329,6 +349,7 @@ export class GameEngine {
       if (isTestRoom) {
         net.events.on('match-state', (state: MatchStatePayload) => {
           this.currentMatchState = state;
+          this.syncActiveDicePreset();
           this.input.setEnabled(this.canUseTestInput(ownUserId));
         });
         this.input.setEnabled(this.canUseTestInput(ownUserId));
@@ -339,6 +360,7 @@ export class GameEngine {
         net.events.on('match-state', (state: MatchStatePayload) => {
           this.playNetworkContinueSound(this.currentMatchState, state);
           this.currentMatchState = state;
+          this.syncActiveDicePreset();
           if (state.phase !== MATCH_PHASE.SELECTING) this.networkLastRolledFaces = [];
           if (state.phase !== MATCH_PHASE.FINISHED) {
             this.networkRematchRequestedBy = [];
@@ -494,8 +516,8 @@ export class GameEngine {
     this.renderer.render(this.scene, this.camera);
   }
 
-  private handleDiceCollision = (impact: number): void => {
-    audioService.playCollision(impact);
+  private handleDiceCollision = (impact: number, kind: DiceCollisionKind): void => {
+    audioService.playCollision(impact, kind, this.activeDicePreset.sounds[kind]);
   };
 
   private handleNetworkCollisionAudio(dice: DieStateFull[], now: number): void {
@@ -516,7 +538,7 @@ export class GameEngine {
         const last = this.networkCollisionLastPlayedMs.get(i) ?? 0;
 
         if (nearTable && (verticalBounce || speedDrop) && impact >= 0.85 && now - last >= 90) {
-          audioService.playCollision(impact);
+          audioService.playCollision(impact, 'surface', this.activeDicePreset.sounds.surface);
           this.networkCollisionLastPlayedMs.set(i, now);
         }
       }
@@ -551,7 +573,7 @@ export class GameEngine {
         const relativeSpeed = Math.hypot(b.v[0] - a.v[0], b.v[1] - a.v[1], b.v[2] - a.v[2]);
         const last = this.networkCollisionPairLastPlayedMs.get(key) ?? 0;
         if (relativeSpeed >= 0.7 && now - last >= 90) {
-          audioService.playCollision(relativeSpeed);
+          audioService.playCollision(relativeSpeed, 'dice', this.activeDicePreset.sounds.dice);
           this.networkCollisionPairLastPlayedMs.set(key, now);
         }
       }
@@ -566,6 +588,34 @@ export class GameEngine {
     this.networkCollisionLastPlayedMs.clear();
     this.networkCollisionPairsTouching.clear();
     this.networkCollisionPairLastPlayedMs.clear();
+  }
+
+  private syncActiveDicePreset(): void {
+    const preset = this.resolveActiveDicePreset();
+    if (preset.id === this.activeDicePreset.id) return;
+    this.activeDicePreset = preset;
+    this.dice.setPreset(preset);
+  }
+
+  private resolveActiveDicePreset(): DicePreset {
+    if (this.mode === 'local') {
+      return this.currentMatchState?.currentPlayer === LOCAL_HUMAN_USER_ID
+        ? dicePresetForId(this.playerSettings.profile.dicePresetId)
+        : DEFAULT_DICE_PRESET;
+    }
+
+    const currentPlayer = this.currentMatchState?.currentPlayer;
+    const member = currentPlayer
+      ? this.currentRoomState?.members.find((m) => m.userId === currentPlayer)
+      : this.currentRoomState?.members.find((m) => m.role === ROOM_ROLE.PLAYER);
+    return dicePresetForId(member?.dicePresetId);
+  }
+
+  private preloadRoomDicePresetSounds(state: RoomState): void {
+    const sounds = state.members
+      .map((member) => dicePresetForId(member.dicePresetId))
+      .flatMap((preset) => [preset.sounds.dice, preset.sounds.surface]);
+    audioService.preloadCollisionSounds(sounds).catch(() => undefined);
   }
 
   private playNetworkContinueSound(
@@ -610,6 +660,7 @@ export class GameEngine {
           socketId: LOCAL_HUMAN_USER_ID,
           displayName: this.playerDisplayName,
           avatarIndex: this.playerSettings.profile.avatarIndex,
+          dicePresetId: this.playerSettings.profile.dicePresetId,
           role: ROOM_ROLE.PLAYER,
           online: true,
         },
@@ -618,6 +669,7 @@ export class GameEngine {
           socketId: LOCAL_BOT_USER_ID,
           displayName: t('botPlayer'),
           avatarIndex: nextAvatarIndex(this.playerSettings.profile.avatarIndex),
+          dicePresetId: DEFAULT_DICE_PRESET.id,
           role: ROOM_ROLE.PLAYER,
           online: true,
         },
@@ -668,6 +720,7 @@ export class GameEngine {
 
     this.currentRoomState = roomState;
     this.currentMatchState = matchState;
+    this.syncActiveDicePreset();
     this.benchDice?.setFaces(matchState.bench);
     this.hud?.setRoomState(roomState);
     this.hud?.setMatchState(matchState);
@@ -1887,7 +1940,7 @@ export class GameEngine {
       if (this.localRolling) this.dice.applyLocalAssistForces();
       this.physicsWorld.step(1 / 60, deltaTime, 3);
       if (this.localRolling) this.dice.applyLocalContactKicks();
-      this.dice.syncMeshes();
+      this.dice.syncMeshes(currentTime);
       if (this.localRolling && this.dice.areLocalActiveDiceAtRest()) {
         this.handleLocalActiveRest();
       }

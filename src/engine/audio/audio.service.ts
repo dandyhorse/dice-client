@@ -1,8 +1,9 @@
 import { Howl, Howler } from 'howler';
 
 import {
-  DICE_COLLISION_SOUND_URL,
+  DICE_DICE_COLLISION_SOUND_URL,
   DICE_PICKUP_SOUND_URL,
+  DICE_SURFACE_COLLISION_SOUND_URL,
   GAMEPLAY_BANK_SOUND_URL,
   GAMEPLAY_CONTINUE_SOUND_URL,
   UI_CLICK_SOUND_URL,
@@ -12,12 +13,14 @@ import {
   UI_QUICK_SEARCH_CLOCK_SOUND_URL,
   UI_SETTINGS_OPEN_SOUND_URL,
 } from '../assets/asset-manifest';
+import type { DicePresetCollisionSound } from '../../dice-presets';
 import type { AssetGroup } from '../assets/asset-manifest';
 
 export type SoundId =
   | 'dice-pickup'
   | 'dice-throw'
-  | 'dice-collision'
+  | 'dice-collision-dice'
+  | 'dice-collision-surface'
   | 'gameplay-bank'
   | 'gameplay-continue'
   | 'ui-hover'
@@ -56,8 +59,17 @@ const SOUND_DEFS: Record<SoundId, SoundDef> = {
     rateVariation: 0.06,
     cooldownMs: 120,
   },
-  'dice-collision': {
-    src: DICE_COLLISION_SOUND_URL ? [DICE_COLLISION_SOUND_URL] : [],
+  'dice-collision-dice': {
+    src: DICE_DICE_COLLISION_SOUND_URL ? [DICE_DICE_COLLISION_SOUND_URL] : [],
+    group: 'gameplay',
+    bus: 'effects',
+    volume: 0.5,
+    // baseRate: 0.78,
+    // rateVariation: 0.06,
+    cooldownMs: 35,
+  },
+  'dice-collision-surface': {
+    src: DICE_SURFACE_COLLISION_SOUND_URL ? [DICE_SURFACE_COLLISION_SOUND_URL] : [],
     group: 'gameplay',
     bus: 'effects',
     volume: 0.5,
@@ -101,7 +113,7 @@ const SOUND_DEFS: Record<SoundId, SoundDef> = {
     src: UI_DROPDOWN_TOGGLE_SOUND_URL ? [UI_DROPDOWN_TOGGLE_SOUND_URL] : [],
     group: 'menu',
     bus: 'effects',
-    volume: 0.17,
+    volume: 0.085,
     rateVariation: 0,
     cooldownMs: 80,
   },
@@ -142,6 +154,9 @@ class AudioService {
   private readonly groupPromises = new Map<AssetGroup, Promise<void>>();
   private readonly lastPlayedAt = new Map<SoundId, number>();
   private readonly loopPlayIds = new Map<SoundId, number>();
+  private readonly dynamicHowls = new Map<string, Howl>();
+  private readonly dynamicDefs = new Map<string, DicePresetCollisionSound>();
+  private readonly dynamicLastPlayedAt = new Map<string, number>();
   private unlockBound = false;
   private effectsVolume = 1;
 
@@ -155,6 +170,11 @@ class AudioService {
       if (loopPlayId !== undefined) {
         howl.volume(def.volume * this.effectsVolume, loopPlayId);
       }
+    }
+    for (const [key, howl] of this.dynamicHowls) {
+      const def = this.dynamicDefs.get(key);
+      if (!def) continue;
+      howl.volume(def.volume * this.effectsVolume);
     }
   }
 
@@ -181,6 +201,10 @@ class AudioService {
     ).then(() => undefined);
     this.groupPromises.set(group, promise);
     return promise;
+  }
+
+  preloadCollisionSounds(sounds: readonly DicePresetCollisionSound[]): Promise<void> {
+    return Promise.all(sounds.map((sound) => this.loadDynamic(sound))).then(() => undefined);
   }
 
   play(id: SoundId, options: PlayOptions = {}): number | null {
@@ -235,9 +259,81 @@ class AudioService {
     howl.stop();
   }
 
-  playCollision(impact: number): void {
+  playCollision(
+    impact: number,
+    kind: 'dice' | 'surface' = 'surface',
+    sound?: DicePresetCollisionSound,
+  ): void {
     const volumeScale = Math.max(0.25, Math.min(1, impact / 5));
-    this.play('dice-collision', { volumeScale });
+    if (sound) {
+      this.playDynamic(sound, volumeScale);
+      return;
+    }
+    this.play(kind === 'dice' ? 'dice-collision-dice' : 'dice-collision-surface', {
+      volumeScale,
+    });
+  }
+
+  private dynamicKey(sound: DicePresetCollisionSound): string {
+    return [
+      sound.url,
+      sound.volume,
+      sound.baseRate ?? 1,
+      sound.rateVariation ?? 0,
+      sound.cooldownMs,
+    ].join('|');
+  }
+
+  private playDynamic(sound: DicePresetCollisionSound, volumeScale: number): number | null {
+    const key = this.dynamicKey(sound);
+    const howl = this.dynamicHowls.get(key) ?? this.createDynamicHowl(key, sound);
+    const now = performance.now();
+    const last = this.dynamicLastPlayedAt.get(key) ?? 0;
+    if (sound.cooldownMs && now - last < sound.cooldownMs) return null;
+    this.dynamicLastPlayedAt.set(key, now);
+
+    const playId = howl.play();
+    const variation = sound.rateVariation
+      ? 1 + (Math.random() - 0.5) * 2 * sound.rateVariation
+      : 1;
+    howl.rate((sound.baseRate ?? 1) * variation, playId);
+    howl.volume(Math.min(1, sound.volume * this.effectsVolume * volumeScale), playId);
+    return playId;
+  }
+
+  private loadDynamic(sound: DicePresetCollisionSound): Promise<void> {
+    const key = this.dynamicKey(sound);
+    if (this.dynamicHowls.has(key)) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      let settled = false;
+      const settle = (): void => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      const howl = this.createDynamicHowl(key, sound, settle, settle);
+      howl.load();
+      window.setTimeout(settle, AUDIO_PRELOAD_TIMEOUT_MS);
+    });
+  }
+
+  private createDynamicHowl(
+    key: string,
+    sound: DicePresetCollisionSound,
+    onload?: () => void,
+    onloaderror?: () => void,
+  ): Howl {
+    const howl = new Howl({
+      src: [sound.url],
+      volume: sound.volume * this.effectsVolume,
+      preload: onload ? false : true,
+      html5: false,
+      onload,
+      onloaderror,
+    });
+    this.dynamicHowls.set(key, howl);
+    this.dynamicDefs.set(key, sound);
+    return howl;
   }
 
   private load(id: SoundId): Promise<void> {

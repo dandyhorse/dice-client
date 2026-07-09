@@ -12,6 +12,7 @@ import {
   MATCH_FINISH_REASON,
   ROOM_SCORING_RULESET,
   normalizeAvatarIndex,
+  normalizeDicePresetId,
   normalizeRoomOptions,
 } from './types';
 
@@ -521,6 +522,7 @@ export const packRoomState = (state: RoomStatePayload): Uint8Array => {
     socketId: Uint8Array;
     displayName: Uint8Array;
     avatarIndex: number;
+    dicePresetId: Uint8Array;
     role: number;
     online: boolean;
   }[] = state.members.map((m) => ({
@@ -528,13 +530,24 @@ export const packRoomState = (state: RoomStatePayload): Uint8Array => {
     socketId: enc.encode(m.socketId),
     displayName: enc.encode(m.displayName),
     avatarIndex: normalizeAvatarIndex(m.avatarIndex),
+    dicePresetId: enc.encode(normalizeDicePresetId(m.dicePresetId)),
     role: m.role,
     online: m.online,
   }));
   let size =
     1 + (2 + idBytes.length) + (2 + codeBytes.length) + (2 + ownerBytes.length) + 1 + 1 + 1;
   for (const m of memberBytes) {
-    size += 2 + m.userId.length + 2 + m.socketId.length + 2 + m.displayName.length + 2 + 1 + 1;
+    size +=
+      2 +
+      m.userId.length +
+      2 +
+      m.socketId.length +
+      2 +
+      m.displayName.length +
+      2 +
+      (2 + m.dicePresetId.length) +
+      1 +
+      1;
   }
   size += ROOM_OPTIONS_BYTES + 2 + nameBytes.length + 1;
 
@@ -558,6 +571,7 @@ export const packRoomState = (state: RoomStatePayload): Uint8Array => {
     off = writeStr16(view, buf, off, m.displayName);
     view.setUint16(off, m.avatarIndex);
     off += 2;
+    off = writeStr16(view, buf, off, m.dicePresetId);
     view.setUint8(off, m.role & 0xff);
     off += 1;
     view.setUint8(off, m.online ? 1 : 0);
@@ -594,6 +608,8 @@ export const unpackRoomState = (buf: Uint8Array): RoomStatePayload => {
     off = n.next;
     const avatarIndex = normalizeAvatarIndex(view.getUint16(off));
     off += 2;
+    const dicePreset = readStr16(view, buf, off);
+    off = dicePreset.next;
     const role = view.getUint8(off) as RoomMember['role'];
     off += 1;
     const online = view.getUint8(off) !== 0;
@@ -603,6 +619,7 @@ export const unpackRoomState = (buf: Uint8Array): RoomStatePayload => {
       socketId: s.value,
       displayName: n.value,
       avatarIndex,
+      dicePresetId: normalizeDicePresetId(dicePreset.value),
       role,
       online,
     };

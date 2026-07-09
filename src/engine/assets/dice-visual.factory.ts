@@ -1,10 +1,6 @@
 import * as THREE from 'three';
 
-import {
-  DICE_COLOR_MAP_URL,
-  DICE_NORMAL_MAP_URL,
-  DICE_ROUGHNESS_MAP_URL,
-} from './asset-manifest';
+import { DEFAULT_DICE_PRESET, type DicePresetVisual } from '../../dice-presets';
 import { assetPreloader } from './asset-preloader';
 
 // Three.js BoxGeometry materials indexed in порядке: [+X, -X, +Y, -Y, +Z, -Z].
@@ -23,9 +19,6 @@ const PIP_LAYOUT: Record<number, [number, number][]> = {
 
 const TEXTURE_SIZE = 128;
 const PIP_RADIUS_FRACTION = 0.09;
-const FACE_BG = '#f5f5f0';
-const FACE_PIP = '#1a1a1a';
-const DICE_BASE_BRIGHTNESS = 1.45;
 const VISUAL_EDGE_SOFTNESS = 0.035;
 const VISUAL_EDGE_START = 0.68;
 const VISUAL_WOBBLE = 0.0114;
@@ -44,8 +37,10 @@ interface DiceSurfaceMaps {
 
 let cachedFaceTextureEntries: FaceTextureEntry[] | null = null;
 let cachedDiceSurfaceMaps: DiceSurfaceMaps | null = null;
+let cachedDiceSurfaceMapsKey = '';
 let cachedGeometrySize = 0;
 let cachedGeometry: THREE.BoxGeometry | null = null;
+let activeVisual: DicePresetVisual = DEFAULT_DICE_PRESET.visual;
 
 export interface DiceMeshOptions {
   shadowsEnabled?: boolean;
@@ -62,19 +57,26 @@ export const refreshDiceFaceTextures = (): void => {
   for (const entry of cachedFaceTextureEntries ?? []) drawFaceTexture(entry);
 };
 
+export const setDiceVisualPreset = (visual: DicePresetVisual): void => {
+  activeVisual = visual;
+  refreshDiceFaceTextures();
+};
+
 const drawFaceTexture = (entry: FaceTextureEntry): void => {
   const { ctx, value } = entry;
-  ctx.fillStyle = FACE_BG;
+  ctx.fillStyle = activeVisual.faceBackground;
   ctx.fillRect(0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
 
-  const baseImage = assetPreloader.getImageOrNull(DICE_COLOR_MAP_URL);
+  const baseImage = assetPreloader.getImageOrNull(activeVisual.colorMapUrl);
   if (baseImage) {
-    ctx.filter = `brightness(${DICE_BASE_BRIGHTNESS}) contrast(95%)`;
+    ctx.filter = `brightness(${activeVisual.brightness}) contrast(${Math.round(
+      activeVisual.contrast * 100,
+    )}%)`;
     ctx.drawImage(baseImage, 0, 0, TEXTURE_SIZE, TEXTURE_SIZE);
     ctx.filter = 'none';
   }
 
-  ctx.fillStyle = FACE_PIP;
+  ctx.fillStyle = activeVisual.pipColor;
   const r = TEXTURE_SIZE * PIP_RADIUS_FRACTION;
   for (const [fx, fy] of PIP_LAYOUT[value] ?? []) {
     ctx.beginPath();
@@ -110,10 +112,11 @@ const getFaceTextures = (): THREE.CanvasTexture[] => {
 };
 
 const getDiceSurfaceMaps = (): DiceSurfaceMaps => {
-  if (cachedDiceSurfaceMaps) return cachedDiceSurfaceMaps;
+  const key = `${activeVisual.normalMapUrl}|${activeVisual.roughnessMapUrl}`;
+  if (cachedDiceSurfaceMaps && cachedDiceSurfaceMapsKey === key) return cachedDiceSurfaceMaps;
 
-  const normalMap = assetPreloader.getTextureClone(DICE_NORMAL_MAP_URL);
-  const roughnessMap = assetPreloader.getTextureClone(DICE_ROUGHNESS_MAP_URL);
+  const normalMap = assetPreloader.getTextureClone(activeVisual.normalMapUrl);
+  const roughnessMap = assetPreloader.getTextureClone(activeVisual.roughnessMapUrl);
   for (const texture of [normalMap, roughnessMap]) {
     texture.magFilter = THREE.NearestFilter;
     texture.minFilter = THREE.NearestFilter;
@@ -121,6 +124,7 @@ const getDiceSurfaceMaps = (): DiceSurfaceMaps => {
     texture.anisotropy = 1;
   }
   cachedDiceSurfaceMaps = { normalMap, roughnessMap };
+  cachedDiceSurfaceMapsKey = key;
   return cachedDiceSurfaceMaps;
 };
 

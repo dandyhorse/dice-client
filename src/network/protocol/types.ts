@@ -89,6 +89,9 @@ export const ROOM_MIN_BANK_MAX = 1000;
 export const ROOM_MIN_BANK_STEP = 50;
 export const DEFAULT_AVATAR_INDEX = 0;
 export const MAX_AVATAR_INDEX = 0xffff;
+export const DICE_PRESET_IDS = ['classic-stone', 'ivory-glow'] as const;
+export type DicePresetId = (typeof DICE_PRESET_IDS)[number];
+export const DEFAULT_DICE_PRESET_ID: DicePresetId = 'classic-stone';
 
 const isStepAligned = (value: number, min: number, step: number): boolean =>
   (value - min) % step === 0;
@@ -144,11 +147,17 @@ export const normalizeAvatarIndex = (value: unknown): number => {
   return index;
 };
 
+export const normalizeDicePresetId = (value: unknown): DicePresetId =>
+  typeof value === 'string' && (DICE_PRESET_IDS as readonly string[]).includes(value)
+    ? (value as DicePresetId)
+    : DEFAULT_DICE_PRESET_ID;
+
 export interface RoomMember {
   userId: string;
   socketId: string;
   displayName: string;
   avatarIndex: number;
+  dicePresetId: DicePresetId;
   role: RoomRole;
   online: boolean;
 }

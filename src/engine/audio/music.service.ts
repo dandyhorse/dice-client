@@ -74,7 +74,7 @@ class MusicService {
     const audio = new Audio(OST_TRACK_URLS[trackIndex]!);
     audio.preload = preload;
     audio.volume = volume;
-    audio.loop = OST_TRACK_URLS.length === 1;
+    audio.loop = true;
     audio.setAttribute('playsinline', '');
     audio.addEventListener('timeupdate', this.onTimeUpdate);
     audio.addEventListener('ended', this.onEnded);
@@ -104,11 +104,16 @@ class MusicService {
   };
 
   private onEnded = (event: Event): void => {
+    const currentAudio = this.current;
     if (
-      event.currentTarget !== this.current ||
-      OST_TRACK_URLS.length <= 1 ||
-      this.transitioning
+      event.currentTarget !== currentAudio ||
+      !currentAudio ||
+      OST_TRACK_URLS.length <= 1
     ) {
+      return;
+    }
+    if (this.transitioning) {
+      if (this.next) this.finishSwitch(currentAudio, this.next);
       return;
     }
     this.switchToNext();
@@ -188,7 +193,7 @@ class MusicService {
     this.current = audio;
     this.currentIndex = targetIndex;
     audio.volume = this.targetVolume();
-    audio.loop = OST_TRACK_URLS.length === 1;
+    audio.loop = true;
     audio.src = OST_TRACK_URLS[targetIndex]!;
     audio.load();
     void audio
@@ -209,6 +214,8 @@ class MusicService {
     if (this.fadeRafId !== null) cancelAnimationFrame(this.fadeRafId);
     this.fadeRafId = null;
     this.releaseAudio(from);
+    to.volume = this.targetVolume();
+    to.loop = true;
     this.current = to;
     this.currentIndex = this.nextIndex;
     this.next = null;

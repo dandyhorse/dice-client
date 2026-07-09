@@ -34,7 +34,11 @@ import {
   THROW_POSITION_PADDING,
   WALL_INSET,
 } from '../../../config';
-import { createDiceMesh } from '../../../assets/dice-visual.factory';
+import {
+  createDiceMesh,
+  setDiceVisualPreset,
+} from '../../../assets/dice-visual.factory';
+import { DEFAULT_DICE_PRESET, type DicePreset } from '../../../../dice-presets';
 import type { DieStateFull } from './network.service';
 
 interface LocalDie {
@@ -63,6 +67,13 @@ interface RemoteSample {
   w: THREE.Vector3;
 }
 
+interface DiceTrailSegment {
+  mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+  createdAtMs: number;
+  lifetimeMs: number;
+  opacity: number;
+}
+
 interface FaceAlignment {
   faceValue: number;
   dot: number;
@@ -89,17 +100,18 @@ const PARKED_Y = -1000;
 const REMOTE_SAMPLE_CAPACITY = 8;
 const INTERPOLATION_DELAY_RAMP_MS = 120;
 const LOCAL_COLLISION_IMPACT_MIN = 0.75;
-
 // Максимальное время экстраполяции без свежего снапшота. Если сервер молчит
 // дольше этого, кости не продолжают лететь — застывают на последнем известном
 // состоянии (иначе при drop'е пакетов вылетели бы за арену).
 const MAX_EXTRAPOLATION_MS = 250;
 
 export type DiceMode = 'local' | 'network';
+export type DiceCollisionKind = 'dice' | 'surface';
 
 export interface DiceServiceOptions {
   shadowsEnabled?: boolean;
-  onCollision?: (impact: number) => void;
+  onCollision?: (impact: number, kind: DiceCollisionKind) => void;
+  preset?: DicePreset;
 }
 
 const clamp = (value: number, min: number, max: number): number =>
@@ -121,7 +133,8 @@ export class DiceService {
   private material: CANNON.Material | null;
   private readonly mode: DiceMode;
   private readonly shadowsEnabled: boolean;
-  private readonly onCollision: ((impact: number) => void) | null;
+  private readonly onCollision: ((impact: number, kind: DiceCollisionKind) => void) | null;
+  private preset: DicePreset;
   private isHeld = false;
   private interpolationRampStartMs = 0;
   private readonly tmpDeltaQ = new THREE.Quaternion();
@@ -132,8 +145,12 @@ export class DiceService {
   private readonly tmpSupportAxis = new CANNON.Vec3();
   private readonly tmpLocalAngularVelocity = new CANNON.Vec3();
   private readonly tmpWorldAngularVelocity = new CANNON.Vec3();
+  private readonly tmpTrailStart = new THREE.Vector3();
+  private readonly tmpTrailEnd = new THREE.Vector3();
   private readonly worldUp = new CANNON.Vec3(0, 1, 0);
   private readonly contactKickPairs = new Set<string>();
+  private readonly trailSegments: DiceTrailSegment[] = [];
+  private readonly trailLastPositions = new Map<THREE.Mesh, THREE.Vector3>();
 
   // В local mode — массив LocalDie (cannon body + mesh).
   // В network mode — массив RemoteDie (только mesh + state от сервера).
@@ -154,10 +171,13 @@ export class DiceService {
     this.mode = mode;
     this.shadowsEnabled = options.shadowsEnabled ?? mode === 'local';
     this.onCollision = options.onCollision ?? null;
+    this.preset = options.preset ?? DEFAULT_DICE_PRESET;
+    setDiceVisualPreset(this.preset.visual);
   }
 
   spawn(): void {
     const size = DICE_HALF_SIZE * 2;
+    setDiceVisualPreset(this.preset.visual);
 
     for (let i = 0; i < DICE_COUNT; i++) {
       const mesh = createDiceMesh(size, { shadowsEnabled: this.shadowsEnabled });
@@ -211,13 +231,25 @@ export class DiceService {
     if (this.mode === 'local') this.localActiveIndices = this.allLocalIndices();
   }
 
+  setPreset(preset: DicePreset): void {
+    if (this.preset.id === preset.id) return;
+    this.preset = preset;
+    setDiceVisualPreset(preset.visual);
+    this.clearTrails();
+  }
+
   private handleLocalCollision = (event: {
+    body?: CANNON.Body;
     contact?: { getImpactVelocityAlongNormal?: () => number };
   }): void => {
     const impact = Math.abs(event.contact?.getImpactVelocityAlongNormal?.() ?? 0);
     if (impact < LOCAL_COLLISION_IMPACT_MIN) return;
-    this.onCollision?.(impact);
+    this.onCollision?.(impact, this.isLocalDiceBody(event.body) ? 'dice' : 'surface');
   };
+
+  private isLocalDiceBody(body: CANNON.Body | undefined): boolean {
+    return body !== undefined && this.localDice.some((die) => die.body === body);
+  }
 
   pickup(): void {
     if (this.isHeld) return;
@@ -228,6 +260,7 @@ export class DiceService {
         if (!active.has(i)) continue;
         const die = this.localDice[i]!;
         die.mesh.visible = false;
+        this.clearTrailAnchor(die.mesh);
         die.body.type = CANNON.Body.KINEMATIC;
         die.body.velocity.setZero();
         die.body.angularVelocity.setZero();
@@ -242,6 +275,7 @@ export class DiceService {
     // пока не придёт первый снапшот (начала нового броска) — кости скрыты.
     for (const die of this.remoteDice) {
       die.mesh.visible = false;
+      this.clearTrailAnchor(die.mesh);
       this.clearRemoteSamples(die);
       // Обнуляем velocity чтобы extrapolate не уводил мешь в сторону
       // на случай запоздалого снапшота с velocity != 0.
@@ -291,6 +325,7 @@ export class DiceService {
         die.body.quaternion.z,
         die.body.quaternion.w,
       );
+      this.setTrailAnchor(die.mesh);
     }
   }
 
@@ -342,7 +377,7 @@ export class DiceService {
     return Math.abs(x) > Math.abs(z) ? 'z' : 'x';
   }
 
-  syncMeshes(): void {
+  syncMeshes(now = performance.now()): void {
     if (this.mode !== 'local') return;
     for (const die of this.localDice) {
       if (!die.mesh.visible) continue;
@@ -353,7 +388,9 @@ export class DiceService {
         die.body.quaternion.z,
         die.body.quaternion.w,
       );
+      this.updateTrailForMesh(die.mesh, now);
     }
+    this.updateTrailSegments(now);
   }
 
   applyLocalAssistForces(): void {
@@ -671,6 +708,7 @@ export class DiceService {
       // пул в 6-1 = 5 кубиков и т.д. без отдельного opcode'а.
       if (state.p[1] < -100) {
         die.mesh.visible = false;
+        this.clearTrailAnchor(die.mesh);
         this.clearRemoteSamples(die);
         continue;
       }
@@ -688,6 +726,7 @@ export class DiceService {
       if (wasEmpty || options.immediate) {
         die.mesh.position.copy(die.p);
         die.mesh.quaternion.copy(die.q);
+        this.setTrailAnchor(die.mesh);
       }
     }
   }
@@ -696,6 +735,7 @@ export class DiceService {
     if (this.mode !== 'network') return;
     for (const die of this.remoteDice) {
       die.mesh.visible = false;
+      this.clearTrailAnchor(die.mesh);
       die.v.set(0, 0, 0);
       die.w.set(0, 0, 0);
       this.clearRemoteSamples(die);
@@ -705,6 +745,7 @@ export class DiceService {
 
   destroy(): void {
     this.isHeld = false;
+    this.clearTrails();
     for (const die of this.localDice) {
       if (this.onCollision) die.body.removeEventListener('collide', this.handleLocalCollision);
       this.world?.removeBody(die.body);
@@ -764,6 +805,7 @@ export class DiceService {
       if (renderAtMs <= first.atMs) {
         die.mesh.position.copy(first.p);
         die.mesh.quaternion.copy(first.q);
+        this.updateTrailForMesh(die.mesh, now);
         continue;
       }
 
@@ -787,7 +829,9 @@ export class DiceService {
       } else {
         this.renderExtrapolated(die, last, renderAtMs);
       }
+      this.updateTrailForMesh(die.mesh, now);
     }
+    this.updateTrailSegments(now);
   }
 
   private createRemoteSamples(): RemoteSample[] {
@@ -857,6 +901,135 @@ export class DiceService {
     die.mesh.quaternion.multiplyQuaternions(this.tmpDeltaQ, sample.q);
   }
 
+  private updateTrailForMesh(mesh: THREE.Mesh, now: number): void {
+    if (!mesh.visible || mesh.position.y < -100) {
+      this.clearTrailAnchor(mesh);
+      return;
+    }
+
+    const last = this.trailLastPositions.get(mesh);
+    if (!last) {
+      this.setTrailAnchor(mesh);
+      return;
+    }
+
+    this.tmpTrailStart.copy(last);
+    this.tmpTrailEnd.copy(mesh.position);
+    const trail = this.preset.trail;
+    if (!trail.enabled) {
+      this.clearTrailAnchor(mesh);
+      return;
+    }
+    this.tmpTrailStart.y = trail.y;
+    this.tmpTrailEnd.y = trail.y;
+
+    const dx = this.tmpTrailEnd.x - this.tmpTrailStart.x;
+    const dz = this.tmpTrailEnd.z - this.tmpTrailStart.z;
+    const distanceSq = dx * dx + dz * dz;
+    if (distanceSq >= trail.minDistanceSq) {
+      const distance = Math.sqrt(distanceSq);
+      if (distance > trail.maxSegment) {
+        const scale = trail.maxSegment / distance;
+        this.tmpTrailStart.set(
+          this.tmpTrailEnd.x - dx * scale,
+          trail.y,
+          this.tmpTrailEnd.z - dz * scale,
+        );
+      }
+      this.createTrailSegment(this.tmpTrailStart, this.tmpTrailEnd, now, trail);
+    }
+
+    last.copy(mesh.position);
+  }
+
+  private createTrailSegment(
+    start: THREE.Vector3,
+    end: THREE.Vector3,
+    now: number,
+    trail: DicePreset['trail'],
+  ): void {
+    const dx = end.x - start.x;
+    const dz = end.z - start.z;
+    const len = Math.hypot(dx, dz);
+    if (len <= 1e-6) return;
+
+    const halfWidth = trail.width / 2;
+    const nx = (-dz / len) * halfWidth;
+    const nz = (dx / len) * halfWidth;
+    const vertices = [
+      start.x + nx,
+      trail.y,
+      start.z + nz,
+      start.x - nx,
+      trail.y,
+      start.z - nz,
+      end.x - nx,
+      trail.y,
+      end.z - nz,
+      end.x + nx,
+      trail.y,
+      end.z + nz,
+    ];
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setIndex([0, 1, 2, 0, 2, 3]);
+
+    const material = new THREE.MeshBasicMaterial({
+      color: trail.color,
+      transparent: true,
+      opacity: trail.opacity,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.renderOrder = 3;
+    this.scene.add(mesh);
+    this.trailSegments.push({
+      mesh,
+      createdAtMs: now,
+      lifetimeMs: trail.lifetimeMs,
+      opacity: trail.opacity,
+    });
+  }
+
+  private updateTrailSegments(now: number): void {
+    for (let i = this.trailSegments.length - 1; i >= 0; i--) {
+      const segment = this.trailSegments[i]!;
+      const age = now - segment.createdAtMs;
+      if (age >= segment.lifetimeMs) {
+        this.disposeTrailSegment(segment);
+        this.trailSegments.splice(i, 1);
+        continue;
+      }
+      segment.mesh.material.opacity = segment.opacity * (1 - age / segment.lifetimeMs);
+    }
+  }
+
+  private setTrailAnchor(mesh: THREE.Mesh): void {
+    const current = this.trailLastPositions.get(mesh);
+    if (current) {
+      current.copy(mesh.position);
+    } else {
+      this.trailLastPositions.set(mesh, mesh.position.clone());
+    }
+  }
+
+  private clearTrailAnchor(mesh: THREE.Mesh): void {
+    this.trailLastPositions.delete(mesh);
+  }
+
+  private clearTrails(): void {
+    for (const segment of this.trailSegments) this.disposeTrailSegment(segment);
+    this.trailSegments.length = 0;
+    this.trailLastPositions.clear();
+  }
+
+  private disposeTrailSegment(segment: DiceTrailSegment): void {
+    segment.mesh.removeFromParent();
+    segment.mesh.geometry.dispose();
+    segment.mesh.material.dispose();
+  }
+
   private disposeMesh(mesh: THREE.Mesh): void {
     mesh.removeFromParent();
     const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
@@ -869,6 +1042,7 @@ export class DiceService {
 
   private parkLocalDie(die: LocalDie): void {
     die.mesh.visible = false;
+    this.clearTrailAnchor(die.mesh);
     die.body.type = CANNON.Body.KINEMATIC;
     die.body.velocity.setZero();
     die.body.angularVelocity.setZero();
@@ -891,6 +1065,7 @@ export class DiceService {
     die.body.wakeUp();
     die.mesh.position.set(die.body.position.x, die.body.position.y, die.body.position.z);
     die.mesh.quaternion.set(0, 0, 0, 1);
+    this.setTrailAnchor(die.mesh);
   }
 
   private getValidLocalActiveIndices(): number[] {

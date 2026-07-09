@@ -71,6 +71,7 @@ import { musicService } from './engine/audio/music.service';
 import type { MenuDiceScene } from './ui/menu-dice-scene';
 import { hideLoadingOverlay, showLoadingOverlay } from './ui/loading-overlay';
 import { AVATAR_URLS } from './avatars';
+import { DICE_PRESETS, dicePresetName } from './dice-presets';
 
 const USER_ID_KEY = 'dice.userId';
 const DISPLAY_NAME_KEY = 'dice.displayName';
@@ -278,9 +279,11 @@ const syncQuickSearchClockSound = (): void => {
 };
 
 const UI_SOUND_HOVER_SELECTOR = 'button';
-const UI_SOUND_CLICK_SELECTOR = 'button, [data-top-dropdown="sound"]';
 const UI_SOUND_HOVER_SUPPRESS_AFTER_CLICK_MS = 420;
 const UI_SOUND_STATIONARY_POINTER_PX = 6;
+
+const isUiSoundDisabledTarget = (target: EventTarget | null): boolean =>
+  target instanceof Element && target.closest('button:disabled, [aria-disabled="true"]') !== null;
 
 const closestUiSoundTarget = (
   target: EventTarget | null,
@@ -327,19 +330,24 @@ const installUiSoundFeedback = (): void => {
     'pointerdown',
     (event) => {
       if (event.button !== 0) return;
-      const target = closestUiSoundTarget(event.target, UI_SOUND_CLICK_SELECTOR);
-      if (!target) return;
       suppressHoverUntil = performance.now() + UI_SOUND_HOVER_SUPPRESS_AFTER_CLICK_MS;
       suppressHoverX = event.clientX;
       suppressHoverY = event.clientY;
-      if (target.getAttribute('data-ui-click-sound') === 'language-change') {
-        const language = target.getAttribute('data-language-option');
+      if (isUiSoundDisabledTarget(event.target)) return;
+
+      const specialTarget =
+        event.target instanceof Element
+          ? event.target.closest<HTMLElement>('[data-ui-click-sound]')
+          : null;
+      const clickSound = specialTarget?.dataset.uiClickSound;
+      if (clickSound === 'language-change') {
+        const language = specialTarget?.dataset.languageOption;
         if (language === 'ru' || language === 'en') {
           if (language !== getLanguage()) audioService.play('ui-language-change');
           return;
         }
       }
-      if (target.getAttribute('data-ui-click-sound') === 'none') return;
+      if (clickSound === 'none') return;
       audioService.play('ui-click');
     },
     true,
@@ -553,6 +561,7 @@ const connectNetwork = async (): Promise<NetworkService> => {
     identity.displayName,
     identity.accessToken,
     getPlayerSettings().profile.avatarIndex,
+    getPlayerSettings().profile.dicePresetId,
   );
   return network;
 };
@@ -1247,6 +1256,7 @@ const createAvatarFrame = (
   } satisfies Partial<CSSStyleDeclaration>);
   appendMaskedAvatar(el, getPlayerSettings().profile.avatarIndex, name);
   if (editable && el instanceof HTMLButtonElement) {
+    el.dataset.uiClickSound = 'none';
     addSmallFrameHoverOverlay(el, TOP_MENU_ICON_IMAGE_SIZE);
     bindMouseOnlyClick(el, onClick);
   }
@@ -1296,11 +1306,11 @@ const renderLanguageControls = (): void => {
   wrap.appendChild(avatarItem);
 
   const settingsItem = createTopMenuItem();
-  settingsItem.appendChild(
-    createPlainIconButton(t('settings'), SETTINGS_ICON_SRC, () => {
-      toggleSettingsPopup();
-    }),
-  );
+  const settingsButton = createPlainIconButton(t('settings'), SETTINGS_ICON_SRC, () => {
+    toggleSettingsPopup();
+  });
+  settingsButton.dataset.uiClickSound = 'none';
+  settingsItem.appendChild(settingsButton);
   wrap.appendChild(settingsItem);
 
   const soundItem = createTopMenuItem();
@@ -1425,6 +1435,19 @@ const createProfilePopup = (): HTMLDivElement => {
   } satisfies Partial<CSSStyleDeclaration>);
   panel.appendChild(avatarGrid);
 
+  const diceTitle = appendSectionTitle(panel, t('diceCosmetics'));
+  diceTitle.style.textAlign = 'center';
+
+  const dicePresetGrid = document.createElement('div');
+  Object.assign(dicePresetGrid.style, {
+    display: 'grid',
+    gridTemplateColumns: '1fr',
+    justifyItems: 'center',
+    gap: '12px',
+    width: '100%',
+  } satisfies Partial<CSSStyleDeclaration>);
+  panel.appendChild(dicePresetGrid);
+
   const renderAvatarButtons = (): void => {
     avatarGrid.replaceChildren();
     for (let index = 0; index < AVATAR_URLS.length; index++) {
@@ -1452,7 +1475,10 @@ const createProfilePopup = (): HTMLDivElement => {
       bindMouseOnlyClick(avatarBtn, () => {
         savePlayerSettings({
           ...getPlayerSettings(),
-          profile: { avatarIndex: index },
+          profile: {
+            ...getPlayerSettings().profile,
+            avatarIndex: index,
+          },
         })
           .then(() => {
             renderAvatarButtons();
@@ -1461,6 +1487,37 @@ const createProfilePopup = (): HTMLDivElement => {
           .catch(showError);
       });
       avatarGrid.appendChild(avatarBtn);
+    }
+  };
+
+  const renderDicePresetButtons = (): void => {
+    dicePresetGrid.replaceChildren();
+    const currentPresetId = getPlayerSettings().profile.dicePresetId;
+    for (const preset of DICE_PRESETS) {
+      const presetBtn = document.createElement('button');
+      const name = dicePresetName(preset, getLanguage());
+      presetBtn.type = 'button';
+      presetBtn.title = name;
+      presetBtn.setAttribute('aria-label', name);
+      presetBtn.className = 'menu-frame-button';
+      Object.assign(presetBtn.style, {
+        opacity: currentPresetId === preset.id ? '1' : '0.68',
+      } satisfies Partial<CSSStyleDeclaration>);
+      const label = document.createElement('span');
+      label.textContent = name;
+      presetBtn.appendChild(label);
+      bindMouseOnlyClick(presetBtn, () => {
+        savePlayerSettings({
+          ...getPlayerSettings(),
+          profile: {
+            ...getPlayerSettings().profile,
+            dicePresetId: preset.id,
+          },
+        })
+          .then(renderDicePresetButtons)
+          .catch(showError);
+      });
+      dicePresetGrid.appendChild(presetBtn);
     }
   };
 
@@ -1488,6 +1545,7 @@ const createProfilePopup = (): HTMLDivElement => {
   panel.addEventListener('click', (event) => event.stopPropagation());
   overlay.appendChild(panel);
   renderAvatarButtons();
+  renderDicePresetButtons();
   return overlay;
 };
 
@@ -1824,7 +1882,6 @@ const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
   startBtn.disabled =
     state.ownerId !== network.getUserId() || onlinePlayers.length < 2;
   panel.appendChild(startBtn);
-  panel.appendChild(createMenuFrameButton(t('back'), returnToLobby));
   panel.appendChild(error);
 
   screen.appendChild(panel);
@@ -2047,7 +2104,7 @@ const controlActionLabel = (action: ControlAction): string => {
   }
 };
 
-const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
+const renderSettingsContent = (card: HTMLElement): void => {
   const current = getPlayerSettings();
   let draftControls: ControlBindings = { ...current.controls };
   let draftGameplay: GameplaySettings = { ...current.gameplay };
@@ -2101,6 +2158,7 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
     background: SETTINGS_BUTTON_BG,
     border: '1px solid rgba(255,255,255,0.18)',
   } satisfies Partial<CSSStyleDeclaration>);
+  autoRollBtn.setAttribute('role', 'switch');
   card.appendChild(autoRollBtn);
 
   const error = appendLobbyError(card);
@@ -2124,8 +2182,6 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
   });
   actions.appendChild(resetBtn);
 
-  const closeBtn = createMenuFrameButton(t('back'), close);
-  actions.appendChild(closeBtn);
   card.appendChild(actions);
 
   const keyListener = (event: KeyboardEvent): void => {
@@ -2193,6 +2249,16 @@ const renderSettingsContent = (card: HTMLElement, close: () => void): void => {
     autoRollBtn.textContent = `${t('autoRollAfterContinue')}: ${
       draftGameplay.autoRollAfterContinue ? t('settingOn') : t('settingOff')
     }`;
+    autoRollBtn.setAttribute(
+      'aria-checked',
+      String(draftGameplay.autoRollAfterContinue),
+    );
+    autoRollBtn.style.borderColor = draftGameplay.autoRollAfterContinue
+      ? 'rgba(255,255,255,0.28)'
+      : 'rgba(255,255,255,0.14)';
+    autoRollBtn.style.color = draftGameplay.autoRollAfterContinue
+      ? '#f4f4f5'
+      : 'rgba(216,216,232,0.68)';
     const settings: PlayerSettings = {
       version: 1,
       controls: { ...draftControls },
@@ -2246,7 +2312,7 @@ const renderSettingsModal = (): void => {
   const title = appendTitle(panel, t('settings'));
   title.style.textAlign = 'center';
   const close = (): void => clearSettingsModal();
-  renderSettingsContent(panel, close);
+  renderSettingsContent(panel);
 
   overlay.addEventListener('click', (event) => {
     if (event.target === overlay) close();
@@ -2704,8 +2770,8 @@ const renderLobby = (): void => {
     quickBtn.classList.add('menu-frame-button-danger');
     applyLoadingDotsLabel(quickBtn, t('quickSearchCancel'));
   }
-  appendMenuButton(card, t('createRoomMenu'), openCreateRoomMenu);
-  appendMenuButton(card, t('joinRoom'), openMultiplayerJoin);
+  appendMenuButton(card, t('createRoomMenu'), openCreateRoomMenu).dataset.uiClickSound = 'none';
+  appendMenuButton(card, t('joinRoom'), openMultiplayerJoin).dataset.uiClickSound = 'none';
 };
 
 const renderCreateRoomMenu = (): void => {
@@ -2744,8 +2810,8 @@ const renderMultiplayerMenu = (): void => {
   // appendDisabledMenuButton(card, t('normalMode'));
   // appendDisabledMenuButton(card, t('hardcoreMode'));
   appendSectionTitle(card, t('room'));
-  appendMenuButton(card, t('createRoomAction'), openMultiplayerCreate);
-  appendMenuButton(card, t('joinRoom'), openMultiplayerJoin);
+  appendMenuButton(card, t('createRoomAction'), openMultiplayerCreate).dataset.uiClickSound = 'none';
+  appendMenuButton(card, t('joinRoom'), openMultiplayerJoin).dataset.uiClickSound = 'none';
   appendBackTo(card, renderCreateRoomMenu);
 };
 
@@ -2777,6 +2843,7 @@ const renderMultiplayerCreate = (): void => {
   generatedCodeInput.style.color = '#8e8e9d';
   card.appendChild(labeledControl(t('roomCode'), generatedCodeInput));
 
+  appendLobbyError(card);
   const createBtn = createMenuFrameButton(t('createGame'), () => {
     const gameName = gameNameInput.value.trim();
     if (!gameName) {
@@ -2793,9 +2860,6 @@ const renderMultiplayerCreate = (): void => {
     ).catch(showError);
   });
   card.appendChild(createBtn);
-
-  appendBackTo(card, renderHome);
-  appendLobbyError(card);
 };
 
 const renderMultiplayerJoin = (): void => {
@@ -2895,7 +2959,6 @@ const renderMultiplayerJoin = (): void => {
   layout.appendChild(codePanel);
   card.appendChild(layout);
 
-  appendBackTo(card, closeJoinPopup);
   appendLobbyError(card);
 
   const ensureNetwork = (): Promise<NetworkService> => {
@@ -3047,7 +3110,7 @@ const renderSettingsMenu = (): void => {
   const card = createLobbyFrame(520, renderHome);
   const title = appendTitle(card, t('settings'));
   title.style.textAlign = 'center';
-  renderSettingsContent(card, renderHome);
+  renderSettingsContent(card);
 };
 
 const textInput = (placeholder: string): HTMLInputElement => {

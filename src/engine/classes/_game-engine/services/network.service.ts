@@ -34,6 +34,7 @@ import {
   ROOM_MODE,
   ROOM_STATUS,
   normalizeAvatarIndex,
+  normalizeDicePresetId,
 } from '../../../../network/protocol/types';
 
 import type {
@@ -97,14 +98,20 @@ const wsUrlFor = (
   displayName: string,
   accessToken: string | undefined,
   avatarIndex: number,
+  dicePresetId: string,
 ): string => {
   const base = SERVER_URL.replace(/^http/, 'ws');
   const qs = accessToken
-    ? new URLSearchParams({ t: accessToken, a: String(normalizeAvatarIndex(avatarIndex)) })
+    ? new URLSearchParams({
+        t: accessToken,
+        a: String(normalizeAvatarIndex(avatarIndex)),
+        d: normalizeDicePresetId(dicePresetId),
+      })
     : new URLSearchParams({
         u: userId,
         n: displayName,
         a: String(normalizeAvatarIndex(avatarIndex)),
+        d: normalizeDicePresetId(dicePresetId),
       });
   return `${base}/ws?${qs.toString()}`;
 };
@@ -138,6 +145,7 @@ export class NetworkService {
   private displayName = 'Player';
   private accessToken: string | undefined;
   private avatarIndex = 0;
+  private dicePresetId = normalizeDicePresetId(undefined);
 
   private requestSeq = 1;
   private pending = new Map<number, PendingRequest>();
@@ -151,12 +159,14 @@ export class NetworkService {
     displayName: string,
     accessToken?: string,
     avatarIndex = 0,
+    dicePresetId = normalizeDicePresetId(undefined),
   ): Promise<void> => {
     if (this.ws) return Promise.resolve();
     this.userId = userId;
     this.displayName = displayName.trim() || 'Player';
     this.accessToken = accessToken;
     this.avatarIndex = normalizeAvatarIndex(avatarIndex);
+    this.dicePresetId = normalizeDicePresetId(dicePresetId);
     this.autoReconnect = true;
     return new Promise<void>((resolve, reject) => {
       this.openSocket(resolve, reject);
@@ -179,6 +189,7 @@ export class NetworkService {
     this.displayName = 'Player';
     this.accessToken = undefined;
     this.avatarIndex = 0;
+    this.dicePresetId = normalizeDicePresetId(undefined);
     // Реджектим висящие — иначе UI промисы зависнут навсегда.
     for (const p of this.pending.values()) {
       if (p.timeoutId !== null) clearTimeout(p.timeoutId);
@@ -380,7 +391,13 @@ export class NetworkService {
       return;
     }
     const ws = new WebSocket(
-      wsUrlFor(this.userId, this.displayName, this.accessToken, this.avatarIndex),
+      wsUrlFor(
+        this.userId,
+        this.displayName,
+        this.accessToken,
+        this.avatarIndex,
+        this.dicePresetId,
+      ),
     );
     ws.binaryType = 'arraybuffer';
     let opened = false;
