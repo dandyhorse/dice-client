@@ -68,7 +68,7 @@ import {
   ROOM_STATUS,
 } from './services/network.service';
 import { SelectionService } from './services/selection.service';
-import { ShakeInputService } from './services/shake-input.service';
+import { ShakeInputService, type HoldStartSource } from './services/shake-input.service';
 import { TurnHotkeysService } from './services/turn-hotkeys.service';
 import { UI_RADIUS } from '../../../ui/theme';
 import { nextAvatarIndex } from '../../../avatars';
@@ -244,8 +244,8 @@ export class GameEngine {
     this.turnHotkeys.events.on('continue', this.handleHotkeyContinue);
     this.turnHotkeys.events.on('bank', this.handleHotkeyBank);
     this.turnHotkeys.events.on('surrender', this.handleHotkeySurrender);
-    this.input.events.on('hold-start', () => {
-      audioService.play('dice-pickup');
+    this.input.events.on('hold-start', (_position: THREE.Vector3, source?: HoldStartSource) => {
+      if (source === 'pointer') audioService.play('dice-pickup');
       this.dice.pickup();
     });
     this.input.events.on('release', (velocity: THREE.Vector3, position: THREE.Vector3) => {

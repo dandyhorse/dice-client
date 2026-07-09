@@ -111,7 +111,7 @@ const SOUND_TRACK_BOTTOM = 159;
 const SOUND_PICKER_WIDTH = 18;
 const SOUND_PICKER_HEIGHT = 9;
 const TOP_DROPDOWN_ANIMATION_MS = 260;
-const LANGUAGE_MATRIX_STEP_MS = 42;
+const LANGUAGE_MATRIX_STEP_MS = 84;
 const LANGUAGE_MATRIX_ROUNDS = 5;
 const LANGUAGE_MATRIX_CHARS =
   'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789АБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЭЮЯабвгдежзиклмнопрстуфхцчшэюя';

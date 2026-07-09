@@ -24,9 +24,9 @@ const PANEL_OFFLINE_FG = '#8e8e9d';
 const PANEL_RADIUS = UI_RADIUS;
 const PANEL_PAD = '18px 24px';
 const PANEL_ACTIVE_BORDER = '#22c55e';
-const PLAYER_PANEL_TOP_Y = 'calc(clamp(90px, 14vh, 170px) - 5px)';
-const PLAYER_PANEL_BOTTOM_Y = 'calc(clamp(90px, 14vh, 170px) + 5px)';
-const PLAYER_PANEL_TABLE_X = 'max(38px, calc(20vw - 14.4vh))';
+const PLAYER_PANEL_TOP_Y = 'calc(clamp(90px, 14vh, 170px) + 15px)';
+const PLAYER_PANEL_BOTTOM_Y = 'calc(clamp(90px, 14vh, 170px) + 25px)';
+const PLAYER_PANEL_TABLE_X = 'max(18px, calc(20vw - 14.4vh - 20px))';
 
 const BTN_DISABLED_OPACITY = '0.4';
 const FARKLE_DURATION_MS = 1200;

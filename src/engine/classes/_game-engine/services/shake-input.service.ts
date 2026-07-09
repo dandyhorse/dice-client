@@ -23,6 +23,8 @@ interface Sample {
   time: number;
 }
 
+export type HoldStartSource = 'pointer' | 'keyboard';
+
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, value));
 
@@ -154,7 +156,7 @@ export class ShakeInputService {
     this.samples.length = 0;
     this.pushSample(performance.now());
     this.lastEmittedPos.copy(this.currentPos);
-    this.events.emit('hold-start', this.currentPos.clone());
+    this.events.emit('hold-start', this.currentPos.clone(), 'pointer' satisfies HoldStartSource);
   };
 
   private onMouseMove = (event: MouseEvent): void => {
@@ -240,7 +242,7 @@ export class ShakeInputService {
     const throwSetup = this.createSpaceThrow();
     this.currentPos.copy(throwSetup.position);
     this.lastEmittedPos.copy(this.currentPos);
-    this.events.emit('hold-start', this.currentPos.clone());
+    this.events.emit('hold-start', this.currentPos.clone(), 'keyboard' satisfies HoldStartSource);
 
     if (!this.enabled || !this.isHolding) return;
     this.isHolding = false;
