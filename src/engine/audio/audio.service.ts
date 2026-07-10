@@ -123,7 +123,7 @@ const SOUND_DEFS: Record<SoundId, SoundDef> = {
     src: UI_LANGUAGE_CHANGE_SOUND_URL ? [UI_LANGUAGE_CHANGE_SOUND_URL] : [],
     group: 'menu',
     bus: 'effects',
-    volume: 0.17,
+    volume: 0.5,
     rateVariation: 0,
     cooldownMs: 35,
   },

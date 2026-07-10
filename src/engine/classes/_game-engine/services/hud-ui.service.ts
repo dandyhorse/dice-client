@@ -504,7 +504,13 @@ export class HudUiService {
 
     const ownPlayer = players.find((m) => m.userId === this.ownUserId) ?? players[0]!;
     const others = players.filter((m) => m.userId !== ownPlayer.userId);
-    this.renderScorePanel(this.leftPanel, ownPlayer, totalByUser, targetScore);
+    this.renderScorePanel(
+      this.leftPanel,
+      ownPlayer,
+      totalByUser,
+      targetScore,
+      s.currentPlayer === ownPlayer.userId,
+    );
     this.stylePlayerPanel(this.leftPanel, ownPlayer, s.currentPlayer === ownPlayer.userId);
 
     if (others.length === 0) {
@@ -513,7 +519,7 @@ export class HudUiService {
     }
 
     this.rightPanel.style.display = 'block';
-    this.renderScorePanelList(this.rightPanel, others, totalByUser, targetScore);
+    this.renderScorePanelList(this.rightPanel, others, totalByUser, targetScore, s.currentPlayer);
     this.stylePlayerPanel(
       this.rightPanel,
       others.find((member) => s.currentPlayer === member.userId) ?? others[0]!,
@@ -603,10 +609,22 @@ export class HudUiService {
     const totalByUser = new Map(s.totals.map((t) => [t.userId, t.total]));
 
     this.leftPanel.style.top = PLAYER_PANEL_TOP_Y;
-    this.renderScorePanel(this.leftPanel, opponent, totalByUser, targetScore);
+    this.renderScorePanel(
+      this.leftPanel,
+      opponent,
+      totalByUser,
+      targetScore,
+      s.currentPlayer === opponent.userId,
+    );
     this.stylePlayerPanel(this.leftPanel, opponent, s.currentPlayer === opponent.userId);
     this.opponentPanel.style.display = 'block';
-    this.renderScorePanel(this.opponentPanel, ownPlayer, totalByUser, targetScore);
+    this.renderScorePanel(
+      this.opponentPanel,
+      ownPlayer,
+      totalByUser,
+      targetScore,
+      s.currentPlayer === ownPlayer.userId,
+    );
     this.stylePlayerPanel(this.opponentPanel, ownPlayer, s.currentPlayer === ownPlayer.userId);
   }
 
@@ -615,8 +633,9 @@ export class HudUiService {
     member: NonNullable<RoomStatePayload['members'][number]>,
     totalByUser: Map<string, number>,
     targetScore: number,
+    active: boolean,
   ): void {
-    panel.replaceChildren(this.createScorePanelContent(member, totalByUser, targetScore));
+    panel.replaceChildren(this.createScorePanelContent(member, totalByUser, targetScore, active));
   }
 
   private renderScorePanelList(
@@ -624,10 +643,16 @@ export class HudUiService {
     members: NonNullable<RoomStatePayload['members'][number]>[],
     totalByUser: Map<string, number>,
     targetScore: number,
+    activeUserId: string,
   ): void {
     panel.replaceChildren(
       ...members.map((member, index) => {
-        const row = this.createScorePanelContent(member, totalByUser, targetScore);
+        const row = this.createScorePanelContent(
+          member,
+          totalByUser,
+          targetScore,
+          member.userId === activeUserId,
+        );
         if (index > 0) row.style.marginTop = '12px';
         return row;
       }),
@@ -638,6 +663,7 @@ export class HudUiService {
     member: NonNullable<RoomStatePayload['members'][number]>,
     totalByUser: Map<string, number>,
     targetScore: number,
+    active: boolean,
   ): HTMLDivElement {
     const label = formatMember(member.displayName);
     const total = totalByUser.get(member.userId) ?? 0;
@@ -652,21 +678,37 @@ export class HudUiService {
     const text = document.createElement('div');
     Object.assign(text.style, {
       minWidth: '0',
-      whiteSpace: 'pre-line',
+      display: 'flex',
+      flexDirection: 'column',
       lineHeight: '1.2',
       fontSize: '26px',
     } satisfies Partial<CSSStyleDeclaration>);
-    text.textContent = `${label}\n${total} / ${targetScore}`;
 
-    row.append(this.createAvatar(member, label), text);
+    const name = document.createElement('div');
+    name.className = 'player-nickname';
+    name.textContent = label;
+    Object.assign(name.style, {
+      minWidth: '0',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+    } satisfies Partial<CSSStyleDeclaration>);
+
+    const score = document.createElement('div');
+    score.textContent = `${total} / ${targetScore}`;
+    text.append(name, score);
+
+    row.append(this.createAvatar(member, label, active), text);
     return row;
   }
 
   private createAvatar(
     member: NonNullable<RoomStatePayload['members'][number]>,
     label: string,
+    active: boolean,
   ): HTMLDivElement {
     const avatar = document.createElement('div');
+    const online = member.online !== false;
     Object.assign(avatar.style, {
       width: `${HUD_AVATAR_SIZE}px`,
       height: `${HUD_AVATAR_SIZE}px`,
@@ -680,14 +722,45 @@ export class HudUiService {
       color: '#fff',
       fontSize: '34px',
       fontWeight: '700',
-      opacity: member.online === false ? '0.45' : '1',
+      opacity: online ? (active ? '1' : '0.82') : '0.45',
+      filter: active ? 'none' : 'grayscale(0.7) saturate(0.42) brightness(0.72)',
       boxSizing: 'border-box',
       position: 'relative',
+      transition: 'filter 180ms ease, opacity 180ms ease',
     } satisfies Partial<CSSStyleDeclaration>);
+
+    const frameOverlay = document.createElement('div');
+    Object.assign(frameOverlay.style, {
+      position: 'absolute',
+      inset: '0',
+      background: 'rgba(255, 255, 255, 0.22)',
+      opacity: active && online ? '0.38' : '0',
+      pointerEvents: 'none',
+      zIndex: '2',
+      filter: 'drop-shadow(0 0 12px rgba(255, 255, 255, 0.32))',
+      transition: 'opacity 180ms ease',
+    } satisfies Partial<CSSStyleDeclaration>);
+    frameOverlay.style.maskImage = `url("${HUD_AVATAR_FRAME_SRC}")`;
+    frameOverlay.style.maskSize = `${HUD_AVATAR_SIZE}px ${HUD_AVATAR_SIZE}px`;
+    frameOverlay.style.maskRepeat = 'no-repeat';
+    frameOverlay.style.maskPosition = 'center';
+    frameOverlay.style.setProperty('-webkit-mask-image', `url("${HUD_AVATAR_FRAME_SRC}")`);
+    frameOverlay.style.setProperty(
+      '-webkit-mask-size',
+      `${HUD_AVATAR_SIZE}px ${HUD_AVATAR_SIZE}px`,
+    );
+    frameOverlay.style.setProperty('-webkit-mask-repeat', 'no-repeat');
+    frameOverlay.style.setProperty('-webkit-mask-position', 'center');
 
     const url = avatarUrlForIndex(member.avatarIndex);
     if (!url) {
-      avatar.textContent = (label.trim()[0] ?? '?').toUpperCase();
+      const fallback = document.createElement('span');
+      fallback.textContent = (label.trim()[0] ?? '?').toUpperCase();
+      Object.assign(fallback.style, {
+        position: 'relative',
+        zIndex: '1',
+      } satisfies Partial<CSSStyleDeclaration>);
+      avatar.append(fallback, frameOverlay);
       return avatar;
     }
 
@@ -716,7 +789,7 @@ export class HudUiService {
     );
     image.style.setProperty('-webkit-mask-repeat', 'no-repeat');
     image.style.setProperty('-webkit-mask-position', 'center');
-    avatar.appendChild(image);
+    avatar.append(image, frameOverlay);
     return avatar;
   }
 

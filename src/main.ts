@@ -876,6 +876,13 @@ const currentDisplayName = (): string => {
   return user?.displayName.trim() || user?.username.trim() || 'Player';
 };
 
+function createNicknameSpan(name: string): HTMLSpanElement {
+  const span = document.createElement('span');
+  span.className = 'player-nickname';
+  span.textContent = name;
+  return span;
+}
+
 const isGameplayTopMenu = (): boolean => {
   const roomStatus = activeNetwork?.getRoomState()?.status;
   return (
@@ -1290,6 +1297,7 @@ const renderLanguageControls = (): void => {
 
   if (!gameplayActive) {
     const name = document.createElement('div');
+    name.className = 'player-nickname';
     name.textContent = currentDisplayName();
     Object.assign(name.style, {
       maxWidth: '180px',
@@ -1367,6 +1375,7 @@ const renderLanguageControls = (): void => {
 const createProfilePopup = (): HTMLDivElement => {
   const overlay = document.createElement('div');
   overlay.id = PROFILE_POPUP_ID;
+  overlay.classList.add('text-selection-allowed');
   Object.assign(overlay.style, {
     position: 'fixed',
     inset: '0',
@@ -1791,6 +1800,7 @@ const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
 
   const screen = document.createElement('div');
   screen.id = 'room-screen';
+  screen.classList.add('text-selection-allowed');
   Object.assign(screen.style, {
     position: 'fixed',
     inset: '0',
@@ -1924,9 +1934,10 @@ const memberSection = (
   } else {
     for (const member of members) {
       const row = document.createElement('div');
-      row.textContent = `${formatMember(member.displayName, member.userId, ownUserId)} · ${
-        member.online ? t('online') : t('offline')
-      }`;
+      row.append(
+        createNicknameSpan(formatMember(member.displayName, member.userId, ownUserId)),
+        document.createTextNode(` · ${member.online ? t('online') : t('offline')}`),
+      );
       Object.assign(row.style, {
         padding: '6px 8px',
         background: 'rgba(255,255,255,0.06)',
@@ -1980,6 +1991,7 @@ const renderAuthModal = (): void => {
 
   const overlay = document.createElement('div');
   overlay.id = AUTH_MODAL_ID;
+  overlay.classList.add('text-selection-allowed');
   Object.assign(overlay.style, {
     position: 'fixed',
     inset: '0',
@@ -2292,6 +2304,7 @@ const renderSettingsModal = (): void => {
 
   const overlay = document.createElement('div');
   overlay.id = SETTINGS_MODAL_ID;
+  if (!activeGame) overlay.classList.add('text-selection-allowed');
   Object.assign(overlay.style, {
     position: 'fixed',
     inset: '0',
@@ -2499,9 +2512,11 @@ const renderLeaderboard = (): void => {
       }
       for (const [index, row] of leaders.entries()) {
         const line = document.createElement('div');
-        line.textContent = `${index + 1}. ${row.displayName || row.username}: ${row.rating} · ${
-          row.wins
-        }/${row.losses}`;
+        line.append(
+          document.createTextNode(`${index + 1}. `),
+          createNicknameSpan(row.displayName || row.username),
+          document.createTextNode(`: ${row.rating} · ${row.wins}/${row.losses}`),
+        );
         Object.assign(line.style, {
           padding: '4px 0',
           borderBottom: '1px solid rgba(255,255,255,0.06)',
@@ -3037,9 +3052,14 @@ const renderMultiplayerJoin = (): void => {
         borderRadius: UI_RADIUS,
       } satisfies Partial<CSSStyleDeclaration>);
       const meta = document.createElement('div');
-      meta.textContent = `${room.hasPassword ? `[${t('locked')}] ` : ''}${room.gameName} · ${
-        room.playerCount
-      }/2 · ${room.ownerDisplayName}`;
+      meta.append(
+        document.createTextNode(
+          `${room.hasPassword ? `[${t('locked')}] ` : ''}${room.gameName} · ${
+            room.playerCount
+          }/2 · `,
+        ),
+        createNicknameSpan(room.ownerDisplayName),
+      );
       meta.style.overflow = 'hidden';
       meta.style.textOverflow = 'ellipsis';
       meta.style.whiteSpace = 'nowrap';

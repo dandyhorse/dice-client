@@ -37,7 +37,7 @@
 :root {
   --font-ui: 'Chixa Demibold Local', 'EB Garamond Local', Georgia, serif;
   --font-title: 'Chixa Demibold Local', 'Uncial Antiqua Local', 'EB Garamond Local', Georgia, serif;
-  --cursor-target-hand: url('/assets/cursors/cursor-target-hand.png') 25 6, auto;
+  --cursor-target-hand: url('/assets/cursors/cursor-target-hand.png') 25 6, default;
   --app-bg: #151414;
   --app-bg-overlay: rgba(21, 20, 20, 0.5);
   --menu-bg-x: 0px;
@@ -94,6 +94,8 @@ body {
 body,
 body * {
   cursor: var(--cursor-target-hand);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 body.custom-cursor-enabled,
@@ -107,6 +109,24 @@ textarea,
 select {
   outline: none !important;
   -webkit-tap-highlight-color: transparent;
+}
+
+.text-selection-allowed,
+.text-selection-allowed *,
+.player-nickname,
+.player-nickname * {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+button,
+.menu-frame-button,
+[data-top-dropdown],
+[data-top-dropdown] *,
+.text-selection-allowed button,
+.text-selection-allowed button * {
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 button:focus,
@@ -346,14 +366,6 @@ canvas {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.status-frame-danger {
-  color: #ffd0d0;
-  text-shadow:
-    0 3px 0 rgba(78, 0, 0, 0.85),
-    0 0 16px rgba(220, 40, 40, 0.55),
-    0 4px 18px rgba(0, 0, 0, 0.75);
 }
 
 .status-frame.status-frame-large {
