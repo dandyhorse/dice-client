@@ -6,6 +6,7 @@ export const GAME_BLOCKING_OVERLAY_SELECTORS = [
   '#profile-popup',
   '#auth-modal',
   '#room-list-modal',
+  '#room-password-modal',
   '#hud-surrender-confirm',
 ].join(',');
 

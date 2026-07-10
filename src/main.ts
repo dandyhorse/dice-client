@@ -81,6 +81,7 @@ const ROOM_BADGE_ID = 'room-badge';
 const LANG_CONTROLS_ID = 'lang-controls';
 const PROFILE_POPUP_ID = 'profile-popup';
 const ROOM_LIST_MODAL_ID = 'room-list-modal';
+const ROOM_PASSWORD_MODAL_ID = 'room-password-modal';
 const MOBILE_DEVICE_RE =
   /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
 const UI_ASSET_BASE = '/assets/ui';
@@ -608,6 +609,11 @@ const clearSettingsModal = (): void => {
 
 const clearRoomListModal = (): void => {
   const existing = document.getElementById(ROOM_LIST_MODAL_ID);
+  if (existing) existing.remove();
+};
+
+const clearRoomPasswordModal = (): void => {
+  const existing = document.getElementById(ROOM_PASSWORD_MODAL_ID);
   if (existing) existing.remove();
 };
 
@@ -2563,6 +2569,7 @@ const goHome = (): void => {
 };
 
 const renderHome = (): void => {
+  clearRoomPasswordModal();
   if (!hasSavedDisplayName()) {
     renderPlayerNameEntry();
     return;
@@ -2879,8 +2886,10 @@ const renderMultiplayerJoin = (): void => {
         ) return;
         clicked.disabled = false;
         if (error.message.startsWith('BAD_PASSWORD')) {
-          const nextPassword = window.prompt(t('roomPassword')) ?? '';
-          if (nextPassword) joinByCode(code, nextPassword, clicked);
+          openRoomPasswordModal(
+            (password) => joinByCode(code, password, clicked),
+            t('invalidRoomPassword'),
+          );
           return;
         }
         showError(error);
@@ -2926,11 +2935,11 @@ const renderMultiplayerJoin = (): void => {
       row.appendChild(meta);
 
       const joinBtn = button(t('join'), () => {
-        const password = room.hasPassword
-          ? (window.prompt(t('roomPassword')) ?? '')
-          : undefined;
-        if (room.hasPassword && !password) return;
-        joinByCode(room.code, password, joinBtn);
+        if (room.hasPassword) {
+          openRoomPasswordModal((password) => joinByCode(room.code, password, joinBtn));
+          return;
+        }
+        joinByCode(room.code, undefined, joinBtn);
       });
       row.appendChild(joinBtn);
       roomRows.appendChild(row);
@@ -3054,6 +3063,97 @@ const button = (label: string, onClick: () => void): HTMLButtonElement => {
   return btn;
 };
 
+const openRoomPasswordModal = (
+  onSubmit: (password: string) => void,
+  initialError = '',
+): void => {
+  clearRoomPasswordModal();
+
+  const overlay = document.createElement('div');
+  overlay.id = ROOM_PASSWORD_MODAL_ID;
+  overlay.classList.add('text-selection-allowed');
+  overlay.setAttribute('role', 'presentation');
+  Object.assign(overlay.style, {
+    position: 'fixed',
+    inset: '0',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: scaledPx(16),
+    boxSizing: 'border-box',
+    background: APP_BACKGROUND_OVERLAY,
+    zIndex: '50',
+    fontFamily: FONT_FAMILY.ui,
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  const panel = document.createElement('form');
+  panel.setAttribute('role', 'dialog');
+  panel.setAttribute('aria-modal', 'true');
+  panel.setAttribute('aria-label', t('roomPassword'));
+  Object.assign(panel.style, {
+    width: 'min(380px, 100%)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: scaledPx(12),
+    padding: scaledPx(22),
+    boxSizing: 'border-box',
+    background: APP_PANEL_BACKGROUND,
+    color: '#eee',
+    borderRadius: UI_RADIUS,
+    boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  appendTitle(panel, t('roomPassword'));
+  const passwordInput = textInput(t('roomPassword'));
+  passwordInput.type = 'password';
+  passwordInput.name = 'room-password';
+  passwordInput.autocomplete = 'current-password';
+  passwordInput.maxLength = 64;
+  panel.appendChild(labeledControl(t('roomPassword'), passwordInput));
+
+  const error = document.createElement('div');
+  error.textContent = initialError;
+  error.setAttribute('aria-live', 'polite');
+  Object.assign(error.style, {
+    minHeight: scaledPx(16),
+    color: '#f66',
+    fontSize: FONT_SIZE.error,
+  } satisfies Partial<CSSStyleDeclaration>);
+  panel.appendChild(error);
+
+  const actions = document.createElement('div');
+  Object.assign(actions.style, {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: scaledPx(8),
+  } satisfies Partial<CSSStyleDeclaration>);
+  const close = (): void => clearRoomPasswordModal();
+  const cancel = button(t('close'), close);
+  cancel.type = 'button';
+  const submit = button(t('join'), () => undefined);
+  submit.type = 'submit';
+  actions.append(cancel, submit);
+  panel.appendChild(actions);
+
+  panel.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const password = passwordInput.value;
+    if (!password) {
+      error.textContent = t('roomPasswordRequired');
+      passwordInput.focus();
+      return;
+    }
+    clearRoomPasswordModal();
+    onSubmit(password);
+  });
+  overlay.addEventListener('click', (event) => {
+    if (event.target === overlay) close();
+  });
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+  passwordInput.focus();
+};
+
 const showError = (err: unknown): void => {
   const el = document.getElementById('lobby-error');
   if (el) el.textContent = err instanceof Error ? err.message : String(err);
@@ -3087,6 +3187,11 @@ window.addEventListener('keydown', (event) => {
   if (isQuickSearchActive()) {
     event.preventDefault();
     cancelQuickSearch();
+    return;
+  }
+  if (document.getElementById(ROOM_PASSWORD_MODAL_ID)) {
+    event.preventDefault();
+    clearRoomPasswordModal();
     return;
   }
   if (document.getElementById(SETTINGS_MODAL_ID)) {
