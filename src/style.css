@@ -111,6 +111,13 @@ select {
   -webkit-tap-highlight-color: transparent;
 }
 
+input,
+textarea,
+[contenteditable='true'] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 .text-selection-allowed,
 .text-selection-allowed *,
 .player-nickname,

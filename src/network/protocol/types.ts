@@ -34,6 +34,10 @@ export interface ReleasePayload {
   position: Vec3;
 }
 
+export interface SessionReadyPayload {
+  userId: string;
+}
+
 export const ROOM_ROLE = {
   PLAYER: 0,
   SPECTATOR: 1,
@@ -44,8 +48,7 @@ export type RoomRole = (typeof ROOM_ROLE)[keyof typeof ROOM_ROLE];
 export const ROOM_STATUS = {
   WAITING: 0,
   ACTIVE: 1,
-  PAUSED: 2,
-  FINISHED: 3,
+  FINISHED: 2,
 } as const;
 
 export type RoomStatus = (typeof ROOM_STATUS)[keyof typeof ROOM_STATUS];
@@ -53,7 +56,6 @@ export type RoomStatus = (typeof ROOM_STATUS)[keyof typeof ROOM_STATUS];
 export const ROOM_MODE = {
   MATCH: 0,
   TEST: 1,
-  RANKED: 2,
 } as const;
 
 export type RoomMode = (typeof ROOM_MODE)[keyof typeof ROOM_MODE];
@@ -70,14 +72,12 @@ export type RoomMinBank = number;
 export interface RoomOptionsPayload {
   targetScore: RoomTargetScore;
   minBank: RoomMinBank;
-  allowHotDice: boolean;
   scoringRuleset: RoomScoringRuleset;
 }
 
 export const DEFAULT_ROOM_OPTIONS: RoomOptionsPayload = {
   targetScore: 4000,
   minBank: 0,
-  allowHotDice: true,
   scoringRuleset: ROOM_SCORING_RULESET.BASE_D6,
 };
 
@@ -130,7 +130,6 @@ export const normalizeRoomOptions = (
   return {
     targetScore,
     minBank,
-    allowHotDice: options?.allowHotDice ?? DEFAULT_ROOM_OPTIONS.allowHotDice,
     scoringRuleset:
       options?.scoringRuleset === ROOM_SCORING_RULESET.BASE_D6
         ? ROOM_SCORING_RULESET.BASE_D6
@@ -154,12 +153,10 @@ export const normalizeDicePresetId = (value: unknown): DicePresetId =>
 
 export interface RoomMember {
   userId: string;
-  socketId: string;
   displayName: string;
   avatarIndex: number;
   dicePresetId: DicePresetId;
   role: RoomRole;
-  online: boolean;
 }
 
 export interface RoomStatePayload {
@@ -254,9 +251,7 @@ export type MatchPhase = (typeof MATCH_PHASE)[keyof typeof MATCH_PHASE];
 export const MATCH_FINISH_REASON = {
   NONE: 0,
   SCORE: 1,
-  FORFEIT: 2,
-  DISCONNECT: 3,
-  EXIT: 4,
+  LAST_PLAYER: 2,
 } as const;
 
 export type MatchFinishReason = (typeof MATCH_FINISH_REASON)[keyof typeof MATCH_FINISH_REASON];
@@ -274,12 +269,6 @@ export interface MatchBankCmd {
   requestId: number;
   roomId: string;
   indices: number[];
-}
-
-/** C→S: сдаться и завершить матч победой другого игрока. */
-export interface MatchForfeitCmd {
-  requestId: number;
-  roomId: string;
 }
 
 /** C→S: запросить реванш после завершения матча. */
@@ -318,12 +307,6 @@ export interface MatchStatePayload {
   phase: MatchPhase;
   /** userId игрока, чей сейчас ход (пустая строка допустима только если фаза = FINISHED). */
   currentPlayer: string;
-  /** true если игра временно остановлена из-за отсутствующего игрока. */
-  paused: boolean;
-  /** Человекочитаемая причина паузы; пустая строка если paused=false. */
-  pauseReason: string;
-  /** userId игроков из frozen player-list, которые сейчас online. */
-  onlinePlayers: string[];
   /** Накоплено в текущем ходу до банка. */
   turnPoints: number;
   /** Сколько кубиков ещё в активной зоне (1..6). */
@@ -336,8 +319,6 @@ export interface MatchStatePayload {
   winner: string;
   /** Почему матч завершён; NONE если победителя ещё нет. */
   finishReason: MatchFinishReason;
-  /** Unix timestamp ms for ranked SELECTING timeout; 0 when no timer is active. */
-  turnDeadlineAt: number;
 }
 
 /** S→C broadcast: что выпало после очередного броска. */

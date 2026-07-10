@@ -107,7 +107,7 @@ camera.y  = max(hForDepth, hForWidth)   // contain — берём большую
 | `WALL_INSET` | 0.10 | Сдвиг внутренней грани стены от кромки стола |
 | `DICE_COUNT` | 6 | Сколько костей спавнить |
 | `DICE_HALF_SIZE` | 0.273 | Полуразмер ребра кости (куб 0.546×0.546×0.546) |
-| `DICE_MASS` | 4.86 | Масса кости; quick-rollback values are commented in config as `1.62` and `1.08` |
+| `DICE_MASS` | 4.86 | Масса кости |
 | `DICE_SPACING` | 0.76 | Разнос костей в release-row; сверху/снизу ряд идёт по X, слева/справа по Z |
 | `DICE_LINEAR_DAMPING` / `DICE_ANGULAR_DAMPING` | 0.27 / 0.35 | Торможение полёта и вращения; более плотное и спокойное движение после контакта |
 | `DICE_TABLE_FRICTION` / `DICE_TABLE_RESTITUTION` | 0.88 / 0.10 | Высокое сцепление и низкий отскок кости от стола |

@@ -17,9 +17,6 @@ export const WALL_INSET = 0.1;
 
 export const DICE_COUNT = 6;
 export const DICE_HALF_SIZE = 0.273;
-// Quick rollback targets from the previous weight tuning:
-// export const DICE_MASS = 1.62;
-// export const DICE_MASS = 1.08;
 export const DICE_MASS = 4.86;
 export const DICE_SPACING = 0.76;
 export const DICE_LINEAR_DAMPING = 0.27;

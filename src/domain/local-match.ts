@@ -14,7 +14,6 @@ export interface LocalMatchPlayerState {
 export interface LocalMatchConfig {
   targetScore: number;
   minBank: number;
-  allowHotDice: boolean;
 }
 
 export interface LocalMatchState {
@@ -32,7 +31,6 @@ export const createLocalMatchConfig = (
 ): LocalMatchConfig => ({
   targetScore: options.targetScore,
   minBank: options.minBank,
-  allowHotDice: options.allowHotDice,
 });
 
 export const createLocalMatch = (): LocalMatchState => ({
@@ -53,14 +51,13 @@ export const isLocalMatchEnded = (state: LocalMatchState): boolean =>
 
 export const recordLocalMatchContinue = (
   state: LocalMatchState,
-  config: LocalMatchConfig,
   points: number,
   diceUsed: number,
   selectedFaces: number[] = [],
 ): LocalMatchState => {
   if (isLocalMatchEnded(state)) return state;
   const used = clampDiceUsed(diceUsed, state.activeDiceCount);
-  const hotDice = config.allowHotDice && used >= state.activeDiceCount;
+  const hotDice = used >= state.activeDiceCount;
   return {
     ...state,
     turnPoints: state.turnPoints + points,
@@ -83,7 +80,7 @@ export const recordLocalMatchBank = (
 ): LocalMatchState => {
   if (isLocalMatchEnded(state)) return state;
   const used = clampDiceUsed(diceUsed, state.activeDiceCount);
-  const hotDice = config.allowHotDice && used >= state.activeDiceCount;
+  const hotDice = used >= state.activeDiceCount;
   const banked = state.turnPoints + points;
   const current = state.currentPlayer;
   const totalScore = state.players[current].totalScore + banked;

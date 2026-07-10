@@ -94,9 +94,8 @@ class HudUiService {
 - **Singleplayer bench parity**: local mode now mirrors server `MATCH_STATE.bench`. Continue appends selected faces, hot-dice/bust/bank/new-turn clears it, and `BenchDiceService` renders the held dice just like network mode.
 - **Turn banners / non-FARKLE transient errors**: `ТВОЙ ХОД` держится на экране до первого `pointerdown` или текущей клавиши броска (`Space` по умолчанию) в capture-фазе. Ход другого игрока показывается коротко (`1500ms`) и скрывается сам. Обычные ошибки держатся до первого `pointerdown`. Click/tap и клавиша броска только скрывают нужный overlay и не отменяют само действие под курсором.
 - **BUST/FARKLE**: на `match-roll-result.bust=true` показываем «FARKLE» (через showError) на обязательный таймер `1200ms`. Пока таймер идёт, действия заблокированы; следующий turn banner показывается только после окончания FARKLE-таймера.
-- **WIN/FARKLE**: на `MATCH_STATE.phase=FINISHED` показываем финальный экран. Кнопка реванша скрыта только если `MATCH_STATE.finishReason = DISCONNECT | EXIT`.
-- **Закрытая комната**: когда приходит `ROOM_STATUS.FINISHED` со всеми `members.online=false`, клиент не возвращает игрока в меню автоматически; он отключает действия, скрывает реванш и ждёт ручного `Выйти`.
-- **Сдаться**: действие surrender из HUD или hotkey (`Esc` по умолчанию) сначала открывает подтверждение «Уверен, что хочешь сдаться?» с кнопками `Да` / `Нет`. Пока confirm открыт, повторный `Esc` или click/tap по backdrop работает как `Нет`: закрывает confirm и возвращает к игре без surrender.
+- **WIN/FARKLE**: на `MATCH_STATE.phase=FINISHED` показываем финальный экран. После `LAST_PLAYER` реванш недоступен.
+- **Сдаться**: действие из HUD или hotkey (`Esc` по умолчанию) сначала открывает подтверждение. Подтверждение отправляет обычный `ROOM_LEAVE`: локальный клиент возвращается в меню, остальные продолжают матч.
 
 ## Координация Input ↔ Selection
 
@@ -112,7 +111,7 @@ class HudUiService {
 
 Так click-by-cost и hold-to-throw **никогда не активны одновременно** — конфликта по mousedown/mouseup физически быть не может.
 
-`ShakeInputService.setEnabled(false)` посреди удержания корректно отменяет hold (без emit'а release) — иначе в `DiceService` мог бы остаться `isHeld=true` и кости пропали бы навсегда.
+`ShakeInputService.setEnabled(false)` посреди удержания эмитит `hold-cancel`; `DiceService.cancelPickup()` возвращает кости в состояние до pickup.
 
 ## Доработки в существующих файлах
 

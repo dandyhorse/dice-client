@@ -1,5 +1,4 @@
 // ⚠️ DUPLICATE — keep in sync with dice-server/src/domain/scorer.ts
-//
 /**
  * Farkle scorer. Чистая математика над массивом значений граней (1..6).
  * Без зависимостей от cannon, сети и БД — только подсчёт очков и валидация выбора.

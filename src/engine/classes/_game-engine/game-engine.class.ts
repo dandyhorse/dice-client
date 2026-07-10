@@ -73,6 +73,7 @@ import { ShakeInputService, type HoldStartSource } from './services/shake-input.
 import { TurnHotkeysService } from './services/turn-hotkeys.service';
 import { UI_RADIUS } from '../../../ui/theme';
 import { nextAvatarIndex } from '../../../avatars';
+import type { EventEmitter } from '../event-emitter.class';
 import {
   DEFAULT_DICE_PRESET,
   dicePresetForId,
@@ -188,8 +189,8 @@ export class GameEngine {
   private readonly unsubscribeLanguage: () => void;
   private playerSettings: PlayerSettings;
   private networkRematchRequestedBy: string[] = [];
-  private networkRoomClosed = false;
   private surrenderConfirmEl: HTMLDivElement | null = null;
+  private readonly eventUnsubscribers: Array<() => void> = [];
   private tableVisualMesh: THREE.Mesh | null = null;
   private backgroundMesh: THREE.Mesh | null = null;
   private backgroundTexture: THREE.Texture | null = null;
@@ -263,26 +264,29 @@ export class GameEngine {
       playerSettings.controls.throwDice,
     );
     this.turnHotkeys = new TurnHotkeysService(playerSettings.controls);
-    this.turnHotkeys.events.on('select-all', this.handleHotkeySelectAll);
-    this.turnHotkeys.events.on('continue', this.handleHotkeyContinue);
-    this.turnHotkeys.events.on('bank', this.handleHotkeyBank);
-    this.turnHotkeys.events.on('surrender', this.handleHotkeySurrender);
+    this.listen(this.turnHotkeys.events, 'select-all', this.handleHotkeySelectAll);
+    this.listen(this.turnHotkeys.events, 'continue', this.handleHotkeyContinue);
+    this.listen(this.turnHotkeys.events, 'bank', this.handleHotkeyBank);
+    this.listen(this.turnHotkeys.events, 'surrender', this.handleHotkeySurrender);
     window.addEventListener(GAME_POPUP_CLOSE_EVENT, this.handleCloseGamePopups);
-    this.input.events.on('hold-start', (_position: THREE.Vector3, source?: HoldStartSource) => {
+    this.listen(this.input.events, 'hold-start', (_position: THREE.Vector3, source?: HoldStartSource) => {
       if (source === 'pointer') audioService.play('dice-pickup');
       this.dice.pickup();
     });
-    this.input.events.on('release', (velocity: THREE.Vector3, position: THREE.Vector3) => {
-      audioService.play('dice-throw');
-      // dice.release() для обоих режимов: в local — спавн с импульсом, в network —
-      // только снять hold-флаг (см. dice.service.ts), чтобы первый снапшот сервера
-      // мог вернуть visible=true. Без этого кости остаются скрытыми после броска.
-      this.dice.release(velocity, position);
+    this.listen(this.input.events, 'hold-cancel', () => this.dice.cancelPickup());
+    this.listen(this.input.events, 'release', (velocity: THREE.Vector3, position: THREE.Vector3) => {
       if (this.mode === 'network' && this.network) {
-        // Чистый state-sync: отправляем инпут серверу, локально ничего не крутим.
-        // Сервер вернёт стрим снапшотов, с первым — кости появятся и полетят.
-        this.network.sendRelease(velocity, position);
+        if (!this.network.sendRelease(velocity, position)) {
+          this.dice.cancelPickup();
+          this.hud?.showError(t('connectionLost'));
+          return;
+        }
+        audioService.play('dice-throw');
+        // В network mode release снимает hold-флаг; движение начнёт первый snapshot.
+        this.dice.release(velocity, position);
       } else if (this.mode === 'local') {
+        audioService.play('dice-throw');
+        this.dice.release(velocity, position);
         if (this.localMatchState && !isLocalMatchEnded(this.localMatchState)) {
           this.localRolling = true;
           this.localRestCorrectionPasses = 0;
@@ -302,18 +306,18 @@ export class GameEngine {
 
     if (this.mode === 'network' && this.network) {
       const net = this.network;
-      net.events.on('dice-spawn', (snap: SnapshotPayload) => {
+      this.listen(net.events, 'dice-spawn', (snap: SnapshotPayload) => {
         this.recordSnapshot(performance.now());
         this.clearNetworkCollisionAudioState();
         this.dice.applySnapshot(snap.dice, performance.now());
       });
-      net.events.on('dice-snapshot', (snap: SnapshotPayload) => {
+      this.listen(net.events, 'dice-snapshot', (snap: SnapshotPayload) => {
         const now = performance.now();
         this.recordSnapshot(now);
         this.dice.applySnapshot(snap.dice, now);
         this.handleNetworkCollisionAudio(snap.dice, now);
       });
-      net.events.on('dice-rest', (rest: RestPayload) => {
+      this.listen(net.events, 'dice-rest', (rest: RestPayload) => {
         const now = performance.now();
         this.recordSnapshot(now);
         // Rest — финальный снапшот без v/w (в бинарном формате они опущены — всегда нули).
@@ -346,22 +350,17 @@ export class GameEngine {
         );
       if (this.currentRoomState) this.hud?.setRoomState(this.currentRoomState);
 
-      net.events.on('room-state', (state: RoomState) => {
+      this.listen(net.events, 'room-state', (state: RoomState) => {
         this.currentRoomState = state;
         this.preloadRoomDicePresetSounds(state);
         this.syncActiveDicePreset();
-        if (this.isClosedNetworkRoomState(state)) {
-          this.hud?.setRoomState(state);
-          this.handleNetworkRoomClosed();
-          return;
-        }
         this.hud?.setRoomState(state);
         if (isTestRoom) this.input.setEnabled(this.canUseTestInput(ownUserId));
         this.syncTurnHotkeysEnabled();
       });
 
       if (isTestRoom) {
-        net.events.on('match-state', (state: MatchStatePayload) => {
+        this.listen(net.events, 'match-state', (state: MatchStatePayload) => {
           this.currentMatchState = state;
           this.syncActiveDicePreset();
           this.input.setEnabled(this.canUseTestInput(ownUserId));
@@ -371,7 +370,7 @@ export class GameEngine {
         // Координация input vs selection: SELECTING на своём ходу включает клик
         // по костям и выключает hold/release; всё остальное — инверсно.
         // Без этого pickup() прячет кости как раз когда игрок хочет в них кликать.
-        net.events.on('match-state', (state: MatchStatePayload) => {
+        this.listen(net.events, 'match-state', (state: MatchStatePayload) => {
           const staggerBench = this.shouldStaggerBenchAppend(this.currentMatchState, state);
           this.currentMatchState = state;
           this.syncActiveDicePreset();
@@ -392,7 +391,7 @@ export class GameEngine {
           const isMyTurn = state.currentPlayer === ownUserId;
           const isSelecting = state.phase === MATCH_PHASE.SELECTING;
           const isWaiting = state.phase === MATCH_PHASE.WAITING;
-          if (!isOwnPlayer || state.paused || this.areNetworkActionsBlocked()) {
+          if (!isOwnPlayer || this.areNetworkActionsBlocked()) {
             this.input.setEnabled(false);
             this.selection?.disable();
           } else if (isMyTurn && isSelecting) {
@@ -421,16 +420,12 @@ export class GameEngine {
           this.tryNetworkAutoRoll();
         });
 
-        // Casual показывает scoring-подсказки; ranked только блокирует
-        // невалидные клики через SelectionService без текстовых комбинаций/подсветки.
-        net.events.on('match-roll-result', (r: MatchRollResultPayload) => {
+        this.listen(net.events, 'match-roll-result', (r: MatchRollResultPayload) => {
           if (r.bust) {
             this.networkLastRolledFaces = [];
             this.selection?.clearScoringOptions();
-            if (!this.isRankedRoom()) {
-              this.blockNetworkActions(FARKLE_ACTION_BLOCK_MS);
-              this.hud?.showError('BUST');
-            }
+            this.blockNetworkActions(FARKLE_ACTION_BLOCK_MS);
+            this.hud?.showError('BUST');
           } else {
             const canSelectRoll =
               this.currentMatchState?.currentPlayer === ownUserId && this.isOwnPlayer(ownUserId);
@@ -439,31 +434,27 @@ export class GameEngine {
               this.selection?.setScoringOptions(
                 r.rolledFaces,
                 scoreRoll(r.rolledFaces),
-                !this.isRankedRoom(),
+                true,
               );
             } else {
               this.selection?.clearScoringOptions();
             }
-            this.hud?.setRollResult(this.isRankedRoom() ? [] : r.rolledFaces);
+            this.hud?.setRollResult(r.rolledFaces);
           }
           this.syncTurnHotkeysEnabled();
         });
 
-        net.events.on('match-turn-result', (r: MatchTurnResultPayload) => {
+        this.listen(net.events, 'match-turn-result', (r: MatchTurnResultPayload) => {
           this.clearNetworkTurnDice();
           if (!r.bust && r.banked > 0) audioService.play('gameplay-bank');
-          if (this.isRankedRoom() && r.bust) {
-            this.blockNetworkActions(FARKLE_ACTION_BLOCK_MS);
-            this.hud?.showError('BUST');
-          }
         });
 
-        net.events.on('match-rematch-state', (payload: MatchRematchStatePayload) => {
+        this.listen(net.events, 'match-rematch-state', (payload: MatchRematchStatePayload) => {
           this.networkRematchRequestedBy = [...payload.requestedBy];
           this.hud?.setFinalRematchRequestedBy(payload.requestedBy);
         });
 
-        net.events.on('match-selection-preview', (payload: MatchSelectionPreviewPayload) => {
+        this.listen(net.events, 'match-selection-preview', (payload: MatchSelectionPreviewPayload) => {
           if (!this.selection) return;
           if (payload.userId === ownUserId) return;
           const preview = this.withSelectionPreviewPoints(payload);
@@ -472,7 +463,8 @@ export class GameEngine {
           this.applyPendingSelectionPreview();
         });
 
-        this.selection?.events.on(
+        this.listen(
+          this.selection?.events,
           'selection-changed',
           (indices: number[], valid: boolean, points: number) => {
             this.hud?.setSelectionState(indices.length, valid, points);
@@ -482,12 +474,12 @@ export class GameEngine {
           },
         );
 
-        this.hud?.events.on('select-all-clicked', this.handleHotkeySelectAll);
-        this.hud?.events.on('continue-clicked', this.handleNetworkContinue);
-        this.hud?.events.on('bank-clicked', this.handleNetworkBank);
-        this.hud?.events.on('surrender-clicked', this.handleNetworkSurrender);
-        this.hud?.events.on('final-exit-clicked', this.handleNetworkFinalExit);
-        this.hud?.events.on('rematch-clicked', this.handleNetworkRematch);
+        this.listen(this.hud?.events, 'select-all-clicked', this.handleHotkeySelectAll);
+        this.listen(this.hud?.events, 'continue-clicked', this.handleNetworkContinue);
+        this.listen(this.hud?.events, 'bank-clicked', this.handleNetworkBank);
+        this.listen(this.hud?.events, 'surrender-clicked', this.handleNetworkSurrender);
+        this.listen(this.hud?.events, 'final-exit-clicked', this.handleNetworkFinalExit);
+        this.listen(this.hud?.events, 'rematch-clicked', this.handleNetworkRematch);
 
         // До получения первого MATCH_STATE: shake-input выключен, чтобы игрок
         // не успел отправить release в неподтверждённой фазе. Включится в
@@ -507,18 +499,19 @@ export class GameEngine {
       );
       this.syncLocalMatchHud(MATCH_PHASE.WAITING);
 
-      this.selection.events.on(
+      this.listen(
+        this.selection.events,
         'selection-changed',
         (indices: number[], valid: boolean, points: number) => {
           if (this.localMatchState?.currentPlayer !== 'human') return;
           this.hud?.setSelectionState(indices.length, valid, points);
         },
       );
-      this.hud.events.on('select-all-clicked', this.handleHotkeySelectAll);
-      this.hud.events.on('continue-clicked', this.handleLocalMatchContinue);
-      this.hud.events.on('bank-clicked', this.handleLocalMatchBank);
-      this.hud.events.on('surrender-clicked', this.handleHotkeySurrender);
-      this.hud.events.on('final-exit-clicked', () => this.onSurrender?.());
+      this.listen(this.hud.events, 'select-all-clicked', this.handleHotkeySelectAll);
+      this.listen(this.hud.events, 'continue-clicked', this.handleLocalMatchContinue);
+      this.listen(this.hud.events, 'bank-clicked', this.handleLocalMatchBank);
+      this.listen(this.hud.events, 'surrender-clicked', this.handleHotkeySurrender);
+      this.listen(this.hud.events, 'final-exit-clicked', () => this.onSurrender?.());
       this.enterLocalMatchTurn();
     } else {
       this.selection = null;
@@ -527,6 +520,17 @@ export class GameEngine {
     }
 
     window.addEventListener('resize', this.onResize);
+  }
+
+  private listen<TArgs extends unknown[]>(
+    events: EventEmitter | undefined,
+    event: string,
+    callback: (...args: TArgs) => void,
+  ): void {
+    if (!events) return;
+    this.eventUnsubscribers.push(
+      events.on(event, callback as (...args: any[]) => void),
+    );
   }
 
   warmup(): void {
@@ -680,26 +684,21 @@ export class GameEngine {
         ...DEFAULT_ROOM_OPTIONS,
         targetScore: config.targetScore,
         minBank: config.minBank,
-        allowHotDice: config.allowHotDice,
       },
       members: [
         {
           userId: LOCAL_HUMAN_USER_ID,
-          socketId: LOCAL_HUMAN_USER_ID,
           displayName: this.playerDisplayName,
           avatarIndex: this.playerSettings.profile.avatarIndex,
           dicePresetId: this.playerSettings.profile.dicePresetId,
           role: ROOM_ROLE.PLAYER,
-          online: true,
         },
         {
           userId: LOCAL_BOT_USER_ID,
-          socketId: LOCAL_BOT_USER_ID,
           displayName: t('botPlayer'),
           avatarIndex: nextAvatarIndex(this.playerSettings.profile.avatarIndex),
           dicePresetId: DEFAULT_DICE_PRESET.id,
           role: ROOM_ROLE.PLAYER,
-          online: true,
         },
       ],
     };
@@ -719,9 +718,6 @@ export class GameEngine {
     return {
       phase,
       currentPlayer: this.localPlayerUserId(state.currentPlayer),
-      paused: false,
-      pauseReason: '',
-      onlinePlayers: [LOCAL_HUMAN_USER_ID, LOCAL_BOT_USER_ID],
       turnPoints: state.turnPoints,
       remainingDice: state.activeDiceCount,
       bench: [...state.bench],
@@ -731,7 +727,6 @@ export class GameEngine {
       ],
       winner,
       finishReason: winner ? MATCH_FINISH_REASON.SCORE : MATCH_FINISH_REASON.NONE,
-      turnDeadlineAt: 0,
     };
   }
 
@@ -809,7 +804,6 @@ export class GameEngine {
       humanTotal: state.players.human.totalScore,
       targetScore: config.targetScore,
       minBank: config.minBank,
-      allowHotDice: config.allowHotDice,
     });
     if (!decision) {
       this.localMatchState = recordLocalMatchBust(state);
@@ -892,8 +886,7 @@ export class GameEngine {
     selectedRollIndices: number[],
   ): void {
     const state = this.localMatchState;
-    const config = this.localMatchConfig;
-    if (!state || !config || isLocalMatchEnded(state)) return;
+    if (!state || isLocalMatchEnded(state)) return;
 
     const selected = new Set(selectedDiceIndices);
     const remaining = this.dice.getLocalActiveIndices().filter((index) => !selected.has(index));
@@ -902,7 +895,6 @@ export class GameEngine {
       .filter((face): face is number => typeof face === 'number');
     this.localMatchState = recordLocalMatchContinue(
       state,
-      config,
       points,
       selectedFaces.length,
       selectedFaces,
@@ -1006,7 +998,6 @@ export class GameEngine {
 
   private handleHotkeySelectAll = (): void => {
     if (!this.canUseTurnHotkeys()) return;
-    if (this.mode === 'network' && this.isRankedRoom()) return;
     const selection = this.selection;
     if (!selection) return;
     if (selection.getSelectedIndices().length > 0) {
@@ -1227,7 +1218,13 @@ export class GameEngine {
     const network = this.network;
     if (!network || !this.canUseSurrender()) return;
     this.pendingNetworkAutoRoll = false;
-    network.sendForfeit().catch((e: Error) => this.hud?.showError(e.message));
+    this.input.setEnabled(false);
+    this.selection?.disable();
+    this.turnHotkeys.setEnabled(false);
+    network
+      .leaveRoom()
+      .catch(() => undefined)
+      .finally(() => this.onExit?.());
   };
 
   private handleNetworkFinalExit = (): void => {
@@ -1299,7 +1296,6 @@ export class GameEngine {
     return (
       this.mode === 'network' &&
       state !== null &&
-      !state.paused &&
       !this.areNetworkActionsBlocked() &&
       state.phase === MATCH_PHASE.WAITING &&
       state.currentPlayer === ownUserId &&
@@ -1362,7 +1358,7 @@ export class GameEngine {
     const isMyTurn = state.currentPlayer === ownUserId;
     const isSelecting = state.phase === MATCH_PHASE.SELECTING;
     const isWaiting = state.phase === MATCH_PHASE.WAITING;
-    if (!isOwnPlayer || state.paused || this.areNetworkActionsBlocked()) {
+    if (!isOwnPlayer || this.areNetworkActionsBlocked()) {
       this.input.setEnabled(false);
       this.selection.disable();
     } else if (isMyTurn && isSelecting) {
@@ -1397,7 +1393,6 @@ export class GameEngine {
       this.mode === 'network' &&
       this.selection !== null &&
       state !== null &&
-      !state.paused &&
       !this.areNetworkActionsBlocked() &&
       state.phase === MATCH_PHASE.SELECTING &&
       state.currentPlayer === ownUserId &&
@@ -1465,16 +1460,16 @@ export class GameEngine {
     return member?.role === ROOM_ROLE.PLAYER;
   }
 
-  private isRankedRoom(): boolean {
-    return this.currentRoomState?.mode === ROOM_MODE.RANKED;
-  }
-
   private isNetworkFinalRematchAvailable(state: MatchStatePayload | null): boolean {
+    const ownUserId = this.network?.getUserId() ?? '';
+    const ownMember = this.currentRoomState?.members.find(
+      (member) => member.userId === ownUserId,
+    );
     return (
       state !== null &&
       state.phase === MATCH_PHASE.FINISHED &&
-      state.finishReason !== MATCH_FINISH_REASON.DISCONNECT &&
-      state.finishReason !== MATCH_FINISH_REASON.EXIT
+      state.finishReason === MATCH_FINISH_REASON.SCORE &&
+      ownMember?.role === ROOM_ROLE.PLAYER
     );
   }
 
@@ -1517,32 +1512,11 @@ export class GameEngine {
     }
   }
 
-  private isClosedNetworkRoomState(state: RoomState): boolean {
-    return (
-      state.status === ROOM_STATUS.FINISHED &&
-      state.members.length > 0 &&
-      state.members.every((member) => !member.online)
-    );
-  }
-
-  private handleNetworkRoomClosed(): void {
-    if (this.networkRoomClosed) return;
-    this.networkRoomClosed = true;
-    this.pendingNetworkAutoRoll = false;
-    this.closeSurrenderConfirm();
-    this.input.setEnabled(false);
-    this.selection?.disable();
-    this.hud?.setFinalRematchAvailable(false);
-  }
-
   private canUseTestInput(ownUserId: string): boolean {
     const member = this.currentRoomState?.members.find((m) => m.userId === ownUserId);
     const roomActive = this.currentRoomState?.status === ROOM_STATUS.ACTIVE;
     const rolling = this.currentMatchState?.phase === MATCH_PHASE.ROLLING;
-    const paused =
-      this.currentMatchState?.paused === true ||
-      this.currentRoomState?.status === ROOM_STATUS.PAUSED;
-    return member?.role === ROOM_ROLE.PLAYER && member.online && roomActive && !paused && !rolling;
+    return member?.role === ROOM_ROLE.PLAYER && roomActive && !rolling;
   }
 
   start(): void {
@@ -1564,6 +1538,7 @@ export class GameEngine {
     this.networkActionsBlockTimer = null;
     window.removeEventListener('resize', this.onResize);
     window.removeEventListener(GAME_POPUP_CLOSE_EVENT, this.handleCloseGamePopups);
+    for (const unsubscribe of this.eventUnsubscribers.splice(0)) unsubscribe();
     this.turnHotkeys.destroy();
     this.input.destroy();
     this.selection?.destroy();

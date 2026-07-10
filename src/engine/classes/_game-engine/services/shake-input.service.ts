@@ -107,10 +107,7 @@ export class ShakeInputService {
     if (this.enabled === enabled) return;
     this.enabled = enabled;
     this.releaseCursorSuppressed = false;
-    if (!enabled && this.isHolding) {
-      this.isHolding = false;
-      this.samples.length = 0;
-    }
+    if (!enabled) this.cancelHold();
     if (!enabled) this.pointerOverTable = false;
     this.updateCursor();
   }
@@ -186,6 +183,7 @@ export class ShakeInputService {
   private onMouseMove = (event: MouseEvent): void => {
     if (!this.enabled) return;
     if (isGameInteractionBlocked()) {
+      this.cancelHold();
       this.pointerOverTable = false;
       this.updateCursor();
       return;
@@ -217,8 +215,7 @@ export class ShakeInputService {
   private onMouseUp = (event: MouseEvent): void => {
     if (!this.enabled) return;
     if (isGameInteractionBlocked()) {
-      this.isHolding = false;
-      this.samples.length = 0;
+      this.cancelHold();
       this.updateCursor();
       return;
     }
@@ -291,6 +288,14 @@ export class ShakeInputService {
       this.currentPos.clone(),
       'keyboard' satisfies HoldStartSource,
     );
+  }
+
+  private cancelHold(): void {
+    if (!this.isHolding) return;
+    this.isHolding = false;
+    this.samples.length = 0;
+    this.lastSpeed = 0;
+    this.events.emit('hold-cancel');
   }
 
   private updateCursor(): void {

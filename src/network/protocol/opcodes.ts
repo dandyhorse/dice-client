@@ -3,6 +3,9 @@
 // При изменении — править оба файла бит-в-бит.
 
 export const OP = {
+  // Server -> Client session bootstrap
+  SESSION_READY: 0x01,
+
   // Client → Server (commands; ROOM_* содержат requestId u32 для match с ACK_*)
   ROOM_CREATE: 0x10,
   ROOM_JOIN: 0x11,
@@ -14,7 +17,6 @@ export const OP = {
   MATCH_SELECT_DICE: 0x31, // turn-based: отложить scoring-кости, перебросить остальные
   MATCH_BANK: 0x32, // turn-based: отложить scoring-кости и закрыть ход
   MATCH_SELECTION_PREVIEW_CMD: 0x33, // realtime preview выбора, без requestId
-  MATCH_FORFEIT: 0x34, // turn-based: сдаться и завершить матч
   MATCH_REMATCH: 0x35, // запросить реванш после завершения матча
 
   // Server → Client

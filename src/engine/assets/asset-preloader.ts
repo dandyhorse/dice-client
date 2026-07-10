@@ -2,10 +2,32 @@ import type * as THREE from 'three';
 
 import { ASSET_GROUPS, type AssetGroup } from './asset-manifest';
 
+const ASSET_LOAD_TIMEOUT_MS = 15_000;
+
+const withAssetTimeout = <T>(promise: Promise<T>, url: string): Promise<T> =>
+  new Promise<T>((resolve, reject) => {
+    const timeoutId = window.setTimeout(
+      () => reject(new Error(`Timed out loading asset: ${url}`)),
+      ASSET_LOAD_TIMEOUT_MS,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timeoutId);
+        reject(error);
+      },
+    );
+  });
+
 class AssetPreloader {
   private textureLoader: THREE.TextureLoader | null = null;
   private readonly images = new Map<string, HTMLImageElement>();
   private readonly textures = new Map<string, THREE.Texture>();
+  private readonly imagePromises = new Map<string, Promise<HTMLImageElement>>();
+  private readonly texturePromises = new Map<string, Promise<THREE.Texture>>();
   private readonly groupPromises = new Map<AssetGroup, Promise<void>>();
   private readonly loadedGroups = new Set<AssetGroup>();
 
@@ -23,6 +45,10 @@ class AssetPreloader {
     });
 
     this.groupPromises.set(group, promise);
+    void promise.catch(() => {
+      if (this.groupPromises.get(group) === promise) this.groupPromises.delete(group);
+      this.loadedGroups.delete(group);
+    });
     return promise;
   }
 
@@ -55,11 +81,23 @@ class AssetPreloader {
   private async loadTexture(url: string): Promise<THREE.Texture> {
     const cached = this.textures.get(url);
     if (cached) return cached;
+    const pending = this.texturePromises.get(url);
+    if (pending) return pending;
 
-    const loader = await this.getTextureLoader();
-    const texture = await loader.loadAsync(url);
-    this.textures.set(url, texture);
-    return texture;
+    const promise = withAssetTimeout(
+      this.getTextureLoader()
+      .then((loader) => loader.loadAsync(url))
+      .then((texture) => {
+        this.textures.set(url, texture);
+        return texture;
+      }),
+      url,
+    );
+    this.texturePromises.set(url, promise);
+    void promise.finally(() => {
+      if (this.texturePromises.get(url) === promise) this.texturePromises.delete(url);
+    }).catch(() => undefined);
+    return promise;
   }
 
   private async getTextureLoader(): Promise<THREE.TextureLoader> {
@@ -72,8 +110,10 @@ class AssetPreloader {
   private loadImage(url: string): Promise<HTMLImageElement> {
     const cached = this.images.get(url);
     if (cached) return Promise.resolve(cached);
+    const pending = this.imagePromises.get(url);
+    if (pending) return pending;
 
-    return new Promise<HTMLImageElement>((resolve, reject) => {
+    const promise = withAssetTimeout(new Promise<HTMLImageElement>((resolve, reject) => {
       const image = new Image();
       image.decoding = 'async';
       image.onload = () => {
@@ -92,7 +132,12 @@ class AssetPreloader {
       };
       image.onerror = () => reject(new Error(`Failed to load image asset: ${url}`));
       image.src = url;
-    });
+    }), url);
+    this.imagePromises.set(url, promise);
+    void promise.finally(() => {
+      if (this.imagePromises.get(url) === promise) this.imagePromises.delete(url);
+    }).catch(() => undefined);
+    return promise;
   }
 
   private loadModelPlaceholder(_url: string): Promise<void> {

@@ -12,14 +12,12 @@ import { avatarUrlForIndex } from '../../../../avatars';
 import {
   DEFAULT_ROOM_OPTIONS,
   MATCH_PHASE,
-  ROOM_MODE,
   ROOM_ROLE,
 } from '../../../../network/protocol/types';
 import type { MatchPhase, MatchStatePayload, RoomStatePayload } from '../../../../network/protocol/types';
 import type { MatchSelectionPreviewPayload } from '../../../../network/protocol/types';
 
 const PANEL_FG = '#eee';
-const PANEL_OFFLINE_FG = '#8e8e9d';
 const PANEL_RADIUS = UI_RADIUS;
 const PANEL_PAD = '18px 24px';
 const PLAYER_PANEL_TOP_Y = 'calc(clamp(90px, 14vh, 170px) + 15px)';
@@ -40,7 +38,6 @@ const OPPONENT_TURN_BANNER_DURATION_MS = 1500;
 const BLOCKING_OVERLAY_SELECTORS = [
   '#settings-modal',
   '#profile-popup',
-  '#auth-modal',
   '#room-list-modal',
   '#hud-surrender-confirm',
 ].join(',');
@@ -110,7 +107,6 @@ export class HudUiService {
   private actionsBlocked = false;
   private farkleTimer: number | null = null;
   private turnBannerTimer: number | null = null;
-  private statusTimer: number | null = null;
   private transientDismissBound = false;
   private turnBannerClickDismissable = false;
   private turnBannerUserId = '';
@@ -334,14 +330,12 @@ export class HudUiService {
       this.lastAnnouncedTurnPlayer = state.currentPlayer;
       this.queueOrShowTurnBanner(state.currentPlayer);
     }
-    this.updateStatusTimer();
     this.render();
     this.refreshLanguageText();
   }
 
   setRoomState(state: RoomStatePayload): void {
     this.roomState = state;
-    this.updateStatusTimer();
     this.render();
     this.refreshLanguageText();
   }
@@ -431,9 +425,7 @@ export class HudUiService {
   destroy(): void {
     if (this.farkleTimer !== null) clearTimeout(this.farkleTimer);
     this.clearTurnBannerTimer();
-    if (this.statusTimer !== null) clearInterval(this.statusTimer);
     this.farkleTimer = null;
-    this.statusTimer = null;
     this.unbindTransientDismiss();
     this.turnBannerClickDismissable = false;
     this.queuedTurnBannerUserId = '';
@@ -489,7 +481,10 @@ export class HudUiService {
     }
 
     this.opponentPanel.style.display = 'none';
+    this.rightPanel.style.display = 'none';
     this.leftPanel.style.top = PLAYER_PANEL_TOP_Y;
+    this.leftPanel.style.minWidth = '280px';
+    this.leftPanel.style.width = 'min(340px, calc(100vw - 36px))';
     const room = this.roomState;
     const targetScore = room?.options.targetScore ?? DEFAULT_ROOM_OPTIONS.targetScore;
     const totalByUser = new Map(s.totals.map((total) => [total.userId, total.total]));
@@ -502,29 +497,14 @@ export class HudUiService {
       return;
     }
 
-    const ownPlayer = players.find((m) => m.userId === this.ownUserId) ?? players[0]!;
-    const others = players.filter((m) => m.userId !== ownPlayer.userId);
-    this.renderScorePanel(
+    this.renderCompactPlayerList(
       this.leftPanel,
-      ownPlayer,
+      players,
       totalByUser,
       targetScore,
-      s.currentPlayer === ownPlayer.userId,
+      s.currentPlayer,
     );
-    this.stylePlayerPanel(this.leftPanel, ownPlayer, s.currentPlayer === ownPlayer.userId);
-
-    if (others.length === 0) {
-      this.rightPanel.style.display = 'none';
-      return;
-    }
-
-    this.rightPanel.style.display = 'block';
-    this.renderScorePanelList(this.rightPanel, others, totalByUser, targetScore, s.currentPlayer);
-    this.stylePlayerPanel(
-      this.rightPanel,
-      others.find((member) => s.currentPlayer === member.userId) ?? others[0]!,
-      others.some((member) => s.currentPlayer === member.userId),
-    );
+    this.stylePlayerPanel(this.leftPanel, null, false);
   }
 
   private renderTurnStats(): void {
@@ -608,7 +588,10 @@ export class HudUiService {
     const targetScore = room.options.targetScore ?? DEFAULT_ROOM_OPTIONS.targetScore;
     const totalByUser = new Map(s.totals.map((t) => [t.userId, t.total]));
 
+    this.leftPanel.style.minWidth = '430px';
+    this.leftPanel.style.width = '';
     this.leftPanel.style.top = PLAYER_PANEL_TOP_Y;
+    this.rightPanel.style.display = 'none';
     this.renderScorePanel(
       this.leftPanel,
       opponent,
@@ -638,7 +621,7 @@ export class HudUiService {
     panel.replaceChildren(this.createScorePanelContent(member, totalByUser, targetScore, active));
   }
 
-  private renderScorePanelList(
+  private renderCompactPlayerList(
     panel: HTMLDivElement,
     members: NonNullable<RoomStatePayload['members'][number]>[],
     totalByUser: Map<string, number>,
@@ -646,14 +629,70 @@ export class HudUiService {
     activeUserId: string,
   ): void {
     panel.replaceChildren(
-      ...members.map((member, index) => {
-        const row = this.createScorePanelContent(
-          member,
-          totalByUser,
-          targetScore,
-          member.userId === activeUserId,
-        );
-        if (index > 0) row.style.marginTop = '12px';
+      ...members.map((member) => {
+        const active = member.userId === activeUserId;
+        const row = document.createElement('div');
+        Object.assign(row.style, {
+          display: 'grid',
+          gridTemplateColumns: '40px minmax(0, 1fr) auto',
+          alignItems: 'center',
+          gap: '10px',
+          minHeight: '48px',
+          padding: '4px 8px',
+          color: PANEL_FG,
+          background: active ? 'rgba(255,255,255,0.10)' : 'transparent',
+          borderLeft: active ? '3px solid rgba(255,255,255,0.75)' : '3px solid transparent',
+          boxSizing: 'border-box',
+        } satisfies Partial<CSSStyleDeclaration>);
+
+        const avatar = document.createElement('div');
+        Object.assign(avatar.style, {
+          width: '40px',
+          height: '40px',
+          display: 'grid',
+          placeItems: 'center',
+          overflow: 'hidden',
+          background: `url("${HUD_AVATAR_FRAME_SRC}") center / contain no-repeat`,
+          opacity: active ? '1' : '0.78',
+        } satisfies Partial<CSSStyleDeclaration>);
+        const avatarUrl = avatarUrlForIndex(member.avatarIndex);
+        if (avatarUrl) {
+          const image = document.createElement('img');
+          image.src = avatarUrl;
+          image.alt = '';
+          image.draggable = false;
+          Object.assign(image.style, {
+            width: '34px',
+            height: '34px',
+            objectFit: 'cover',
+            pointerEvents: 'none',
+            userSelect: 'none',
+          } satisfies Partial<CSSStyleDeclaration>);
+          avatar.appendChild(image);
+        } else {
+          avatar.textContent = (formatMember(member.displayName)[0] ?? '?').toUpperCase();
+        }
+
+        const name = document.createElement('div');
+        name.className = 'player-nickname';
+        const label = formatMember(member.displayName);
+        name.textContent =
+          member.userId === this.ownUserId ? `${label} (${t('youSuffix')})` : label;
+        Object.assign(name.style, {
+          minWidth: '0',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          fontSize: '20px',
+        } satisfies Partial<CSSStyleDeclaration>);
+        const score = document.createElement('div');
+        score.textContent = `${totalByUser.get(member.userId) ?? 0} / ${targetScore}`;
+        Object.assign(score.style, {
+          whiteSpace: 'nowrap',
+          fontSize: '18px',
+          fontVariantNumeric: 'tabular-nums',
+        } satisfies Partial<CSSStyleDeclaration>);
+        row.append(avatar, name, score);
         return row;
       }),
     );
@@ -708,7 +747,6 @@ export class HudUiService {
     active: boolean,
   ): HTMLDivElement {
     const avatar = document.createElement('div');
-    const online = member.online !== false;
     Object.assign(avatar.style, {
       width: `${HUD_AVATAR_SIZE}px`,
       height: `${HUD_AVATAR_SIZE}px`,
@@ -722,7 +760,7 @@ export class HudUiService {
       color: '#fff',
       fontSize: '34px',
       fontWeight: '700',
-      opacity: online ? (active ? '1' : '0.82') : '0.45',
+      opacity: active ? '1' : '0.82',
       filter: active ? 'none' : 'grayscale(0.7) saturate(0.42) brightness(0.72)',
       boxSizing: 'border-box',
       position: 'relative',
@@ -734,7 +772,7 @@ export class HudUiService {
       position: 'absolute',
       inset: '0',
       background: 'rgba(255, 255, 255, 0.22)',
-      opacity: active && online ? '0.38' : '0',
+      opacity: active ? '0.38' : '0',
       pointerEvents: 'none',
       zIndex: '2',
       filter: 'drop-shadow(0 0 12px rgba(255, 255, 255, 0.32))',
@@ -795,10 +833,10 @@ export class HudUiService {
 
   private stylePlayerPanel(
     panel: HTMLDivElement,
-    member: NonNullable<RoomStatePayload['members'][number]> | null,
+    _member: NonNullable<RoomStatePayload['members'][number]> | null,
     _active: boolean,
   ): void {
-    panel.style.color = member?.online === false ? PANEL_OFFLINE_FG : PANEL_FG;
+    panel.style.color = PANEL_FG;
     panel.style.border = 'none';
   }
 
@@ -816,20 +854,19 @@ export class HudUiService {
       this.finalResult === null;
     this.actionsPanel.style.display = showPanel ? 'flex' : 'none';
     this.surrenderPanel.style.display = showPanel ? 'flex' : 'none';
-    this.selectAllBtn.style.display = this.isRanked() ? 'none' : 'inline-flex';
+    this.selectAllBtn.style.display = 'inline-flex';
 
     const canUseSelection =
       s !== null &&
       showPanel &&
       !this.actionsBlocked &&
-      !s.paused &&
       s.phase === MATCH_PHASE.SELECTING &&
       s.currentPlayer === this.ownUserId;
     const canSubmit = canUseSelection && this.selectedCount > 0 && this.selectionValid;
     const minBank = this.roomState?.options.minBank ?? DEFAULT_ROOM_OPTIONS.minBank;
     const canBank =
       canSubmit && s !== null && s.turnPoints + this.selectedPoints >= minBank;
-    this.setButtonEnabled(this.selectAllBtn, canUseSelection && !this.isRanked());
+    this.setButtonEnabled(this.selectAllBtn, canUseSelection);
     this.setButtonEnabled(this.continueBtn, canSubmit);
     this.setButtonEnabled(this.bankBtn, canBank);
     this.setButtonEnabled(this.surrenderBtn, showPanel && !this.actionsBlocked);
@@ -840,11 +877,6 @@ export class HudUiService {
     if (!s) {
       this.statusPanel.textContent = '';
       this.statusPanel.style.display = 'none';
-      return;
-    }
-    if (s.paused) {
-      this.statusPanel.textContent = s.pauseReason ? `${t('pause')}: ${s.pauseReason}` : t('pause');
-      this.statusPanel.style.display = 'grid';
       return;
     }
     const isSpectator = this.getOwnRole() === ROOM_ROLE.SPECTATOR;
@@ -872,14 +904,8 @@ export class HudUiService {
       default:
         text = '';
     }
-    const timer = this.formatTurnTimer();
-    if (timer) text = text ? `${text} · ${timer}` : timer;
     this.statusPanel.textContent = text;
     this.statusPanel.style.display = text ? 'grid' : 'none';
-  }
-
-  private isRanked(): boolean {
-    return this.roomState?.mode === ROOM_MODE.RANKED;
   }
 
   private isDuel(): boolean {
@@ -923,30 +949,6 @@ export class HudUiService {
       return;
     }
     this.showTurnBanner(userId);
-  }
-
-  private formatTurnTimer(): string {
-    const deadline = this.state?.turnDeadlineAt ?? 0;
-    if (deadline <= 0 || this.state?.phase !== MATCH_PHASE.SELECTING) return '';
-    const seconds = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-    return `${seconds}s`;
-  }
-
-  private updateStatusTimer(): void {
-    const hasTimer =
-      (this.state?.turnDeadlineAt ?? 0) > Date.now() &&
-      this.state?.phase === MATCH_PHASE.SELECTING;
-    if (hasTimer && this.statusTimer === null) {
-      this.statusTimer = window.setInterval(() => {
-        this.updateStatusTimer();
-        this.renderStatus();
-      }, 250);
-      return;
-    }
-    if (!hasTimer && this.statusTimer !== null) {
-      clearInterval(this.statusTimer);
-      this.statusTimer = null;
-    }
   }
 
   private makePanel(pos: Partial<CSSStyleDeclaration>): HTMLDivElement {

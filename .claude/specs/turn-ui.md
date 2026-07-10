@@ -96,7 +96,7 @@ class HudUiService {
 
 Так click-by-cost и hold-to-throw **никогда не активны одновременно** — конфликта по mousedown/mouseup физически быть не может.
 
-`ShakeInputService.setEnabled(false)` посреди удержания корректно отменяет hold (без emit'а release) — иначе в `DiceService` мог бы остаться `isHeld=true` и кости пропали бы навсегда.
+`ShakeInputService.setEnabled(false)` посреди удержания эмитит `hold-cancel`; `DiceService.cancelPickup()` возвращает кости в состояние до pickup.
 
 ## Доработки в существующих файлах
 

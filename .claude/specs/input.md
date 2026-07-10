@@ -2,7 +2,7 @@
 
 `src/engine/classes/_game-engine/services/shake-input.service.ts`
 
-Сервис ввода. Превращает движение мыши в события `hold-start`, `hold-move`, `release` с позицией в мировых координатах и скоростью движения мыши.
+Сервис ввода. Превращает движение мыши в события `hold-start`, `hold-move`, `hold-cancel`, `release` с позицией в мировых координатах и скоростью движения мыши.
 
 ## Поля
 

@@ -1,26 +1,34 @@
 type EventCallback = (...args: any[]) => void;
 
+export type EventUnsubscribe = () => void;
+
 export class EventEmitter {
-  private events: Map<string, EventCallback[]> = new Map();
+  private readonly events = new Map<string, Set<EventCallback>>();
 
-  on(event: string, callback: EventCallback) {
-    if (!this.events.has(event)) {
-      this.events.set(event, []);
+  on(event: string, callback: EventCallback): EventUnsubscribe {
+    let callbacks = this.events.get(event);
+    if (!callbacks) {
+      callbacks = new Set();
+      this.events.set(event, callbacks);
     }
-    this.events.get(event)!.push(callback);
+    callbacks.add(callback);
+    return () => this.off(event, callback);
   }
 
-  off(event: string) {
+  off(event: string, callback?: EventCallback): void {
     const callbacks = this.events.get(event);
-    if (callbacks) {
-      this.events.delete(event);
-    }
+    if (!callbacks) return;
+    if (!callback) this.events.delete(event);
+    else if (callbacks.delete(callback) && callbacks.size === 0) this.events.delete(event);
   }
 
-  emit(event: string, ...args: any[]) {
+  clear(): void {
+    this.events.clear();
+  }
+
+  emit(event: string, ...args: any[]): void {
     const callbacks = this.events.get(event);
-    if (callbacks) {
-      callbacks.forEach((callback) => callback(...args));
-    }
+    if (!callbacks) return;
+    for (const callback of [...callbacks]) callback(...args);
   }
 }

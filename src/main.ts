@@ -1,12 +1,4 @@
 import './style.css';
-import {
-  getAuthIdentity,
-  getLeaderboard,
-  getStoredUser,
-  loginAccount,
-  refreshCurrentUser,
-  registerAccount,
-} from './auth';
 import type { GameEngine } from './engine/classes/_game-engine/game-engine.class';
 import {
   NetworkService,
@@ -76,19 +68,19 @@ import type { MenuDiceScene } from './ui/menu-dice-scene';
 import { hideLoadingOverlay, showLoadingOverlay } from './ui/loading-overlay';
 import { AVATAR_URLS } from './avatars';
 import { DICE_PRESETS, dicePresetName } from './dice-presets';
+import {
+  NetworkFlowController,
+  StaleNetworkFlowError,
+} from './network/network-flow-controller';
 
-const USER_ID_KEY = 'dice.userId';
 const DISPLAY_NAME_KEY = 'dice.displayName';
-const AUTH_CONTROLS_ID = 'auth-controls';
-const AUTH_MODAL_ID = 'auth-modal';
+const LEGACY_USER_ID_KEY = 'dice.userId';
 const SETTINGS_MODAL_ID = 'settings-modal';
 const BACK_BUTTON_ID = 'back-button';
 const ROOM_BADGE_ID = 'room-badge';
 const LANG_CONTROLS_ID = 'lang-controls';
 const PROFILE_POPUP_ID = 'profile-popup';
 const ROOM_LIST_MODAL_ID = 'room-list-modal';
-const LEADERBOARD_ID = 'leaderboard-panel';
-const RANKED_ENTRY_FEE = 10;
 const MOBILE_DEVICE_RE =
   /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
 const UI_ASSET_BASE = '/assets/ui';
@@ -131,29 +123,9 @@ const LANG_ICON_LABEL: Record<Language, string> = {
 const APP_BACKGROUND_COLOR = '#151414';
 const APP_BACKGROUND_OVERLAY = 'rgba(21,20,20,0.5)';
 const APP_PANEL_BACKGROUND = '#151414';
+const CUSTOM_ROOM_PLAYER_LIMIT = 4;
 
-// `crypto.randomUUID` в браузере доступен только в secure context (HTTPS/localhost).
-// При открытии dev-клиента по LAN-IP его нет — ломается "Create room". Fallback:
-// RFC 4122 v4 поверх `crypto.getRandomValues`, которое доступно везде.
-const generateUuid = (): string => {
-  const c = globalThis.crypto;
-  if (typeof c.randomUUID === 'function') return c.randomUUID();
-  const bytes = new Uint8Array(16);
-  c.getRandomValues(bytes);
-  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
-  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0'));
-  return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`;
-};
-
-const getOrCreateUserId = (): string => {
-  let id = localStorage.getItem(USER_ID_KEY);
-  if (!id) {
-    id = generateUuid();
-    localStorage.setItem(USER_ID_KEY, id);
-  }
-  return id;
-};
+localStorage.removeItem(LEGACY_USER_ID_KEY);
 
 const getSavedDisplayName = (): string => {
   return localStorage.getItem(DISPLAY_NAME_KEY)?.trim() ?? '';
@@ -239,13 +211,13 @@ type LobbyView =
   | 'multiplayer'
   | 'multiplayer-create'
   | 'multiplayer-join'
-  | 'ranked'
   | 'settings';
 
 let currentLobbyView: LobbyView = 'home';
 let menuDiceScene: MenuDiceScene | null = null;
 let menuDiceSceneLoading: Promise<void> | null = null;
 let networkGameMounting: Promise<void> | null = null;
+let networkGameMountOwner: NetworkService | null = null;
 let lobbyListNetwork: NetworkService | null = null;
 let quickSearchNetwork: NetworkService | null = null;
 let quickSearchConnecting = false;
@@ -255,6 +227,35 @@ let finishedRoomReturnQueued = false;
 let settingsScreenCleanup: (() => void) | null = null;
 let languageDropdownPinnedOpen = false;
 let languageMatrixRunId = 0;
+let networkFlowLoadingOwner: number | null = null;
+
+const releaseNetworkFlowLoading = (): void => {
+  if (networkFlowLoadingOwner === null) return;
+  networkFlowLoadingOwner = null;
+  hideLoadingOverlay();
+};
+
+const showNetworkFlowLoading = (generation: number): void => {
+  if (networkFlowLoadingOwner === generation) return;
+  releaseNetworkFlowLoading();
+  showLoadingOverlay();
+  networkFlowLoadingOwner = generation;
+};
+
+const hideNetworkFlowLoading = (generation: number): void => {
+  if (networkFlowLoadingOwner !== generation) return;
+  releaseNetworkFlowLoading();
+};
+
+const networkFlows = new NetworkFlowController<NetworkService>(
+  (network) => {
+    if (lobbyListNetwork === network) lobbyListNetwork = null;
+  },
+  releaseNetworkFlowLoading,
+);
+
+const isStaleNetworkFlowError = (error: unknown): boolean =>
+  error instanceof StaleNetworkFlowError;
 
 const QUICK_MATCH_PRELOAD_TIMEOUT_MS = 2500;
 
@@ -394,6 +395,7 @@ const startLocalMatch = async (
   cancelQuickSearch({ render: false });
   destroyMenuDiceScene();
   showLoadingOverlay();
+  let game: GameEngine | null = null;
   try {
     await Promise.all([
       assetPreloader.preloadGroup('gameplay'),
@@ -401,24 +403,27 @@ const startLocalMatch = async (
     ]);
     const { GameEngine } =
       await import('./engine/classes/_game-engine/game-engine.class');
-    clearLobby();
-    clearRoomScreen();
-    clearAuthControls();
-    clearAuthModal();
-    clearRoomBadge();
-    const game = new GameEngine({
+    game = new GameEngine({
       mode: 'local',
       localMatchConfig,
       playerSettings: getPlayerSettings(),
       playerDisplayName: currentDisplayName(),
       onSurrender: returnToLobby,
     });
-    app.appendChild(game.renderer.domElement);
     game.warmup();
+    clearLobby();
+    clearRoomScreen();
+    clearRoomBadge();
+    app.appendChild(game.renderer.domElement);
     game.start();
     activeGame = game;
     renderLanguageControls();
     clearBackButton();
+  } catch (error) {
+    game?.destroy();
+    if (activeGame === game) activeGame = null;
+    renderHome();
+    throw error;
   } finally {
     hideLoadingOverlay();
   }
@@ -433,46 +438,55 @@ const startNetwork = async (
   password?: string,
 ): Promise<void> => {
   cancelQuickSearch({ render: false });
-  const network = await connectNetwork();
-  activeNetwork = network;
-  let state: RoomState;
-  showLoadingOverlay();
+  const generation = networkFlows.begin();
+  let network: NetworkService | null = null;
+  let state: RoomState | null = null;
   try {
+    network = await connectNetwork(generation);
+    networkFlows.assert(generation, network);
+    showNetworkFlowLoading(generation);
     await Promise.all([
       assetPreloader.preloadGroup('gameplay'),
       audioService.preloadGroup('gameplay'),
     ]);
+    networkFlows.assert(generation, network);
     state =
       mode === 'create'
         ? await network.createRoom(roomMode, roomOptions, gameName, password)
         : await network.joinRoom(code!, password);
+    networkFlows.assert(generation, network);
   } catch (err) {
-    if (activeNetwork === network) activeNetwork = null;
-    network.disconnect();
+    if (network) {
+      networkFlows.release(network);
+      if (activeNetwork === network) activeNetwork = null;
+      network.disconnect();
+    }
+    if (!networkFlows.isCurrent(generation) || isStaleNetworkFlowError(err)) return;
     throw err;
   } finally {
-    hideLoadingOverlay();
+    hideNetworkFlowLoading(generation);
   }
+  if (!network || !state || !networkFlows.isCurrent(generation)) return;
+  networkFlows.preserve(generation, network);
+  activeNetwork = network;
   clearLobby();
-  clearAuthControls();
-  clearAuthModal();
   handleRoomState(network, state);
 };
 
 const startQuickMatch = async (): Promise<void> => {
   if (quickSearchConnecting || quickSearchNetwork) return;
   const token = ++quickSearchToken;
+  const generation = networkFlows.begin();
   quickSearchConnecting = true;
   syncQuickSearchClockSound();
   renderHome();
   let network: NetworkService | null = null;
   let state: RoomState;
   try {
-    network = await connectNetwork();
-    if (quickSearchToken !== token || !quickSearchConnecting) {
-      network.disconnect();
-      return;
-    }
+    network = await connectNetwork(generation);
+    networkFlows.assert(generation, network);
+    if (quickSearchToken !== token || !quickSearchConnecting) throw new StaleNetworkFlowError();
+    networkFlows.release(network);
     activeNetwork = network;
     quickSearchNetwork = network;
     quickSearchConnecting = false;
@@ -482,12 +496,14 @@ const startQuickMatch = async (): Promise<void> => {
     void audioService.preloadGroup('gameplay');
     if (
       quickSearchToken !== token ||
+      !networkFlows.isCurrent(generation) ||
       activeNetwork !== network ||
       quickSearchNetwork !== network
     ) {
       return;
     }
     state = await network.quickMatch();
+    if (!networkFlows.isCurrent(generation)) throw new StaleNetworkFlowError();
   } catch (err) {
     const searchStillCurrent =
       quickSearchToken === token &&
@@ -499,19 +515,22 @@ const startQuickMatch = async (): Promise<void> => {
     if (network && activeNetwork === network) activeNetwork = null;
     syncQuickSearchClockSound();
     network?.disconnect();
-    if (!searchStillCurrent) return;
+    if (
+      !searchStillCurrent ||
+      !networkFlows.isCurrent(generation) ||
+      isStaleNetworkFlowError(err)
+    ) return;
     renderHome();
     throw err;
   }
   if (
     quickSearchToken !== token ||
+    !networkFlows.isCurrent(generation) ||
     activeNetwork !== network ||
     quickSearchNetwork !== network
   ) {
     return;
   }
-  clearAuthControls();
-  clearAuthModal();
   handleRoomState(network, state);
 };
 
@@ -532,6 +551,7 @@ const waitForQuickMatchPreload = (): Promise<void> => {
 
 const cancelQuickSearch = (options: { render?: boolean } = {}): void => {
   if (!quickSearchConnecting && !quickSearchNetwork) return;
+  networkFlows.invalidate();
   quickSearchToken += 1;
   quickSearchConnecting = false;
   const network = quickSearchNetwork;
@@ -539,53 +559,34 @@ const cancelQuickSearch = (options: { render?: boolean } = {}): void => {
   syncQuickSearchClockSound();
   if (network) {
     if (activeNetwork === network) activeNetwork = null;
-    network.leaveRoom().catch(() => undefined);
-    network.disconnect();
+    void network
+      .leaveRoom()
+      .catch(() => undefined)
+      .finally(() => network.disconnect());
   }
   if (options.render ?? true) renderHome();
 };
 
-const connectNetwork = async (): Promise<NetworkService> => {
+const connectNetwork = async (generation: number): Promise<NetworkService> => {
   const network = new NetworkService();
-  const authIdentity = await getAuthIdentity();
-  const displayName = authIdentity
-    ? authIdentity.displayName
-    : saveDisplayName(getSavedDisplayName());
-  const identity = authIdentity ?? {
-    userId: getOrCreateUserId(),
-    displayName,
-    accessToken: undefined,
-    authenticated: false,
-  };
+  networkFlows.track(generation, network);
   network.events.on('room-state', (state: RoomState) => {
     handleRoomState(network, state);
   });
-  await network.connect(
-    identity.userId,
-    identity.displayName,
-    identity.accessToken,
-    getPlayerSettings().profile.avatarIndex,
-    getPlayerSettings().profile.dicePresetId,
-  );
-  return network;
-};
-
-const rankedAccessError = (): Error | null => {
-  const user = getStoredUser();
-  if (!user) return new Error(t('authRequiredRanked'));
-  if (user.coins < RANKED_ENTRY_FEE)
-    return new Error(t('insufficientCoinsRanked'));
-  return null;
-};
-
-const refreshAuthUserSilently = (): void => {
-  refreshCurrentUser()
-    .then(() => {
-      if (document.getElementById(AUTH_CONTROLS_ID)) renderAuthControls();
-    })
-    .catch(() => {
-      // Game flow should not be blocked by a stale auth badge refresh.
-    });
+  network.events.on('connection-lost', () => handleConnectionLost(network));
+  try {
+    await network.connect(
+      saveDisplayName(getSavedDisplayName()),
+      getPlayerSettings().profile.avatarIndex,
+      getPlayerSettings().profile.dicePresetId,
+    );
+    networkFlows.assert(generation, network);
+    return network;
+  } catch (error) {
+    networkFlows.release(network);
+    network.disconnect();
+    throw error;
+  }
 };
 
 const clearLobby = (): void => {
@@ -596,16 +597,6 @@ const clearLobby = (): void => {
 
 const clearRoomScreen = (): void => {
   const existing = document.getElementById('room-screen');
-  if (existing) existing.remove();
-};
-
-const clearAuthControls = (): void => {
-  const existing = document.getElementById(AUTH_CONTROLS_ID);
-  if (existing) existing.remove();
-};
-
-const clearAuthModal = (): void => {
-  const existing = document.getElementById(AUTH_MODAL_ID);
   if (existing) existing.remove();
 };
 
@@ -621,8 +612,11 @@ const clearRoomListModal = (): void => {
 };
 
 const closeLobbyListNetwork = (): void => {
-  lobbyListNetwork?.disconnect();
+  const network = lobbyListNetwork;
   lobbyListNetwork = null;
+  if (!network) return;
+  networkFlows.release(network);
+  network.disconnect();
 };
 
 const clearBackButton = (): void => {
@@ -698,25 +692,51 @@ const returnToLobby = (): void => {
 };
 
 const returnToLobbyAsync = async (): Promise<void> => {
+  networkFlows.invalidate();
   const network = activeNetwork;
+  const game = activeGame;
+  activeGame = null;
+  game?.destroy();
   if (network) {
     await network.leaveRoom().catch(() => undefined);
   }
 
-  activeGame?.destroy();
-  activeGame = null;
   network?.disconnect();
   if (activeNetwork === network) activeNetwork = null;
   clearLobby();
   clearRoomScreen();
   clearRoomBadge();
   clearBackButton();
-  clearAuthModal();
   clearTopPopupLayer();
   clearRoomListModal();
   closeLobbyListNetwork();
   renderHome();
   returningToLobby = false;
+};
+
+const handleConnectionLost = (network: NetworkService): void => {
+  const relevant =
+    activeNetwork === network ||
+    quickSearchNetwork === network ||
+    lobbyListNetwork === network ||
+    networkFlows.owns(network);
+  networkFlows.release(network);
+  if (!relevant) return;
+
+  networkFlows.invalidate();
+  quickSearchToken += 1;
+  quickSearchConnecting = false;
+  if (quickSearchNetwork === network) quickSearchNetwork = null;
+  if (lobbyListNetwork === network) lobbyListNetwork = null;
+  if (activeNetwork === network) activeNetwork = null;
+  syncQuickSearchClockSound();
+  activeGame?.destroy();
+  activeGame = null;
+  clearRoomScreen();
+  clearRoomBadge();
+  clearBackButton();
+  renderHome();
+  showError(new Error(t('connectionLost')));
 };
 
 const scheduleFinishedRoomReturn = (network: NetworkService): void => {
@@ -794,9 +814,6 @@ const rerenderCurrentShell = (): void => {
     case 'multiplayer-join':
       renderMultiplayerJoin();
       break;
-    case 'ranked':
-      renderRankedMenu();
-      break;
     case 'settings':
       renderSettingsMenu();
       break;
@@ -865,15 +882,12 @@ const prepareMainMenuTopPopup = (): void => {
   ) {
     return;
   }
-  closeLobbyListNetwork();
-  renderHome();
+  goHome();
 };
 
 const currentDisplayName = (): string => {
   const saved = getSavedDisplayName();
-  if (saved) return saved;
-  const user = getStoredUser();
-  return user?.displayName.trim() || user?.username.trim() || 'Player';
+  return saved || 'Player';
 };
 
 function createNicknameSpan(name: string): HTMLSpanElement {
@@ -888,7 +902,6 @@ const isGameplayTopMenu = (): boolean => {
   return (
     activeGame !== null ||
     roomStatus === ROOM_STATUS.ACTIVE ||
-    roomStatus === ROOM_STATUS.PAUSED ||
     roomStatus === ROOM_STATUS.FINISHED
   );
 };
@@ -1692,25 +1705,6 @@ const createLanguageDropdown = (): HTMLDivElement => {
 const handleRoomState = (network: NetworkService, state: RoomState): void => {
   if (activeNetwork !== network) return;
 
-  if (isClosedRoomState(state)) {
-    if (network === quickSearchNetwork) {
-      quickSearchNetwork = null;
-      quickSearchConnecting = false;
-      syncQuickSearchClockSound();
-    }
-    if (activeGame && activeNetwork === network) return;
-    scheduleFinishedRoomReturn(network);
-    return;
-  }
-
-  if (
-    state.mode === ROOM_MODE.RANKED &&
-    (state.status === ROOM_STATUS.ACTIVE ||
-      state.status === ROOM_STATUS.FINISHED)
-  ) {
-    refreshAuthUserSilently();
-  }
-
   if (state.status === ROOM_STATUS.FINISHED) {
     if (network === quickSearchNetwork) {
       quickSearchNetwork = null;
@@ -1750,49 +1744,84 @@ const handleRoomState = (network: NetworkService, state: RoomState): void => {
   }
 };
 
-const isClosedRoomState = (state: RoomState): boolean => {
-  return (
-    state.status === ROOM_STATUS.FINISHED &&
-    state.members.length > 0 &&
-    state.members.every((member) => !member.online)
-  );
-};
-
 const mountNetworkGame = async (network: NetworkService): Promise<void> => {
   if (activeGame) return;
-  if (networkGameMounting) return networkGameMounting;
+  if (networkGameMounting) {
+    const mounting = networkGameMounting;
+    if (networkGameMountOwner === network) return mounting;
+    await mounting.catch(() => undefined);
+    if (activeGame || activeNetwork !== network) return;
+    return mountNetworkGame(network);
+  }
 
-  showLoadingOverlay('LOADING', { backdrop: 'transparent' });
-  networkGameMounting = Promise.all([
-    assetPreloader.preloadGroup('gameplay'),
-    audioService.preloadGroup('gameplay'),
-  ])
-    .then(async () => {
+  networkGameMountOwner = network;
+  const mounting = (async (): Promise<void> => {
+    showLoadingOverlay('LOADING', { backdrop: 'transparent' });
+    let game: GameEngine | null = null;
+    let failed = false;
+    let failure: unknown;
+    try {
+      await Promise.all([
+        assetPreloader.preloadGroup('gameplay'),
+        audioService.preloadGroup('gameplay'),
+      ]);
       if (activeGame || activeNetwork !== network) return;
       const { GameEngine } =
         await import('./engine/classes/_game-engine/game-engine.class');
       if (activeGame || activeNetwork !== network) return;
-      activeGame = new GameEngine({
+      game = new GameEngine({
         mode: 'network',
         network,
         playerSettings: getPlayerSettings(),
         onExit: returnToLobby,
       });
-      app.appendChild(activeGame.renderer.domElement);
-      activeGame.warmup();
-      activeGame.start();
+      game.warmup();
+      if (activeGame || activeNetwork !== network) {
+        game.destroy();
+        return;
+      }
+      app.appendChild(game.renderer.domElement);
+      game.start();
+      activeGame = game;
       renderLanguageControls();
-    })
-    .finally(() => {
-      networkGameMounting = null;
+    } catch (error) {
+      game?.destroy();
+      if (activeGame === game) activeGame = null;
+      if (activeNetwork !== network) return;
+      activeNetwork = null;
+      if (quickSearchNetwork === network) quickSearchNetwork = null;
+      quickSearchConnecting = false;
+      const rollbackGeneration = networkFlows.begin();
+      await network.leaveRoom().catch(() => undefined);
+      network.disconnect();
+      if (!networkFlows.isCurrent(rollbackGeneration)) return;
+      syncQuickSearchClockSound();
+      failed = true;
+      failure = error;
+    } finally {
       hideLoadingOverlay();
-    });
-  return networkGameMounting;
+    }
+
+    if (!failed) return;
+    clearRoomScreen();
+    clearRoomBadge();
+    clearBackButton();
+    renderHome();
+    throw failure;
+  })();
+  networkGameMounting = mounting;
+  try {
+    await mounting;
+  } finally {
+    if (networkGameMounting === mounting) {
+      networkGameMounting = null;
+      networkGameMountOwner = null;
+    }
+  }
 };
 
 const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
   clearLobby();
-  clearAuthControls();
   clearRoomScreen();
   clearBackButton();
   renderLanguageControls();
@@ -1871,9 +1900,7 @@ const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
       network.getUserId(),
     ),
   );
-  const onlinePlayers = state.members.filter(
-    (m) => m.role === ROOM_ROLE.PLAYER && m.online,
-  );
+  const players = state.members.filter((m) => m.role === ROOM_ROLE.PLAYER);
 
   const error = document.createElement('div');
   Object.assign(error.style, {
@@ -1887,7 +1914,6 @@ const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
     network
       .startRoom()
       .then((next) => {
-        if (next.mode === ROOM_MODE.RANKED) refreshAuthUserSilently();
         handleRoomState(network, next);
       })
       .catch((err: Error) => {
@@ -1896,7 +1922,7 @@ const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
       });
   });
   startBtn.disabled =
-    state.ownerId !== network.getUserId() || onlinePlayers.length < 2;
+    state.ownerId !== network.getUserId() || players.length < 2;
   panel.appendChild(startBtn);
   panel.appendChild(error);
 
@@ -1920,6 +1946,9 @@ const memberSection = (
   wrap.appendChild(heading);
 
   const members = state.members.filter((m) => m.role === role);
+  if (role === ROOM_ROLE.PLAYER) {
+    heading.textContent = `${title} (${members.length}/${CUSTOM_ROOM_PLAYER_LIMIT})`;
+  }
   const list = document.createElement('div');
   Object.assign(list.style, {
     display: 'flex',
@@ -1934,15 +1963,12 @@ const memberSection = (
   } else {
     for (const member of members) {
       const row = document.createElement('div');
-      row.append(
-        createNicknameSpan(formatMember(member.displayName, member.userId, ownUserId)),
-        document.createTextNode(` · ${member.online ? t('online') : t('offline')}`),
-      );
+      row.append(createNicknameSpan(formatMember(member.displayName, member.userId, ownUserId)));
       Object.assign(row.style, {
         padding: '6px 8px',
         background: 'rgba(255,255,255,0.06)',
         borderRadius: UI_RADIUS,
-        color: member.online ? '#eee' : '#888',
+        color: '#eee',
       } satisfies Partial<CSSStyleDeclaration>);
       list.appendChild(row);
     }
@@ -1963,8 +1989,6 @@ const formatMember = (
 
 const roomModeLabel = (mode: RoomMode): string => {
   switch (mode) {
-    case ROOM_MODE.RANKED:
-      return t('ranked');
     case ROOM_MODE.TEST:
       return t('testRoom');
     case ROOM_MODE.MATCH:
@@ -1981,131 +2005,6 @@ const roomOptionsLabel = (
     'hotDice',
   )}: ${t('enabled')}`;
 };
-
-const renderAuthControls = (): void => {
-  clearAuthControls();
-};
-
-const renderAuthModal = (): void => {
-  clearAuthModal();
-
-  const overlay = document.createElement('div');
-  overlay.id = AUTH_MODAL_ID;
-  overlay.classList.add('text-selection-allowed');
-  Object.assign(overlay.style, {
-    position: 'fixed',
-    inset: '0',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    background: APP_BACKGROUND_OVERLAY,
-    zIndex: '40',
-    fontFamily: FONT_FAMILY.ui,
-  } satisfies Partial<CSSStyleDeclaration>);
-
-  const panel = document.createElement('div');
-  Object.assign(panel.style, {
-    width: 'min(340px, calc(100vw - 32px))',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-    padding: '22px',
-    background: APP_PANEL_BACKGROUND,
-    color: '#eee',
-    borderRadius: UI_RADIUS,
-    boxShadow: '0 12px 32px rgba(0,0,0,0.5)',
-  } satisfies Partial<CSSStyleDeclaration>);
-
-  const title = document.createElement('h2');
-  title.textContent = `${t('authLogin')} / ${t('authRegister')}`;
-  Object.assign(title.style, {
-    margin: '0',
-    fontFamily: FONT_FAMILY.title,
-    fontSize: FONT_SIZE.title,
-  } satisfies Partial<CSSStyleDeclaration>);
-  panel.appendChild(title);
-
-  const usernameInput = textInput(t('username'));
-  usernameInput.maxLength = 32;
-  panel.appendChild(usernameInput);
-
-  const passwordInput = textInput(t('password'));
-  passwordInput.type = 'password';
-  passwordInput.maxLength = 128;
-  panel.appendChild(passwordInput);
-
-  const error = document.createElement('div');
-  Object.assign(error.style, {
-    minHeight: '16px',
-    color: '#f66',
-    fontSize: FONT_SIZE.error,
-  } satisfies Partial<CSSStyleDeclaration>);
-  panel.appendChild(error);
-
-  const actions = document.createElement('div');
-  Object.assign(actions.style, {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: '8px',
-  } satisfies Partial<CSSStyleDeclaration>);
-
-  const submit = (
-    mode: 'register' | 'login',
-    clicked: HTMLButtonElement,
-  ): void => {
-    error.textContent = '';
-    registerBtn.disabled = true;
-    loginBtn.disabled = true;
-    const request =
-      mode === 'register'
-        ? registerAccount({
-            username: usernameInput.value,
-            password: passwordInput.value,
-            guestId: getOrCreateUserId(),
-          })
-        : loginAccount({
-            username: usernameInput.value,
-            password: passwordInput.value,
-          });
-
-    request
-      .then((payload) => {
-        saveDisplayName(payload.user.username);
-        return loadPlayerSettings();
-      })
-      .then(() => {
-        clearAuthModal();
-        renderLanguageControls();
-        renderHome();
-      })
-      .catch((err: Error) => {
-        registerBtn.disabled = false;
-        loginBtn.disabled = false;
-        clicked.disabled = false;
-        error.textContent = err.message;
-      });
-  };
-
-  const registerBtn = button(t('authRegister'), () =>
-    submit('register', registerBtn),
-  );
-  registerBtn.style.background = '#16a34a';
-  actions.appendChild(registerBtn);
-
-  const loginBtn = button(t('authLogin'), () => submit('login', loginBtn));
-  actions.appendChild(loginBtn);
-  panel.appendChild(actions);
-
-  overlay.addEventListener('click', (event) => {
-    if (event.target === overlay) clearAuthModal();
-  });
-  panel.addEventListener('click', (event) => event.stopPropagation());
-
-  overlay.appendChild(panel);
-  document.body.appendChild(overlay);
-  usernameInput.focus();
-};
-void renderAuthModal;
 
 const controlActionLabel = (action: ControlAction): string => {
   switch (action) {
@@ -2460,76 +2359,6 @@ const appendLobbyError = (card: HTMLElement): HTMLDivElement => {
   return error;
 };
 
-const renderLeaderboard = (): void => {
-  const lobby = document.getElementById('lobby');
-  if (!lobby) return;
-  const panel = document.createElement('aside');
-  panel.id = LEADERBOARD_ID;
-  Object.assign(panel.style, {
-    position: 'fixed',
-    top: '50%',
-    right: 'calc(50% + 220px)',
-    transform: 'translateY(-50%)',
-    width: '260px',
-    maxWidth: 'calc(50vw - 240px)',
-    padding: scaledPx(14),
-    boxSizing: 'border-box',
-    background: 'rgba(21,20,20,0.92)',
-    border: '1px solid rgba(255,255,255,0.08)',
-    borderRadius: UI_RADIUS,
-    color: '#eee',
-    fontFamily: FONT_FAMILY.ui,
-    fontSize: FONT_SIZE.card,
-    boxShadow: '0 12px 32px rgba(0,0,0,0.35)',
-    lineHeight: '1.35',
-  } satisfies Partial<CSSStyleDeclaration>);
-
-  const title = document.createElement('div');
-  title.textContent = t('leaderboard');
-  Object.assign(title.style, {
-    marginBottom: scaledPx(10),
-    fontWeight: '700',
-  } satisfies Partial<CSSStyleDeclaration>);
-  panel.appendChild(title);
-
-  const body = document.createElement('div');
-  body.textContent = t('connecting');
-  Object.assign(body.style, {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: scaledPx(6),
-  } satisfies Partial<CSSStyleDeclaration>);
-  panel.appendChild(body);
-  lobby.appendChild(panel);
-
-  getLeaderboard(10)
-    .then((leaders) => {
-      if (!document.getElementById(LEADERBOARD_ID)) return;
-      body.replaceChildren();
-      if (leaders.length === 0) {
-        body.textContent = '—';
-        return;
-      }
-      for (const [index, row] of leaders.entries()) {
-        const line = document.createElement('div');
-        line.append(
-          document.createTextNode(`${index + 1}. `),
-          createNicknameSpan(row.displayName || row.username),
-          document.createTextNode(`: ${row.rating} · ${row.wins}/${row.losses}`),
-        );
-        Object.assign(line.style, {
-          padding: '4px 0',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          color: index === 0 ? '#facc15' : '#eee',
-        } satisfies Partial<CSSStyleDeclaration>);
-        body.appendChild(line);
-      }
-    })
-    .catch(() => {
-      if (document.getElementById(LEADERBOARD_ID)) body.textContent = '—';
-    });
-};
-
 const applyLargeMenuButtonStyle = (btn: HTMLButtonElement): void => {
   Object.assign(btn.style, {
     fontSize: FONT_SIZE.menuButton,
@@ -2727,6 +2556,12 @@ const createRoomOptionsControls = (
   };
 };
 
+const goHome = (): void => {
+  networkFlows.invalidate();
+  closeLobbyListNetwork();
+  renderHome();
+};
+
 const renderHome = (): void => {
   if (!hasSavedDisplayName()) {
     renderPlayerNameEntry();
@@ -2737,7 +2572,6 @@ const renderHome = (): void => {
 
 const renderPlayerNameEntry = (): void => {
   currentLobbyView = 'player-name';
-  renderAuthControls();
   renderLanguageControls();
   const card = createLobbyFrame(380);
   appendBrand(card);
@@ -2771,7 +2605,6 @@ const renderPlayerNameEntry = (): void => {
 
 const renderLobby = (): void => {
   currentLobbyView = 'home';
-  renderAuthControls();
   renderLanguageControls();
   const card = createLobbyFrame(380);
   appendBrand(card);
@@ -2796,6 +2629,7 @@ const renderLobby = (): void => {
   }
   appendMenuButton(card, t('createRoomMenu'), openCreateRoomMenu).dataset.uiClickSound = 'none';
   appendMenuButton(card, t('joinRoom'), openMultiplayerJoin).dataset.uiClickSound = 'none';
+  appendLobbyError(card);
 };
 
 const renderCreateRoomMenu = (): void => {
@@ -2823,9 +2657,9 @@ const openMultiplayerJoin = (): void => {
 
 const renderMultiplayerMenu = (): void => {
   cancelQuickSearch({ render: false });
+  networkFlows.begin();
   currentLobbyView = 'multiplayer';
   destroyMenuDiceScene();
-  renderAuthControls();
   renderLanguageControls();
   const card = createLobbyFrame(420);
   appendTitle(card, t('multiplayer'));
@@ -2841,11 +2675,11 @@ const renderMultiplayerMenu = (): void => {
 
 const renderMultiplayerCreate = (): void => {
   cancelQuickSearch({ render: false });
+  networkFlows.begin();
   currentLobbyView = 'create-room';
-  renderAuthControls();
   renderLanguageControls();
   ensureMenuDiceScene();
-  const card = createLobbyFrame(460, renderHome);
+  const card = createLobbyFrame(460, goHome);
   appendTitle(card, t('createRoomAction'));
 
   const gameNameInput = textInput(t('gameName'));
@@ -2888,17 +2722,20 @@ const renderMultiplayerCreate = (): void => {
 
 const renderMultiplayerJoin = (): void => {
   cancelQuickSearch({ render: false });
+  const viewGeneration = networkFlows.begin();
   currentLobbyView = 'multiplayer-join';
-  renderAuthControls();
   renderLanguageControls();
   ensureMenuDiceScene();
 
   closeLobbyListNetwork();
   let tempNetwork: NetworkService | null = null;
+  let networkPromise: Promise<NetworkService> | null = null;
   let loadedRooms: RoomListItem[] = [];
   const closeJoinPopup = (): void => {
+    if (networkFlows.isCurrent(viewGeneration)) networkFlows.invalidate();
     closeLobbyListNetwork();
     tempNetwork = null;
+    networkPromise = null;
     renderHome();
   };
 
@@ -2986,21 +2823,34 @@ const renderMultiplayerJoin = (): void => {
   appendLobbyError(card);
 
   const ensureNetwork = (): Promise<NetworkService> => {
-    if (tempNetwork) return Promise.resolve(tempNetwork);
-    return connectNetwork().then((network) => {
-      tempNetwork = network;
-      lobbyListNetwork = network;
-      return network;
-    });
+    if (!networkFlows.isCurrent(viewGeneration)) {
+      return Promise.reject(new StaleNetworkFlowError());
+    }
+    if (tempNetwork) {
+      networkFlows.assert(viewGeneration, tempNetwork);
+      return Promise.resolve(tempNetwork);
+    }
+    if (networkPromise) return networkPromise;
+    const pending = connectNetwork(viewGeneration)
+      .then((network) => {
+        networkFlows.assert(viewGeneration, network);
+        tempNetwork = network;
+        lobbyListNetwork = network;
+        return network;
+      })
+      .finally(() => {
+        if (networkPromise === pending) networkPromise = null;
+      });
+    networkPromise = pending;
+    return pending;
   };
 
   function enterRoom(network: NetworkService, state: RoomState): void {
+    networkFlows.preserve(viewGeneration, network);
     activeNetwork = network;
     tempNetwork = null;
     lobbyListNetwork = null;
     clearLobby();
-    clearAuthControls();
-    clearAuthModal();
     handleRoomState(network, state);
   }
 
@@ -3014,9 +2864,19 @@ const renderMultiplayerJoin = (): void => {
       .then((network) =>
         network
           .joinRoom(code, password)
-          .then((state) => enterRoom(network, state)),
+          .then((state) => {
+            if (!networkFlows.isCurrent(viewGeneration)) {
+              network.disconnect();
+              throw new StaleNetworkFlowError();
+            }
+            enterRoom(network, state);
+          }),
       )
       .catch((error: Error) => {
+        if (
+          !networkFlows.isCurrent(viewGeneration) ||
+          isStaleNetworkFlowError(error)
+        ) return;
         clicked.disabled = false;
         if (error.message.startsWith('BAD_PASSWORD')) {
           const nextPassword = window.prompt(t('roomPassword')) ?? '';
@@ -3056,7 +2916,7 @@ const renderMultiplayerJoin = (): void => {
         document.createTextNode(
           `${room.hasPassword ? `[${t('locked')}] ` : ''}${room.gameName} · ${
             room.playerCount
-          }/2 · `,
+          }/${CUSTOM_ROOM_PLAYER_LIMIT} · `,
         ),
         createNicknameSpan(room.ownerDisplayName),
       );
@@ -3083,60 +2943,29 @@ const renderMultiplayerJoin = (): void => {
     ensureNetwork()
       .then((network) => network.listRooms())
       .then((rooms) => {
+        if (!networkFlows.isCurrent(viewGeneration)) return;
         loadedRooms = rooms;
         renderRows();
       })
-      .catch(showError)
+      .catch((error: unknown) => {
+        if (
+          networkFlows.isCurrent(viewGeneration) &&
+          !isStaleNetworkFlowError(error)
+        ) showError(error);
+      })
       .finally(() => {
-        refreshBtn.disabled = false;
+        if (networkFlows.isCurrent(viewGeneration)) refreshBtn.disabled = false;
       });
   }
 
   refreshRooms();
 };
 
-const renderRankedMenu = (): void => {
-  currentLobbyView = 'ranked';
-  destroyMenuDiceScene();
-  renderAuthControls();
-  renderLanguageControls();
-  const card = createLobbyFrame(380);
-  appendTitle(card, t('rankedGame'));
-  renderLeaderboard();
-
-  const startBtn = button(t('startGame'), () => {
-    const accessError = rankedAccessError();
-    if (accessError) {
-      showError(accessError);
-      return;
-    }
-    const user = getStoredUser();
-    startNetwork(
-      'create',
-      undefined,
-      ROOM_MODE.RANKED,
-      DEFAULT_ROOM_OPTIONS,
-      `${user?.username ?? 'Player'} ranked`,
-    ).catch(showError);
-  });
-  card.appendChild(startBtn);
-
-  const leaderboardBtn = button(t('leaderboard'), () => {
-    document.getElementById(LEADERBOARD_ID)?.remove();
-    renderLeaderboard();
-  });
-  card.appendChild(leaderboardBtn);
-
-  appendBackTo(card, renderLobby);
-  appendLobbyError(card);
-};
-
 const renderSettingsMenu = (): void => {
   currentLobbyView = 'settings';
-  renderAuthControls();
   renderLanguageControls();
   ensureMenuDiceScene();
-  const card = createLobbyFrame(520, renderHome);
+  const card = createLobbyFrame(520, goHome);
   const title = appendTitle(card, t('settings'));
   title.style.textAlign = 'center';
   renderSettingsContent(card);
@@ -3272,7 +3101,7 @@ window.addEventListener('keydown', (event) => {
   }
   if (!activeGame && currentLobbyView === 'settings') {
     event.preventDefault();
-    renderHome();
+    goHome();
     return;
   }
   const roomState = activeNetwork?.getRoomState();
@@ -3287,8 +3116,7 @@ window.addEventListener('keydown', (event) => {
       currentLobbyView === 'multiplayer-join')
   ) {
     event.preventDefault();
-    closeLobbyListNetwork();
-    renderHome();
+    goHome();
     return;
   }
   if (isInteractiveKeyboardTarget(event.target)) return;
@@ -3297,7 +3125,6 @@ loadPlayerSettings()
   .catch((err: Error) => {
     console.warn(`settings load failed: ${err.message}`);
   })
-  .then(() => refreshCurrentUser().catch(() => null))
   .finally(() => {
     renderLanguageControls();
     if (!mobileRuntime) renderHome();

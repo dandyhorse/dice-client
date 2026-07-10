@@ -23,7 +23,7 @@
    - dice ↔ dice: `friction 0.25, restitution 0.25`
 6. `createPlayArea()` — **один раз** создаёт стол `TABLE_WIDTH × TABLE_DEPTH`, 4 видимые стены (с `WALL_INSET` от кромки) и невидимый потолок на высоте `WALL_HEIGHT`
 7. `new DiceService(...).spawn()` — спавн костей
-8. `new ShakeInputService(...)` — подписка на `hold-start` → `dice.pickup()` и `release` → `dice.release(velocity, position)`. `hold-move` сервис эмитит, но движок его не слушает.
+8. `new ShakeInputService(...)` — `hold-start` вызывает pickup, `hold-cancel` восстанавливает предыдущее состояние, `release` запускает локальный или сетевой бросок.
 9. `addEventListener('resize', onResize)` — пересчёт aspect и Y камеры
 
 ### Game Loop (`gameLoop`)

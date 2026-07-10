@@ -1,3 +1,4 @@
+// Future accounts module. The active guest runtime intentionally does not import it.
 import { SERVER_URL } from './engine/config';
 
 const ACCESS_TOKEN_KEY = 'dice.auth.accessToken';
@@ -5,12 +6,12 @@ const REFRESH_TOKEN_KEY = 'dice.auth.refreshToken';
 const ACCESS_EXPIRES_AT_KEY = 'dice.auth.accessExpiresAt';
 const REFRESH_EXPIRES_AT_KEY = 'dice.auth.refreshExpiresAt';
 const AUTH_USER_KEY = 'dice.auth.user';
+let refreshPromise: Promise<AuthPayload | null> | null = null;
 
 export interface AuthUser {
   id: string;
   username: string;
   displayName: string;
-  coins: number;
 }
 
 interface AuthPayload {
@@ -28,16 +29,16 @@ export interface AuthIdentity {
   authenticated: boolean;
 }
 
-export interface LeaderboardEntry {
-  userId: string;
-  username: string;
-  displayName: string;
-  wins: number;
-  losses: number;
-  rating: number;
-}
-
 const authUrl = (path: string): string => `${SERVER_URL}${path}`;
+
+class AuthRequestError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
 
 const isObject = (value: unknown): value is Record<string, unknown> => {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -51,8 +52,7 @@ const isAuthUser = (value: unknown): value is AuthUser => {
     typeof value.username === 'string' &&
     value.username.length > 0 &&
     typeof value.displayName === 'string' &&
-    typeof value.coins === 'number' &&
-    Number.isFinite(value.coins)
+    value.displayName.length > 0
   );
 };
 
@@ -136,7 +136,12 @@ const postAuth = async (path: string, body: unknown, accessToken?: string): Prom
     body: JSON.stringify(body),
   });
   const payload = (await res.json().catch(() => null)) as unknown;
-  if (!res.ok) throw new Error(errorMessage(payload) || `auth request failed: ${res.status}`);
+  if (!res.ok) {
+    throw new AuthRequestError(
+      errorMessage(payload) || `auth request failed: ${res.status}`,
+      res.status,
+    );
+  }
   return payload;
 };
 
@@ -145,14 +150,18 @@ const getAuth = async (path: string, accessToken: string): Promise<unknown> => {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   const payload = (await res.json().catch(() => null)) as unknown;
-  if (!res.ok) throw new Error(errorMessage(payload) || `auth request failed: ${res.status}`);
+  if (!res.ok) {
+    throw new AuthRequestError(
+      errorMessage(payload) || `auth request failed: ${res.status}`,
+      res.status,
+    );
+  }
   return payload;
 };
 
 export const registerAccount = async (input: {
   username: string;
   password: string;
-  guestId: string;
 }): Promise<AuthPayload> => {
   return storeAuth(assertAuthPayload(await postAuth('/auth/register', input)));
 };
@@ -164,19 +173,35 @@ export const loginAccount = async (input: {
   return storeAuth(assertAuthPayload(await postAuth('/auth/login', input)));
 };
 
-export const refreshAuth = async (): Promise<AuthPayload | null> => {
+export const refreshAuth = (): Promise<AuthPayload | null> => {
+  if (refreshPromise) return refreshPromise;
   const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY);
   const refreshExpiresAt = storedNumber(REFRESH_EXPIRES_AT_KEY);
   if (!refreshToken || refreshExpiresAt <= Date.now()) {
-    clearAuth();
-    return null;
+    return Promise.resolve(null);
   }
-  try {
-    return storeAuth(assertAuthPayload(await postAuth('/auth/refresh', { refreshToken })));
-  } catch {
-    clearAuth();
-    return null;
-  }
+
+  const request = postAuth('/auth/refresh', { refreshToken })
+    .then((payload) => {
+      const parsed = assertAuthPayload(payload);
+      if (localStorage.getItem(REFRESH_TOKEN_KEY) !== refreshToken) return null;
+      return storeAuth(parsed);
+    })
+    .catch((error: unknown) => {
+      const invalidRefresh =
+        error instanceof AuthRequestError &&
+        (error.status === 400 || error.status === 401);
+      if (!invalidRefresh) throw error;
+      if (localStorage.getItem(REFRESH_TOKEN_KEY) === refreshToken) clearAuth();
+      return null;
+    });
+  refreshPromise = request;
+  void request
+    .finally(() => {
+      if (refreshPromise === request) refreshPromise = null;
+    })
+    .catch(() => undefined);
+  return request;
 };
 
 export const logoutAccount = async (): Promise<void> => {
@@ -209,16 +234,6 @@ export const refreshCurrentUser = async (): Promise<AuthUser | null> => {
     if (refreshed) return refreshed.user;
     throw error;
   }
-};
-
-export const getLeaderboard = async (limit = 20): Promise<LeaderboardEntry[]> => {
-  const res = await fetch(authUrl(`/stats/leaderboard?limit=${encodeURIComponent(String(limit))}`));
-  const payload = (await res.json().catch(() => ({}))) as {
-    leaders?: LeaderboardEntry[];
-    message?: string;
-  };
-  if (!res.ok) throw new Error(payload.message || `leaderboard request failed: ${res.status}`);
-  return payload.leaders ?? [];
 };
 
 export const getAuthIdentity = async (): Promise<AuthIdentity | null> => {

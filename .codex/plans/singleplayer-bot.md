@@ -30,7 +30,7 @@ Sources:
 Use two small pure modules:
 
 1. `local-match.ts`
-   - State: `targetScore`, `minBank`, `allowHotDice`, `currentPlayer: 'human' | 'bot'`, player totals, turn points, active dice count, status.
+   - State: `targetScore`, `minBank`, `currentPlayer: 'human' | 'bot'`, player totals, turn points, active dice count, status. Hot dice are always enabled.
    - Actions: `startRoll`, `finishRoll`, `continueWithSelection`, `bankWithSelection`, `bust`, `surrender/reset`.
 
 2. `farkle-bot.ts`
@@ -106,10 +106,9 @@ Straightforward and readable:
 
 ## Non-Goals For V1
 
-- No server connection, room creation, auth identity, leaderboard, or network protocol.
+- No server connection, room creation, auth identity, persistent statistics, or network protocol.
 - No ML, neural network, or MCTS.
 - No perfect optimal two-player solver in the first implementation.
-- No ranked mode implications.
 - No hidden server-side bot.
 
 ## Implementation Checkpoint

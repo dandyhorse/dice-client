@@ -5,7 +5,6 @@ import { EventEmitter } from '../../event-emitter.class';
 
 import {
   packMatchBank,
-  packMatchForfeit,
   packMatchRematch,
   packMatchSelectionPreviewCmd,
   packMatchSelectDice,
@@ -26,6 +25,7 @@ import {
   unpackRoomList,
   unpackRest,
   unpackRoomState,
+  unpackSessionReady,
   unpackSnapshot,
 } from '../../../../network/protocol/codecs';
 import { OP } from '../../../../network/protocol/opcodes';
@@ -89,30 +89,20 @@ export type RestDieState = DieRestStateBin;
 export type RoomState = RoomStatePayload;
 export type RoomListItem = RoomListItemPayload;
 
-const RECONNECT_INITIAL_MS = 1000;
-const RECONNECT_MAX_MS = 30000;
 const REQUEST_TIMEOUT_MS = 8000;
+const SESSION_READY_TIMEOUT_MS = 8000;
 
 const wsUrlFor = (
-  userId: string,
   displayName: string,
-  accessToken: string | undefined,
   avatarIndex: number,
   dicePresetId: string,
 ): string => {
   const base = SERVER_URL.replace(/^http/, 'ws');
-  const qs = accessToken
-    ? new URLSearchParams({
-        t: accessToken,
-        a: String(normalizeAvatarIndex(avatarIndex)),
-        d: normalizeDicePresetId(dicePresetId),
-      })
-    : new URLSearchParams({
-        u: userId,
-        n: displayName,
-        a: String(normalizeAvatarIndex(avatarIndex)),
-        d: normalizeDicePresetId(dicePresetId),
-      });
+  const qs = new URLSearchParams({
+    n: displayName,
+    a: String(normalizeAvatarIndex(avatarIndex)),
+    d: normalizeDicePresetId(dicePresetId),
+  });
   return `${base}/ws?${qs.toString()}`;
 };
 
@@ -133,7 +123,6 @@ export class NetworkService {
   readonly events = new EventEmitter();
   private ws: WebSocket | null = null;
   private currentRoomId: string | null = null;
-  private currentRoomCode: string | null = null;
   private currentRoomState: RoomStatePayload | null = null;
   private currentDiceSnapshot: SnapshotPayload | null = null;
   private currentDiceSnapshotEvent: 'dice-spawn' | 'dice-snapshot' | null = null;
@@ -143,59 +132,52 @@ export class NetworkService {
   private currentRematchState: MatchRematchStatePayload | null = null;
   private userId: string | null = null;
   private displayName = 'Player';
-  private accessToken: string | undefined;
   private avatarIndex = 0;
   private dicePresetId = normalizeDicePresetId(undefined);
 
   private requestSeq = 1;
   private pending = new Map<number, PendingRequest>();
-
-  private reconnectTimer: number | null = null;
-  private reconnectDelay = RECONNECT_INITIAL_MS;
-  private autoReconnect = true;
+  private connectPromise: Promise<void> | null = null;
+  private connectResolve: (() => void) | null = null;
+  private connectReject: ((error: Error) => void) | null = null;
+  private connectTimeoutId: number | null = null;
 
   connect = (
-    userId: string,
     displayName: string,
-    accessToken?: string,
     avatarIndex = 0,
     dicePresetId = normalizeDicePresetId(undefined),
   ): Promise<void> => {
-    if (this.ws) return Promise.resolve();
-    this.userId = userId;
+    if (this.ws?.readyState === WebSocket.OPEN && this.userId) return Promise.resolve();
+    if (this.connectPromise) return this.connectPromise;
     this.displayName = displayName.trim() || 'Player';
-    this.accessToken = accessToken;
     this.avatarIndex = normalizeAvatarIndex(avatarIndex);
     this.dicePresetId = normalizeDicePresetId(dicePresetId);
-    this.autoReconnect = true;
-    return new Promise<void>((resolve, reject) => {
-      this.openSocket(resolve, reject);
+    const promise = new Promise<void>((resolve, reject) => {
+      this.connectResolve = resolve;
+      this.connectReject = reject;
     });
+    this.connectPromise = promise;
+    void promise
+      .finally(() => {
+        if (this.connectPromise === promise) this.connectPromise = null;
+      })
+      .catch(() => undefined);
+    try {
+      this.openSocket();
+    } catch (error) {
+      this.resetSession(error instanceof Error ? error : new Error(String(error)));
+    }
+    return promise;
   };
 
   disconnect = (): void => {
-    this.autoReconnect = false;
-    if (this.reconnectTimer !== null) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    this.ws?.close();
+    const ws = this.ws;
     this.ws = null;
-    this.currentRoomId = null;
-    this.currentRoomCode = null;
-    this.currentRoomState = null;
-    this.clearCurrentMatchData();
-    this.userId = null;
+    ws?.close();
+    this.resetSession(new Error('disconnected'));
     this.displayName = 'Player';
-    this.accessToken = undefined;
     this.avatarIndex = 0;
     this.dicePresetId = normalizeDicePresetId(undefined);
-    // Реджектим висящие — иначе UI промисы зависнут навсегда.
-    for (const p of this.pending.values()) {
-      if (p.timeoutId !== null) clearTimeout(p.timeoutId);
-      p.reject(new Error('disconnected'));
-    }
-    this.pending.clear();
   };
 
   getUserId = (): string | null => this.userId;
@@ -230,7 +212,6 @@ export class NetworkService {
       const state = unpackRoomState(body);
       this.syncRoomStateCache(state);
       this.currentRoomId = state.id;
-      this.currentRoomCode = state.code;
       return state;
     });
   };
@@ -241,7 +222,6 @@ export class NetworkService {
       const state = unpackRoomState(body);
       this.syncRoomStateCache(state);
       this.currentRoomId = state.id;
-      this.currentRoomCode = state.code;
       return state;
     });
   };
@@ -259,7 +239,6 @@ export class NetworkService {
       const state = unpackRoomState(body);
       this.syncRoomStateCache(state);
       this.currentRoomId = state.id;
-      this.currentRoomCode = state.code;
       return state;
     });
   };
@@ -269,7 +248,6 @@ export class NetworkService {
     if (!roomId) return Promise.resolve();
     return this.sendCommand((requestId) => packRoomLeave({ requestId, roomId })).then(() => {
       this.currentRoomId = null;
-      this.currentRoomCode = null;
       this.currentRoomState = null;
       this.clearCurrentMatchData();
     });
@@ -283,22 +261,26 @@ export class NetworkService {
       const state = unpackRoomState(body);
       this.syncRoomStateCache(state);
       this.currentRoomId = state.id;
-      this.currentRoomCode = state.code;
       return state;
     });
   };
 
-  sendRelease = (velocity: THREE.Vector3, position: THREE.Vector3): void => {
+  sendRelease = (velocity: THREE.Vector3, position: THREE.Vector3): boolean => {
     const sock = this.ws;
     const roomId = this.currentRoomId;
-    if (!sock || sock.readyState !== WebSocket.OPEN || !roomId) return;
-    sock.send(
-      packRelease({
-        roomId,
-        velocity: [velocity.x, velocity.y, velocity.z],
-        position: [position.x, position.y, position.z],
-      }) as Uint8Array<ArrayBuffer>,
-    );
+    if (!sock || sock.readyState !== WebSocket.OPEN || !roomId || !this.userId) return false;
+    try {
+      sock.send(
+        packRelease({
+          roomId,
+          velocity: [velocity.x, velocity.y, velocity.z],
+          position: [position.x, position.y, position.z],
+        }) as Uint8Array<ArrayBuffer>,
+      );
+      return true;
+    } catch {
+      return false;
+    }
   };
 
   /**
@@ -322,14 +304,6 @@ export class NetworkService {
     if (!roomId) return Promise.reject(new Error('not in a room'));
     return this.sendCommand((requestId) =>
       packMatchBank({ requestId, roomId, indices }),
-    ).then(() => undefined);
-  };
-
-  sendForfeit = (): Promise<void> => {
-    const roomId = this.currentRoomId;
-    if (!roomId) return Promise.reject(new Error('not in a room'));
-    return this.sendCommand((requestId) =>
-      packMatchForfeit({ requestId, roomId }),
     ).then(() => undefined);
   };
 
@@ -363,10 +337,16 @@ export class NetworkService {
     timeoutMs: number | null = REQUEST_TIMEOUT_MS,
   ): Promise<Uint8Array | undefined> => {
     const sock = this.ws;
-    if (!sock || sock.readyState !== WebSocket.OPEN) {
+    if (!sock || sock.readyState !== WebSocket.OPEN || !this.userId) {
       return Promise.reject(new Error('not connected'));
     }
     const requestId = this.requestSeq++;
+    let payload: Uint8Array;
+    try {
+      payload = build(requestId);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     return new Promise<Uint8Array | undefined>((resolve, reject) => {
       const timeoutId =
         timeoutMs === null
@@ -378,106 +358,81 @@ export class NetworkService {
               pending.reject(new Error('request timed out'));
             }, timeoutMs);
       this.pending.set(requestId, { resolve, reject, timeoutId });
-      sock.send(build(requestId) as Uint8Array<ArrayBuffer>);
+      try {
+        sock.send(payload as Uint8Array<ArrayBuffer>);
+      } catch (error) {
+        this.pending.delete(requestId);
+        if (timeoutId !== null) clearTimeout(timeoutId);
+        reject(error);
+      }
     });
   };
 
-  private openSocket = (
-    initialResolve?: () => void,
-    initialReject?: (err: Error) => void,
-  ): void => {
-    if (!this.userId) {
-      initialReject?.(new Error('userId required'));
-      return;
-    }
+  private openSocket = (): void => {
     const ws = new WebSocket(
-      wsUrlFor(
-        this.userId,
-        this.displayName,
-        this.accessToken,
-        this.avatarIndex,
-        this.dicePresetId,
-      ),
+      wsUrlFor(this.displayName, this.avatarIndex, this.dicePresetId),
     );
     ws.binaryType = 'arraybuffer';
-    let opened = false;
-    let initialSettled = false;
-    const isInitialConnect = initialResolve !== undefined || initialReject !== undefined;
-    const rejectInitial = (err: Error): boolean => {
-      if (!isInitialConnect || opened || initialSettled) return false;
-      initialSettled = true;
-      this.autoReconnect = false;
-      if (this.ws === ws) this.ws = null;
-      initialReject?.(err);
-      return true;
-    };
-
-    ws.onopen = () => {
-      if (this.ws !== ws) {
-        ws.close();
-        return;
-      }
-      opened = true;
-      initialSettled = true;
-      this.reconnectDelay = RECONNECT_INITIAL_MS;
-      initialResolve?.();
-      // Реконнект-rejoin: если до падения сидели в комнате — снова заходим
-      // по сохранённому коду. Сервер заменит socketId старого участника.
-      if (!initialResolve && this.currentRoomCode) {
-        this.joinRoom(this.currentRoomCode).catch(() => {
-          // Комнаты могло уже не быть — переходим в "лобби-state".
-          this.currentRoomId = null;
-          this.currentRoomCode = null;
-        });
-      }
-    };
+    this.connectTimeoutId = window.setTimeout(() => {
+      if (this.ws !== ws || this.userId) return;
+      this.ws = null;
+      ws.close();
+      this.resetSession(new Error('session handshake timed out'));
+    }, SESSION_READY_TIMEOUT_MS);
 
     ws.onerror = () => {
-      if (!opened) rejectInitial(new Error('connection failed'));
+      if (this.ws !== ws || this.userId) return;
+      this.ws = null;
+      ws.close();
+      this.resetSession(new Error('connection failed'));
     };
 
     ws.onclose = () => {
-      const wasCurrent = this.ws === ws;
-      if (wasCurrent) this.ws = null;
-      if (!opened) {
-        if (rejectInitial(new Error('connection failed'))) return;
-        if (wasCurrent && this.autoReconnect) this.scheduleReconnect();
-        return;
-      }
-      if (!wasCurrent) return;
-
-      // Все висящие requests становятся undelivered — реджектим.
-      for (const p of this.pending.values()) {
-        if (p.timeoutId !== null) clearTimeout(p.timeoutId);
-        p.reject(new Error('socket closed'));
-      }
-      this.pending.clear();
-      if (this.autoReconnect) this.scheduleReconnect();
+      if (this.ws !== ws) return;
+      const hadSession = this.userId !== null;
+      this.ws = null;
+      this.resetSession(new Error(hadSession ? 'connection lost' : 'connection failed'));
+      if (hadSession) this.events.emit('connection-lost');
     };
 
     ws.onmessage = (ev) => {
-      if (!(ev.data instanceof ArrayBuffer)) return;
-      this.dispatch(new Uint8Array(ev.data));
+      if (this.ws !== ws || !(ev.data instanceof ArrayBuffer)) return;
+      try {
+        this.dispatch(new Uint8Array(ev.data));
+      } catch {
+        const hadSession = this.userId !== null;
+        this.ws = null;
+        ws.close(1002, 'invalid protocol message');
+        this.resetSession(new Error('invalid server message'));
+        if (hadSession) this.events.emit('connection-lost');
+      }
     };
 
     this.ws = ws;
-  };
-
-  private scheduleReconnect = (): void => {
-    if (this.reconnectTimer !== null) return;
-    const delay = this.reconnectDelay;
-    this.reconnectDelay = Math.min(RECONNECT_MAX_MS, this.reconnectDelay * 2);
-    this.reconnectTimer = window.setTimeout(() => {
-      this.reconnectTimer = null;
-      if (!this.autoReconnect) return;
-      this.openSocket();
-    }, delay);
   };
 
   private dispatch = (buf: Uint8Array): void => {
     if (buf.length < 1) return;
     const op = buf[0];
     switch (op) {
+      case OP.SESSION_READY: {
+        const session = unpackSessionReady(buf);
+        if (!session.userId) throw new Error('empty session userId');
+        if (this.userId && this.userId !== session.userId) {
+          throw new Error('session identity changed');
+        }
+        this.userId = session.userId;
+        if (this.connectTimeoutId !== null) {
+          clearTimeout(this.connectTimeoutId);
+          this.connectTimeoutId = null;
+        }
+        const resolve = this.connectResolve;
+        this.connectResolve = null;
+        this.connectReject = null;
+        resolve?.();
+        this.events.emit('session-ready', session);
+        return;
+      }
       case OP.ROOM_STATE: {
         const state = unpackRoomState(buf);
         this.syncRoomStateCache(state);
@@ -568,7 +523,6 @@ export class NetworkService {
   private syncRoomStateCache(state: RoomStatePayload): void {
     if (this.currentRoomId !== state.id) this.clearCurrentMatchData();
     this.currentRoomId = state.id;
-    this.currentRoomCode = state.code;
     this.currentRoomState = state;
     if (state.status === ROOM_STATUS.WAITING) this.clearCurrentMatchData();
   }
@@ -580,5 +534,28 @@ export class NetworkService {
     this.currentMatchState = null;
     this.currentSelectionPreview = null;
     this.currentRematchState = null;
+  }
+
+  private resetSession(error: Error): void {
+    if (this.connectTimeoutId !== null) {
+      clearTimeout(this.connectTimeoutId);
+      this.connectTimeoutId = null;
+    }
+    const rejectConnect = this.connectReject;
+    this.connectPromise = null;
+    this.connectResolve = null;
+    this.connectReject = null;
+    rejectConnect?.(error);
+
+    for (const request of this.pending.values()) {
+      if (request.timeoutId !== null) clearTimeout(request.timeoutId);
+      request.reject(error);
+    }
+    this.pending.clear();
+    this.requestSeq = 1;
+    this.currentRoomId = null;
+    this.currentRoomState = null;
+    this.clearCurrentMatchData();
+    this.userId = null;
   }
 }

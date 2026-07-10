@@ -10,7 +10,6 @@ export interface FarkleBotContext {
   humanTotal: number;
   targetScore: number;
   minBank: number;
-  allowHotDice: boolean;
 }
 
 export interface FarkleBotSelection {
@@ -39,7 +38,6 @@ export const chooseFarkleBotMove = (context: FarkleBotContext): FarkleBotDecisio
   const selections = enumerateValidBotSelections(
     context.rolledFaces,
     context.activeDiceCount,
-    context.allowHotDice,
   );
   if (selections.length === 0) return null;
 
@@ -61,7 +59,6 @@ export const chooseFarkleBotMove = (context: FarkleBotContext): FarkleBotDecisio
 export const enumerateValidBotSelections = (
   rolledFaces: number[],
   activeDiceCount = rolledFaces.length,
-  allowHotDice = true,
 ): FarkleBotSelection[] => {
   const out: FarkleBotSelection[] = [];
   const count = Math.min(rolledFaces.length, Math.max(1, activeDiceCount));
@@ -78,7 +75,7 @@ export const enumerateValidBotSelections = (
       rollIndices,
       points: validation.points,
       nextActiveDiceCount:
-        allowHotDice && rollIndices.length >= count ? 6 : Math.max(1, count - rollIndices.length),
+        rollIndices.length >= count ? 6 : Math.max(1, count - rollIndices.length),
     });
   }
 

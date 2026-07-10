@@ -3,7 +3,7 @@
 `src/engine/classes/_game-engine/services/shake-input.service.ts`
 
 Сервис ввода. Превращает движение мыши и настраиваемую клавишу броска
-(`Space` по умолчанию) в события `hold-start`, `hold-move`, `release` с
+(`Space` по умолчанию) в события `hold-start`, `hold-move`, `hold-cancel`, `release` с
 позицией в мировых координатах и скоростью броска.
 
 ## Поля
@@ -84,6 +84,10 @@
 ## `update(currentTime)`
 
 Вызывается из `GameEngine.gameLoop` каждый кадр. Удаляет из буфера сэмплы старше `currentTime - VELOCITY_BUFFER_MS`. Это нужно, чтобы при медленном движении в конце броска не учитывалась "история" быстрого старта.
+
+## Отмена удержания
+
+Если input выключается или поверх игры появляется блокирующий UI во время hold, сервис очищает velocity samples и эмитит `hold-cancel`. `GameEngine` вызывает `DiceService.cancelPickup()`, который восстанавливает локальные тела или последнюю сетевую позу вместо оставления скрытых костей.
 
 ## `projectToHoldPlane(event)`
 
