@@ -1307,7 +1307,7 @@ const renderLanguageControls = (): void => {
   wrap.classList.add('responsive-ui-corner', 'responsive-ui-corner-top-right');
   Object.assign(wrap.style, {
     position: 'fixed',
-    top: `${TOP_MENU_EDGE_OFFSET}px`,
+    top: 'var(--gameplay-top-row-offset)',
     right: `${TOP_MENU_EDGE_OFFSET}px`,
     display: 'flex',
     alignItems: 'center',

@@ -201,7 +201,7 @@ export class HudUiService {
     Object.assign(this.surrenderPanel.style, {
       position: 'fixed',
       right: '12px',
-      bottom: '12px',
+      bottom: '28px',
       display: 'none',
       width: 'min(360px, calc(100vw - 24px))',
       justifyContent: 'center',

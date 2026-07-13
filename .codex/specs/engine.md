@@ -83,6 +83,7 @@ ShakeInputService.events:
 - Ниже FHD gameplay DOM живёт в центрированном виртуальном холсте `1920×1080`, масштабируемом от `66.7%` на `1280×720`. На FHD и выше SVG/HUD остаются в исходном масштабе `100%`, а reference-layer занимает весь viewport, чтобы viewport-relative HUD-отступы оставались у краёв экрана на QHD/4K.
 - На 21:9 и шире стол остаётся центральной FHD-композицией, а HUD использует свободные поля по бокам через исходные responsive-отступы; SVG и HUD не растягиваются.
 - Menu-контент и все dialog-панели используют общий `--responsive-ui-scale`: от `66.7%` на `1280×720` до `100%` на FHD и выше. Back/top-menu controls масштабируются от закреплённого края, а backdrop не уменьшается.
+- В gameplay `#lang-controls` и `#hud-turn-stats` используют общую координату верхнего ряда с учётом compact reference-layer; `#hud-surrender` и `#hud-actions` имеют один нижний offset. Перемещаются внешние overlay-слои, не их внутренние элементы.
 - `GameplayLayoutService` берёт CSS-размер canvas, поэтому browser zoom/resize меняют композицию без пересоздания физического мира. Полноэкранный `#gameplay-overlay-viewport` содержит только блокирующие игровые модалки; custom cursor остаётся вне этого слоя.
 - Внутреннее WebGL-разрешение остаётся `PS1_RENDER_SCALE = 0.48`; layout не меняет quality/FPS-профиль.
 

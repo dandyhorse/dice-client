@@ -61,7 +61,7 @@ owning a separate UI service.
 |---|---|---|
 | `#hud-left` | top-left | player card с avatar, именем, total / TARGET_SCORE |
 | `#hud-right` | top-right | player cards для остальных игроков с avatar, именем, total / TARGET_SCORE |
-| `#hud-actions` | bottom-center | кнопки `[Continue]` `[Bank]` (только в SELECTING + own turn) |
+| `#hud-actions` | bottom-center, одна линия с `#hud-surrender` | кнопки `[Continue]` `[Bank]` (только в SELECTING + own turn) |
 | `#hud-status` | bottom-center (под actions) | строка по фазе («Бросаем...», «Ждём X», «Победил X!»...) |
 | `#hud-error` | center | transient overlay — BUST/FARKLE держится обязательный таймер; обычные ошибки держатся до первого click/tap |
 | `#hud-turn-banner` | center | `ТВОЙ ХОД` держится до первого click/tap или текущей клавиши броска (`Space` по умолчанию); чужой ход скрывается автоматически через `1500ms` |
@@ -69,7 +69,7 @@ owning a separate UI service.
 
 Player cards use enlarged avatar+score rectangles (`430px` min width, real `128px` avatar asset area, `18px 24px` padding). Их размеры сохраняются на FHD+, а исходные viewport-relative отступы двигают панели к краям QHD/ultrawide; compact desktop уменьшает всю композицию пропорционально.
 
-The top turn stat tiles (`Banked` / `Selected`) use larger padding/min-width/value text than the original compact HUD so they read closer in scale to the player cards.
+The top turn stat tiles (`Banked` / `Selected`) use larger padding/min-width/value text than the original compact HUD so they read closer in scale to the player cards. Их внешний слой всегда выровнен по верхней линии с `#lang-controls`; внутренние tiles не перестраиваются.
 
 ### API
 
