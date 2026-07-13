@@ -72,7 +72,7 @@ export class SelectionService {
     this.camera = camera;
     this.dice = dice;
     this.scene = scene;
-    canvas.addEventListener('mouseup', this.onMouseUp);
+    canvas.addEventListener('pointerup', this.onPointerUp);
   }
 
   enable(): void {
@@ -196,7 +196,7 @@ export class SelectionService {
 
   destroy(): void {
     this.enabled = false;
-    this.canvas.removeEventListener('mouseup', this.onMouseUp);
+    this.canvas.removeEventListener('pointerup', this.onPointerUp);
     this.clearScoringOptions(false);
     this.clearExternalSelection();
     for (const marker of this.markers.values()) {
@@ -207,10 +207,10 @@ export class SelectionService {
     this.markerGeometry.dispose();
   }
 
-  private onMouseUp = (event: MouseEvent): void => {
+  private onPointerUp = (event: PointerEvent): void => {
     if (!this.enabled) return;
     if (isGameInteractionBlocked()) return;
-    if (event.button !== 0) return;
+    if (!event.isPrimary || event.button !== 0) return;
 
     const rect = this.canvas.getBoundingClientRect();
     this.ndc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;

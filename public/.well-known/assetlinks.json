@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "ru.farklepit.game",
+        "sha256_cert_fingerprints": ["AE:71:E4:F7:4E:37:47:0B:8D:90:E5:E7:94:0B:D4:BE:5F:77:88:0B:A4:9A:7C:B0:7D:59:EB:72:8A:18:DB:D3"]
+      }
+    }]

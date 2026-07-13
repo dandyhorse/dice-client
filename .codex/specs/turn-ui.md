@@ -12,7 +12,7 @@ src/engine/classes/_game-engine/services/
 
 ## SelectionService
 
-`selection.service.ts`. Raycaster на canvas mouseup, toggle подсветка кости, эмит индексов выбранных костей.
+`selection.service.ts`. Raycaster на canvas pointerup, toggle подсветка кости, эмит индексов выбранных костей.
 
 ### API
 
@@ -29,7 +29,7 @@ class SelectionService {
 
 ### Слушает
 
-`canvas.mouseup` (НЕ mousedown — иначе ненужный конфликт с любым будущим pointer-handler'ом). ЛКМ только. При `enabled=false` молча игнорирует.
+`canvas.pointerup` (НЕ pointerdown — иначе ненужный конфликт с hold-to-throw). Только основной указатель. При `enabled=false` молча игнорирует.
 
 ### Что ловится
 
@@ -92,6 +92,7 @@ class HudUiService {
 - **Player cards**: имя берётся из `RoomState.members[].displayName`, avatar из `RoomState.members[].avatarIndex`. Картинки берутся из tracked runtime-файлов `public/assets/avatars/*.png` через статический список `src/avatars.ts`; если индекс недоступен, используется avatar `0`, если список пуст — initials fallback.
 - **Singleplayer avatars**: local human получает выбранный `PlayerSettings.profile.avatarIndex`; local bot получает следующий доступный avatar index или `0`, если доступна только одна картинка.
 - **Singleplayer bench parity**: local mode now mirrors server `MATCH_STATE.bench`. Continue appends selected faces, hot-dice/bust/bank/new-turn clears it, and `BenchDiceService` renders the held dice just like network mode.
+- **Автобросок после Continue**: если `PlayerSettings.gameplay.autoRollAfterContinue=true`, valid Continue игрока-человека сразу после перехода в local `WAITING` вызывает обычный keyboard throw. Для network этот же intent ждёт авторитативный `MATCH_STATE.WAITING`; бот никогда не использует эту настройку и бросает только своим delay-timer.
 - **Turn banners / non-FARKLE transient errors**: `ТВОЙ ХОД` держится на экране до первого `pointerdown` или текущей клавиши броска (`Space` по умолчанию) в capture-фазе. Ход другого игрока показывается коротко (`1500ms`) и скрывается сам. Обычные ошибки держатся до первого `pointerdown`. Click/tap и клавиша броска только скрывают нужный overlay и не отменяют само действие под курсором.
 - **BUST/FARKLE**: на `match-roll-result.bust=true` показываем «FARKLE» (через showError) на обязательный таймер `1200ms`. Пока таймер идёт, действия заблокированы; следующий turn banner показывается только после окончания FARKLE-таймера.
 - **WIN/FARKLE**: на `MATCH_STATE.phase=FINISHED` показываем финальный экран. После `LAST_PLAYER` реванш недоступен.
@@ -109,13 +110,13 @@ class HudUiService {
 | Не свой ход | disabled | disabled |
 | `FINISHED` | disabled | disabled |
 
-Так click-by-cost и hold-to-throw **никогда не активны одновременно** — конфликта по mousedown/mouseup физически быть не может.
+Так click-by-cost и hold-to-throw **никогда не активны одновременно** — конфликта по pointerdown/pointerup физически быть не может.
 
 `ShakeInputService.setEnabled(false)` посреди удержания эмитит `hold-cancel`; `DiceService.cancelPickup()` возвращает кости в состояние до pickup.
 
 ## Доработки в существующих файлах
 
-- `shake-input.service.ts`: добавлен `enabled` флаг, метод `setEnabled(boolean)`, гард в начале каждого `onMouseDown/Move/Up`.
+- `shake-input.service.ts`: добавлен `enabled` флаг, метод `setEnabled(boolean)`, гард в начале каждого `onPointerDown/Move/Up`.
 - `dice.service.ts`: добавлен `getActiveRemoteMeshes(): {mesh, index}[]` — единственная точка доступа SelectionService к мешам.
 - `game-engine.class.ts`: в network-mode создаются SelectionService + HudUiService и подписываются на `match-state` / `match-roll-result` / `selection-changed` / hud `continue-clicked`/`bank-clicked`. На continue/bank → `network.sendSelectDice/sendBank(indices)`, на success → `selection.clear()`, на reject → `hud.showError(e.message)`.
 

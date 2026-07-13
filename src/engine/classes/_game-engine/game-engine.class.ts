@@ -909,6 +909,9 @@ export class GameEngine {
       selectedFaces.length,
       selectedFaces,
     );
+    const shouldAutoRoll =
+      this.localMatchState.currentPlayer === 'human' &&
+      this.playerSettings.gameplay.autoRollAfterContinue;
     this.pendingLocalBenchStagger = selectedFaces.length > 0;
     if (remaining.length === 0 || this.localMatchState.activeDiceCount === 6) {
       this.dice.resetLocalForNewTurn();
@@ -917,6 +920,7 @@ export class GameEngine {
     }
     this.clearLocalMatchRollUi();
     this.enterLocalMatchTurn();
+    if (shouldAutoRoll) this.input.triggerKeyboardThrow();
   }
 
   private applyLocalMatchBank(points: number, diceUsed: number): void {
@@ -1656,6 +1660,7 @@ export class GameEngine {
     renderer.domElement.style.width = '100vw';
     renderer.domElement.style.height = '100vh';
     renderer.domElement.style.imageRendering = 'pixelated';
+    renderer.domElement.style.touchAction = 'none';
     renderer.setPixelRatio(1);
     this.setRendererPixelSize(renderer);
     renderer.shadowMap.enabled = this.areShadowsEnabled();

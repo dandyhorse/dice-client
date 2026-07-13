@@ -1,0 +1,52 @@
+{
+  "packageId": "ru.farklepit.game",
+  "host": "www.farklepit.ru",
+  "name": "Farklepit",
+  "launcherName": "Farklepit",
+  "display": "fullscreen-sticky",
+  "themeColor": "#151414",
+  "themeColorDark": "#000000",
+  "navigationColor": "#000000",
+  "navigationColorDark": "#000000",
+  "navigationDividerColor": "#000000",
+  "navigationDividerColorDark": "#000000",
+  "backgroundColor": "#151414",
+  "enableNotifications": false,
+  "startUrl": "/?twa=1",
+  "iconUrl": "https://www.farklepit.ru/pwa-icon-512.png",
+  "maskableIconUrl": "https://www.farklepit.ru/pwa-icon-512.png",
+  "splashScreenFadeOutDuration": 300,
+  "signingKey": {
+    "path": "./android.keystore",
+    "alias": "farklepit"
+  },
+  "appVersionName": "1",
+  "appVersionCode": 1,
+  "shortcuts": [],
+  "generatorApp": "bubblewrap-cli",
+  "webManifestUrl": "https://www.farklepit.ru/manifest.webmanifest",
+  "fallbackType": "customtabs",
+  "features": {},
+  "alphaDependencies": {
+    "enabled": false
+  },
+  "enableSiteSettingsShortcut": true,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://www.farklepit.ru/",
+  "minSdkVersion": 21,
+  "orientation": "landscape",
+  "fingerprints": [
+    {
+      "name": "release",
+      "value": "AE:71:E4:F7:4E:37:47:0B:8D:90:E5:E7:94:0B:D4:BE:5F:77:88:0B:A4:9A:7C:B0:7D:59:EB:72:8A:18:DB:D3"
+    }
+  ],
+  "additionalTrustedOrigins": [],
+  "retainedBundles": [],
+  "protocolHandlers": [],
+  "fileHandlers": [],
+  "launchHandlerClientMode": "",
+  "displayOverride": [],
+  "appVersion": "1"
+}

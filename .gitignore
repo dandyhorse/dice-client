@@ -1,3 +1,12 @@
 node_modules
 .build
 dist/
+android-twa/.gradle/
+android-twa/build/
+android-twa/app/build/
+android-twa/app-release-*.apk
+android-twa/app-release-*.aab
+android-twa/app-release-*.idsig
+android-twa/app-release-unsigned-aligned.apk
+android-twa/local.properties
+android-twa/android.keystore

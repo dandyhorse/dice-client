@@ -79,10 +79,11 @@ export class ShakeInputService {
     this.throwKeyCode = throwKeyCode;
     this.defaultCursor = canvas.style.cursor;
     this.updateCursor();
-    canvas.addEventListener('mousedown', this.onMouseDown);
-    canvas.addEventListener('mousemove', this.onMouseMove);
-    canvas.addEventListener('mouseleave', this.onMouseLeave);
-    window.addEventListener('mouseup', this.onMouseUp);
+    canvas.addEventListener('pointerdown', this.onPointerDown);
+    canvas.addEventListener('pointermove', this.onPointerMove);
+    canvas.addEventListener('pointerleave', this.onPointerLeave);
+    canvas.addEventListener('pointercancel', this.onPointerCancel);
+    window.addEventListener('pointerup', this.onPointerUp);
     window.addEventListener('keydown', this.onKeyDown);
     canvas.addEventListener('contextmenu', this.onContextMenu);
   }
@@ -95,7 +96,7 @@ export class ShakeInputService {
   }
 
   /**
-   * Включить/выключить приём mouse-событий. Используется turn-based слоем,
+   * Включить/выключить приём pointer-событий. Используется turn-based слоем,
    * чтобы не дать игроку "брать" кости в фазе SELECTING (там работает
    * SelectionService — клик по кости вместо hold/release). Также блокируется
    * в чужой ход. По умолчанию `true`.
@@ -149,11 +150,12 @@ export class ShakeInputService {
 
   destroy(): void {
     this.setEnabled(false);
-    this.canvas.removeEventListener('mousedown', this.onMouseDown);
-    this.canvas.removeEventListener('mousemove', this.onMouseMove);
-    this.canvas.removeEventListener('mouseleave', this.onMouseLeave);
+    this.canvas.removeEventListener('pointerdown', this.onPointerDown);
+    this.canvas.removeEventListener('pointermove', this.onPointerMove);
+    this.canvas.removeEventListener('pointerleave', this.onPointerLeave);
+    this.canvas.removeEventListener('pointercancel', this.onPointerCancel);
     this.canvas.removeEventListener('contextmenu', this.onContextMenu);
-    window.removeEventListener('mouseup', this.onMouseUp);
+    window.removeEventListener('pointerup', this.onPointerUp);
     window.removeEventListener('keydown', this.onKeyDown);
     this.samples.length = 0;
     this.canvas.style.cursor = this.defaultCursor;
@@ -163,14 +165,16 @@ export class ShakeInputService {
     event.preventDefault();
   };
 
-  private onMouseDown = (event: MouseEvent): void => {
+  private onPointerDown = (event: PointerEvent): void => {
     if (!this.enabled) return;
     if (isGameInteractionBlocked()) return;
-    if (event.button !== 0) return;
+    if (!event.isPrimary || event.button !== 0) return;
     if (!this.projectToHoldPlane(event) || !this.pointerOverTable) {
       this.updateCursor();
       return;
     }
+    if (event.pointerType === 'touch') event.preventDefault();
+    this.canvas.setPointerCapture(event.pointerId);
     this.releaseCursorSuppressed = false;
     this.isHolding = true;
     this.updateCursor();
@@ -180,8 +184,9 @@ export class ShakeInputService {
     this.events.emit('hold-start', this.currentPos.clone(), 'pointer' satisfies HoldStartSource);
   };
 
-  private onMouseMove = (event: MouseEvent): void => {
+  private onPointerMove = (event: PointerEvent): void => {
     if (!this.enabled) return;
+    if (!event.isPrimary) return;
     if (isGameInteractionBlocked()) {
       this.cancelHold();
       this.pointerOverTable = false;
@@ -207,13 +212,14 @@ export class ShakeInputService {
     this.events.emit('hold-move', this.currentPos.clone(), this.lastSpeed);
   };
 
-  private onMouseLeave = (): void => {
+  private onPointerLeave = (): void => {
     this.pointerOverTable = false;
     this.updateCursor();
   };
 
-  private onMouseUp = (event: MouseEvent): void => {
+  private onPointerUp = (event: PointerEvent): void => {
     if (!this.enabled) return;
+    if (!event.isPrimary) return;
     if (isGameInteractionBlocked()) {
       this.cancelHold();
       this.updateCursor();
@@ -253,6 +259,13 @@ export class ShakeInputService {
 
     this.samples.length = 0;
     this.events.emit('release', velocity, this.currentPos.clone(), 'pointer' satisfies HoldStartSource);
+  };
+
+  private onPointerCancel = (event: PointerEvent): void => {
+    if (!event.isPrimary) return;
+    this.cancelHold();
+    this.pointerOverTable = false;
+    this.updateCursor();
   };
 
   private onKeyDown = (event: KeyboardEvent): void => {
@@ -380,7 +393,7 @@ export class ShakeInputService {
     this.samples.push({ pos: this.currentPos.clone(), time });
   }
 
-  private projectToHoldPlane(event: MouseEvent): boolean {
+  private projectToHoldPlane(event: PointerEvent): boolean {
     const rect = this.canvas.getBoundingClientRect();
     this.ndc.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     this.ndc.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;

@@ -30,6 +30,12 @@ import {
 } from './ui/i18n';
 import { bindMouseOnlyClick } from './ui/mouse-only-button';
 import { installCustomCursor } from './ui/custom-cursor';
+import {
+  closeMobileKeyboard,
+  installMobileKeyboard,
+  prepareMobileTextInput,
+} from './ui/mobile-keyboard';
+import { installPwaRuntime } from './ui/pwa-runtime';
 import { installResponsiveUiScale } from './ui/responsive-ui-scale';
 import { createSoundSliders } from './ui/sound-controls';
 import {
@@ -83,8 +89,10 @@ const LANG_CONTROLS_ID = 'lang-controls';
 const PROFILE_POPUP_ID = 'profile-popup';
 const ROOM_LIST_MODAL_ID = 'room-list-modal';
 const ROOM_PASSWORD_MODAL_ID = 'room-password-modal';
+const MOBILE_ORIENTATION_GATE_ID = 'mobile-orientation-gate';
 const MOBILE_DEVICE_RE =
   /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i;
+const ANDROID_APK_DOWNLOAD_URL = '/downloads/farklepit-android.apk';
 const UI_ASSET_BASE = '/assets/ui';
 const MAIN_LOGO_SRC = `${UI_ASSET_BASE}/main-logo.svg`;
 const SMALL_FRAME_SRC = `${UI_ASSET_BASE}/small-icon-frame.svg`;
@@ -154,53 +162,15 @@ const isMobileRuntime = (): boolean => {
   return window.matchMedia('(max-width: 920px) and (pointer: coarse)').matches;
 };
 
-const renderMobileSoon = (): void => {
-  document.title = 'Farklepit - Farkle Dice Online';
-  app.replaceChildren();
-
-  const screen = document.createElement('main');
-  Object.assign(screen.style, {
-    minHeight: '100vh',
-    display: 'grid',
-    placeItems: 'center',
-    padding: '24px',
-    boxSizing: 'border-box',
-    background: APP_BACKGROUND_COLOR,
-    color: '#f4f4f5',
-    fontFamily: FONT_FAMILY.ui,
-    textAlign: 'center',
-  } satisfies Partial<CSSStyleDeclaration>);
-
-  const title = document.createElement('h1');
-  title.textContent = t('mobileTitle');
-  Object.assign(title.style, {
-    margin: '0',
-    maxWidth: '18ch',
-    fontSize: FONT_SIZE.mobileTitle,
-    lineHeight: '1.05',
-    fontWeight: '800',
-  } satisfies Partial<CSSStyleDeclaration>);
-
-  const description = document.createElement('p');
-  description.textContent = t('mobileDescription');
-  Object.assign(description.style, {
-    margin: '14px 0 0',
-    maxWidth: '32ch',
-    fontSize: '18px',
-    lineHeight: '1.35',
-    color: '#d4d4d8',
-  } satisfies Partial<CSSStyleDeclaration>);
-
-  screen.appendChild(title);
-  screen.appendChild(description);
-  app.appendChild(screen);
-};
-
 const mobileRuntime = isMobileRuntime();
+const isMobilePortrait = (): boolean =>
+  mobileRuntime && !window.matchMedia('(orientation: landscape)').matches;
+
+document.documentElement.classList.toggle('mobile-runtime', mobileRuntime);
 installResponsiveUiScale();
-if (mobileRuntime) {
-  renderMobileSoon();
-} else {
+installPwaRuntime();
+installMobileKeyboard(mobileRuntime);
+if (!mobileRuntime) {
   installCustomCursor();
 }
 
@@ -214,7 +184,8 @@ type LobbyView =
   | 'multiplayer'
   | 'multiplayer-create'
   | 'multiplayer-join'
-  | 'settings';
+  | 'settings'
+  | 'offline';
 
 let currentLobbyView: LobbyView = 'home';
 let menuDiceScene: MenuDiceScene | null = null;
@@ -231,6 +202,7 @@ let settingsScreenCleanup: (() => void) | null = null;
 let languageDropdownPinnedOpen = false;
 let languageMatrixRunId = 0;
 let networkFlowLoadingOwner: number | null = null;
+let offlineScreenActive = false;
 
 const releaseNetworkFlowLoading = (): void => {
   if (networkFlowLoadingOwner === null) return;
@@ -287,8 +259,11 @@ const syncQuickSearchClockSound = (): void => {
 };
 
 const UI_SOUND_HOVER_SELECTOR = 'button';
+const MOBILE_UI_SOUND_SELECTOR =
+  'button, a, input, select, textarea, [role="button"], [data-ui-click-sound]';
 const UI_SOUND_HOVER_SUPPRESS_AFTER_CLICK_MS = 420;
 const UI_SOUND_STATIONARY_POINTER_PX = 6;
+let suppressUiClickForMusicStart: PointerEvent | null = null;
 
 const isUiSoundDisabledTarget = (target: EventTarget | null): boolean =>
   target instanceof Element && target.closest('button:disabled, [aria-disabled="true"]') !== null;
@@ -304,7 +279,25 @@ const closestUiSoundTarget = (
   return el;
 };
 
-const installUiSoundFeedback = (): void => {
+const isMusicStartTarget = (target: EventTarget | null): boolean => {
+  const action = closestUiSoundTarget(target, 'button');
+  if (!action) return false;
+  if (action.closest('#mobile-keyboard')) return false;
+  return action.closest('[data-ui-click-sound]') === null;
+};
+
+const installMusicStartOnUserIntent = (): void => {
+  window.addEventListener(
+    'pointerdown',
+    (event) => {
+      if (event.button !== 0 || !isMusicStartTarget(event.target)) return;
+      if (musicService.start()) suppressUiClickForMusicStart = event;
+    },
+    true,
+  );
+};
+
+const installUiSoundFeedback = ({ enableHover }: { enableHover: boolean }): void => {
   void audioService.preloadGroup('menu');
 
   let suppressHoverUntil = 0;
@@ -319,20 +312,22 @@ const installUiSoundFeedback = (): void => {
     );
   };
 
-  window.addEventListener(
-    'pointerover',
-    (event) => {
-      if (event.pointerType !== 'mouse' && event.pointerType !== 'pen') return;
-      const target = closestUiSoundTarget(event.target, UI_SOUND_HOVER_SELECTOR);
-      if (!target) return;
-      if (isSyntheticHoverAfterClick(event)) return;
-      if (event.relatedTarget instanceof Node && target.contains(event.relatedTarget)) {
-        return;
-      }
-      audioService.play('ui-hover');
-    },
-    true,
-  );
+  if (enableHover) {
+    window.addEventListener(
+      'pointerover',
+      (event) => {
+        if (event.pointerType !== 'mouse' && event.pointerType !== 'pen') return;
+        const target = closestUiSoundTarget(event.target, UI_SOUND_HOVER_SELECTOR);
+        if (!target) return;
+        if (isSyntheticHoverAfterClick(event)) return;
+        if (event.relatedTarget instanceof Node && target.contains(event.relatedTarget)) {
+          return;
+        }
+        audioService.play('ui-hover');
+      },
+      true,
+    );
+  }
 
   window.addEventListener(
     'pointerdown',
@@ -341,6 +336,19 @@ const installUiSoundFeedback = (): void => {
       suppressHoverUntil = performance.now() + UI_SOUND_HOVER_SUPPRESS_AFTER_CLICK_MS;
       suppressHoverX = event.clientX;
       suppressHoverY = event.clientY;
+      if (event === suppressUiClickForMusicStart) {
+        suppressUiClickForMusicStart = null;
+        return;
+      }
+      if (event.target instanceof Element && event.target.closest('#mobile-keyboard')) {
+        return;
+      }
+      if (
+        mobileRuntime &&
+        !closestUiSoundTarget(event.target, MOBILE_UI_SOUND_SELECTOR)
+      ) {
+        return;
+      }
       if (isUiSoundDisabledTarget(event.target)) return;
 
       const specialTarget =
@@ -377,9 +385,8 @@ const saveAudioSettings = (audio: AudioSettings): void => {
 applyAudioSettings(getPlayerSettings());
 
 audioService.bindUnlockListeners();
-installUiSoundFeedback();
-
-musicService.start();
+installMusicStartOnUserIntent();
+installUiSoundFeedback({ enableHover: !mobileRuntime });
 
 onPlayerSettingsChange((settings) => {
   applyAudioSettings(settings);
@@ -593,6 +600,7 @@ const connectNetwork = async (generation: number): Promise<NetworkService> => {
 };
 
 const clearLobby = (): void => {
+  closeMobileKeyboard();
   cleanupSettingsUi();
   const existing = document.getElementById('lobby');
   if (existing) existing.remove();
@@ -604,6 +612,7 @@ const clearRoomScreen = (): void => {
 };
 
 const clearSettingsModal = (): void => {
+  closeMobileKeyboard();
   cleanupSettingsUi();
   const existing = document.getElementById(SETTINGS_MODAL_ID);
   if (existing) existing.remove();
@@ -615,6 +624,7 @@ const clearRoomListModal = (): void => {
 };
 
 const clearRoomPasswordModal = (): void => {
+  closeMobileKeyboard();
   const existing = document.getElementById(ROOM_PASSWORD_MODAL_ID);
   if (existing) existing.remove();
 };
@@ -643,6 +653,7 @@ const clearLanguageControls = (): void => {
 };
 
 const clearProfilePopup = (): void => {
+  closeMobileKeyboard();
   document.getElementById(PROFILE_POPUP_ID)?.remove();
 };
 
@@ -670,16 +681,19 @@ const isMenuDiceView = (): boolean =>
   currentLobbyView === 'create-room' ||
   currentLobbyView === 'multiplayer-join';
 
-const ensureMenuDiceScene = (): void => {
+const ensureMenuDiceScene = (asOrientationBackdrop = false): void => {
   if (menuDiceScene || menuDiceSceneLoading) return;
   showLoadingOverlay();
   menuDiceSceneLoading = assetPreloader
     .preloadGroup('menu')
     .then(async () => {
-      if (!isMenuDiceView() || activeGame || mobileRuntime) return;
+      if (!asOrientationBackdrop && (!isMenuDiceView() || activeGame)) return;
       const { MenuDiceScene } = await import('./ui/menu-dice-scene');
       const scene = await MenuDiceScene.create();
-      if (!isMenuDiceView() || activeGame || mobileRuntime) {
+      const shouldMount = asOrientationBackdrop
+        ? isMobilePortrait()
+        : isMenuDiceView() && !activeGame;
+      if (!shouldMount) {
         scene.destroy();
         return;
       }
@@ -691,6 +705,88 @@ const ensureMenuDiceScene = (): void => {
       menuDiceSceneLoading = null;
       hideLoadingOverlay();
     });
+};
+
+const clearMobileOrientationGate = (): void => {
+  document.documentElement.classList.remove('mobile-orientation-locked');
+  document.getElementById(MOBILE_ORIENTATION_GATE_ID)?.remove();
+};
+
+const showMobileOrientationGate = (): void => {
+  if (!isMobilePortrait()) return;
+  closeMobileKeyboard();
+  document.documentElement.classList.add('mobile-orientation-locked');
+  clearLanguageControls();
+  ensureMenuDiceScene(true);
+
+  const existing = document.getElementById(MOBILE_ORIENTATION_GATE_ID);
+  if (existing) existing.remove();
+
+  const gate = document.createElement('main');
+  gate.id = MOBILE_ORIENTATION_GATE_ID;
+  Object.assign(gate.style, {
+    position: 'fixed',
+    inset: '0',
+    zIndex: '1001',
+    display: 'grid',
+    placeItems: 'center',
+    padding: '24px',
+    boxSizing: 'border-box',
+    background: 'rgba(21,20,20,0.34)',
+    color: '#f4f4f5',
+    fontFamily: FONT_FAMILY.ui,
+    textAlign: 'center',
+    pointerEvents: 'auto',
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  const prompt = document.createElement('div');
+  Object.assign(prompt.style, {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '12px',
+    maxWidth: '24ch',
+  } satisfies Partial<CSSStyleDeclaration>);
+  const icon = document.createElement('div');
+  icon.textContent = '↻';
+  Object.assign(icon.style, {
+    fontSize: '72px',
+    lineHeight: '1',
+  } satisfies Partial<CSSStyleDeclaration>);
+  const title = document.createElement('div');
+  title.textContent = t('rotateDeviceTitle');
+  Object.assign(title.style, {
+    fontSize: '30px',
+    lineHeight: '1.1',
+  } satisfies Partial<CSSStyleDeclaration>);
+  const description = document.createElement('div');
+  description.textContent = t('rotateDeviceDescription');
+  Object.assign(description.style, {
+    color: '#d4d4d8',
+    fontSize: '17px',
+    lineHeight: '1.35',
+  } satisfies Partial<CSSStyleDeclaration>);
+  prompt.append(icon, title, description);
+  gate.appendChild(prompt);
+  document.body.appendChild(gate);
+};
+
+const syncMobileOrientation = (): void => {
+  if (!mobileRuntime) return;
+  if (!navigator.onLine && !activeGame) {
+    renderOfflineScreen();
+    return;
+  }
+  if (isMobilePortrait()) {
+    showMobileOrientationGate();
+    return;
+  }
+  clearMobileOrientationGate();
+  if (activeGame) {
+    destroyMenuDiceScene();
+    return;
+  }
+  rerenderCurrentShell();
 };
 
 const returnToLobby = (): void => {
@@ -795,11 +891,16 @@ const renderBackButton = (includeSettings = true): void => {
 };
 
 const rerenderCurrentShell = (): void => {
-  if (mobileRuntime) {
-    renderMobileSoon();
-    renderLanguageControls();
+  if (offlineScreenActive) return;
+  if (!navigator.onLine && !activeGame) {
+    renderOfflineScreen();
     return;
   }
+  if (isMobilePortrait()) {
+    showMobileOrientationGate();
+    return;
+  }
+  clearMobileOrientationGate();
   renderLanguageControls();
   if (activeGame) return;
   const roomState = activeNetwork?.getRoomState();
@@ -808,6 +909,8 @@ const rerenderCurrentShell = (): void => {
     return;
   }
   switch (currentLobbyView) {
+    case 'offline':
+      return;
     case 'player-name':
       renderPlayerNameEntry();
       break;
@@ -1298,8 +1401,9 @@ const createAvatarFrame = (
 
 const renderLanguageControls = (): void => {
   clearLanguageControls();
-
   const gameplayActive = isGameplayTopMenu();
+  if (mobileRuntime && gameplayActive) return;
+
   const canEditProfile = !gameplayActive && currentLobbyView !== 'player-name';
   if (!canEditProfile) clearProfilePopup();
   const wrap = document.createElement('div');
@@ -2320,6 +2424,7 @@ const createLobbyFrame = (
 };
 
 const appendBrand = (card: HTMLElement): void => {
+  if (mobileRuntime) return;
   const brand = document.createElement('img');
   brand.src = MAIN_LOGO_SRC;
   brand.alt = 'Farklepit';
@@ -2382,8 +2487,8 @@ const appendLobbyError = (card: HTMLElement): HTMLDivElement => {
   return error;
 };
 
-const applyLargeMenuButtonStyle = (btn: HTMLButtonElement): void => {
-  Object.assign(btn.style, {
+const applyLargeMenuButtonStyle = (element: HTMLElement): void => {
+  Object.assign(element.style, {
     fontSize: FONT_SIZE.menuButton,
     padding: '0',
     height: UI_SIZE.menuButtonHeight,
@@ -2417,6 +2522,49 @@ const appendMenuButton = (
   const btn = createMenuFrameButton(label, onClick);
   card.appendChild(btn);
   return btn;
+};
+
+const appendMenuDownloadLink = (
+  card: HTMLElement,
+  label: string,
+  href: string,
+  fileName: string,
+): HTMLAnchorElement => {
+  const link = document.createElement('a');
+  link.href = href;
+  link.download = fileName;
+  link.title = label;
+  link.setAttribute('aria-label', label);
+  link.classList.add('menu-frame-button');
+  Object.assign(link.style, {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    textDecoration: 'none',
+  } satisfies Partial<CSSStyleDeclaration>);
+  const text = document.createElement('span');
+  text.textContent = label;
+  Object.assign(text.style, {
+    position: 'relative',
+    zIndex: '1',
+  } satisfies Partial<CSSStyleDeclaration>);
+  link.appendChild(text);
+  applyLargeMenuButtonStyle(link);
+  card.appendChild(link);
+  return link;
+};
+
+const appendPwaLobbyActions = (card: HTMLElement): void => {
+  const isTwaLaunch = new URLSearchParams(window.location.search).get('twa') === '1';
+  const canDownloadAndroidApk = mobileRuntime && /\bAndroid\b/i.test(navigator.userAgent) && !isTwaLaunch;
+  if (!canDownloadAndroidApk) return;
+
+  appendMenuDownloadLink(
+    card,
+    t('installGame'),
+    ANDROID_APK_DOWNLOAD_URL,
+    'farklepit-android.apk',
+  ).dataset.uiClickSound = 'none';
 };
 
 const createSmallMenuButton = (
@@ -2585,7 +2733,87 @@ const goHome = (): void => {
   renderHome();
 };
 
+const renderOfflineScreen = (): void => {
+  if (activeGame || offlineScreenActive) return;
+  offlineScreenActive = true;
+  currentLobbyView = 'offline';
+  networkFlows.invalidate();
+  cancelQuickSearch({ render: false });
+  closeLobbyListNetwork();
+  activeNetwork?.disconnect();
+  activeNetwork = null;
+  destroyMenuDiceScene();
+  clearMobileOrientationGate();
+  clearLobby();
+  clearRoomScreen();
+  clearRoomBadge();
+  clearBackButton();
+  clearLanguageControls();
+  clearRoomListModal();
+  clearRoomPasswordModal();
+  clearTopPopupLayer();
+  app.replaceChildren();
+
+  const screen = document.createElement('main');
+  screen.id = 'offline-screen';
+  Object.assign(screen.style, {
+    minHeight: '100vh',
+    display: 'grid',
+    placeItems: 'center',
+    padding: '24px',
+    boxSizing: 'border-box',
+    background: APP_BACKGROUND_COLOR,
+    color: '#f4f4f5',
+    fontFamily: FONT_FAMILY.ui,
+    textAlign: 'center',
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  const content = document.createElement('div');
+  Object.assign(content.style, {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '14px',
+    maxWidth: '28ch',
+  } satisfies Partial<CSSStyleDeclaration>);
+  const title = document.createElement('h1');
+  title.textContent = t('offlineTitle');
+  Object.assign(title.style, {
+    margin: '0',
+    fontFamily: FONT_FAMILY.title,
+    fontSize: 'clamp(32px, 7vw, 56px)',
+    lineHeight: '1.05',
+  } satisfies Partial<CSSStyleDeclaration>);
+  const description = document.createElement('p');
+  description.textContent = t('offlineDescription');
+  Object.assign(description.style, {
+    margin: '0',
+    color: '#d4d4d8',
+    fontSize: '18px',
+    lineHeight: '1.35',
+  } satisfies Partial<CSSStyleDeclaration>);
+  const retry = button(t('offlineRetry'), () => {
+    if (navigator.onLine) renderHome();
+  });
+  content.append(title, description, retry);
+  screen.appendChild(content);
+  app.appendChild(screen);
+};
+
 const renderHome = (): void => {
+  if (!navigator.onLine) {
+    renderOfflineScreen();
+    return;
+  }
+  if (offlineScreenActive) {
+    offlineScreenActive = false;
+    app.replaceChildren();
+  }
+  if (isMobilePortrait()) {
+    showMobileOrientationGate();
+    return;
+  }
+  clearMobileOrientationGate();
   clearRoomPasswordModal();
   if (!hasSavedDisplayName()) {
     renderPlayerNameEntry();
@@ -2653,6 +2881,7 @@ const renderLobby = (): void => {
   }
   appendMenuButton(card, t('createRoomMenu'), openCreateRoomMenu).dataset.uiClickSound = 'none';
   appendMenuButton(card, t('joinRoom'), openMultiplayerJoin).dataset.uiClickSound = 'none';
+  appendPwaLobbyActions(card);
   appendLobbyError(card);
 };
 
@@ -3011,7 +3240,7 @@ const textInput = (placeholder: string): HTMLInputElement => {
     borderRadius: UI_RADIUS,
     fontFamily: FONT_FAMILY.ui,
   } satisfies Partial<CSSStyleDeclaration>);
-  return input;
+  return prepareMobileTextInput(input);
 };
 
 const numberInput = (
@@ -3187,6 +3416,16 @@ onLanguageChange(() => {
   rerenderOpenTopPopup(openPopup);
   runLanguageMatrixAnimation();
 });
+if (mobileRuntime) {
+  window.addEventListener('resize', syncMobileOrientation);
+  window.addEventListener('orientationchange', syncMobileOrientation);
+}
+window.addEventListener('offline', () => {
+  if (!activeGame) renderOfflineScreen();
+});
+window.addEventListener('online', () => {
+  if (!activeGame && offlineScreenActive) renderHome();
+});
 window.addEventListener('pointerdown', closeDropdownsOnOutsidePointer, true);
 window.addEventListener(TOP_MENU_DROPDOWN_CLOSE_EVENT, () => closeTopMenuDropdowns());
 window.addEventListener('keydown', (event) => {
@@ -3249,6 +3488,14 @@ loadPlayerSettings()
     console.warn(`settings load failed: ${err.message}`);
   })
   .finally(() => {
+    if (mobileRuntime) {
+      if (!navigator.onLine) {
+        renderOfflineScreen();
+        return;
+      }
+      syncMobileOrientation();
+      return;
+    }
     renderLanguageControls();
-    if (!mobileRuntime) renderHome();
+    renderHome();
   });

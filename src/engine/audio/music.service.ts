@@ -3,6 +3,7 @@ import { OST_TRACK_URLS } from '../assets/asset-manifest';
 const MUSIC_BASE_VOLUME = 0.34;
 const NEXT_PRELOAD_REMAINING_SECONDS = 25;
 const CROSSFADE_SECONDS = 1.2;
+const INITIAL_FADE_IN_MS = 420;
 
 class MusicService {
   private current: HTMLAudioElement | null = null;
@@ -10,30 +11,34 @@ class MusicService {
   private currentIndex = 0;
   private nextIndex = 0;
   private playing = false;
+  private playRequestPending = false;
   private transitioning = false;
-  private unlockBound = false;
+  private fadingIn = false;
   private fadeRafId: number | null = null;
   private musicVolume = 1;
 
   setMusicVolume(volume: number): void {
     this.musicVolume = Math.max(0, Math.min(1, volume));
-    if (!this.transitioning && this.current)
+    if (!this.transitioning && !this.fadingIn && this.current)
       this.current.volume = this.targetVolume();
     if (!this.transitioning && this.next) this.next.volume = 0;
   }
 
-  start(): void {
-    if (OST_TRACK_URLS.length === 0) return;
+  start(): boolean {
+    if (
+      OST_TRACK_URLS.length === 0 ||
+      this.playing ||
+      this.playRequestPending
+    ) {
+      return false;
+    }
     if (!this.current) {
       this.currentIndex = this.pickRandomTrackIndex();
-      this.current = this.createAudio(
-        this.currentIndex,
-        'auto',
-        this.targetVolume(),
-      );
+      this.current = this.createAudio(this.currentIndex, 'auto', 0);
     }
-    this.bindUnlockListeners();
+    this.playRequestPending = true;
     void this.playCurrent();
+    return true;
   }
 
   private async playCurrent(): Promise<void> {
@@ -41,30 +46,40 @@ class MusicService {
     try {
       await this.current.play();
       this.playing = true;
-      this.unbindUnlockListeners();
+      this.fadeInCurrent(this.current);
     } catch {
       this.playing = false;
-      this.bindUnlockListeners();
+    } finally {
+      this.playRequestPending = false;
     }
   }
 
-  private bindUnlockListeners(): void {
-    if (this.unlockBound) return;
-    this.unlockBound = true;
-    window.addEventListener('pointerdown', this.onUnlockGesture, true);
-    window.addEventListener('keydown', this.onUnlockGesture, true);
-  }
+  private fadeInCurrent(audio: HTMLAudioElement): void {
+    if (this.fadeRafId !== null) cancelAnimationFrame(this.fadeRafId);
+    this.fadeRafId = null;
+    this.fadingIn = true;
+    audio.volume = 0;
 
-  private unbindUnlockListeners(): void {
-    if (!this.unlockBound) return;
-    this.unlockBound = false;
-    window.removeEventListener('pointerdown', this.onUnlockGesture, true);
-    window.removeEventListener('keydown', this.onUnlockGesture, true);
-  }
+    const startMs = performance.now();
+    const tick = (nowMs: number): void => {
+      if (audio !== this.current) {
+        this.fadingIn = false;
+        return;
+      }
 
-  private onUnlockGesture = (): void => {
-    this.start();
-  };
+      const progress = Math.min(1, (nowMs - startMs) / INITIAL_FADE_IN_MS);
+      audio.volume = this.targetVolume() * progress;
+      if (progress < 1) {
+        this.fadeRafId = requestAnimationFrame(tick);
+        return;
+      }
+
+      this.fadeRafId = null;
+      this.fadingIn = false;
+      audio.volume = this.targetVolume();
+    };
+    this.fadeRafId = requestAnimationFrame(tick);
+  }
 
   private createAudio(
     trackIndex: number,
@@ -200,14 +215,12 @@ class MusicService {
       .play()
       .then(() => {
         this.playing = true;
-        this.unbindUnlockListeners();
       })
       .catch(() => this.handlePlayBlocked());
   }
 
   private handlePlayBlocked(): void {
     this.playing = false;
-    this.bindUnlockListeners();
   }
 
   private finishSwitch(from: HTMLAudioElement, to: HTMLAudioElement): void {

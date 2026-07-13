@@ -43,6 +43,12 @@
   --menu-bg-x: 0px;
   --menu-bg-y: 0px;
   --responsive-ui-scale: 1;
+  --mobile-keyboard-height: clamp(210px, 31dvh, 340px);
+  --mobile-keyboard-side-inset: max(
+    12px,
+    env(safe-area-inset-left),
+    env(safe-area-inset-right)
+  );
 }
 
 html,
@@ -78,6 +84,130 @@ body {
 
 .responsive-ui-corner-bottom-right {
   transform-origin: bottom right;
+}
+
+html.mobile-runtime,
+html.mobile-runtime * {
+  cursor: auto !important;
+}
+
+html.mobile-orientation-locked #lobby,
+html.mobile-orientation-locked #room-screen,
+html.mobile-orientation-locked #lang-controls,
+html.mobile-orientation-locked #back-button,
+html.mobile-orientation-locked #profile-popup,
+html.mobile-orientation-locked #settings-modal,
+html.mobile-orientation-locked #room-password-modal {
+  visibility: hidden;
+}
+
+html.mobile-orientation-locked #app,
+html.mobile-orientation-locked #gameplay-overlay-viewport,
+html.mobile-orientation-locked #hud {
+  visibility: hidden;
+}
+
+html.mobile-runtime #hud-right {
+  display: none !important;
+}
+
+html.mobile-orientation-locked #mobile-keyboard {
+  display: none !important;
+}
+
+html.mobile-keyboard-open #lobby {
+  padding: 12px 16px calc(var(--mobile-keyboard-height) + 12px);
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+
+html.mobile-keyboard-open #profile-popup,
+html.mobile-keyboard-open #settings-modal,
+html.mobile-keyboard-open #room-password-modal {
+  padding-bottom: calc(var(--mobile-keyboard-height) + 16px) !important;
+  box-sizing: border-box;
+}
+
+input.mobile-keyboard-input-active {
+  caret-color: transparent !important;
+  border-color: rgba(255, 255, 255, 0.78) !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.22) !important;
+}
+
+#mobile-keyboard {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 60;
+  display: none;
+  height: var(--mobile-keyboard-height);
+  box-sizing: border-box;
+  padding: 8px var(--mobile-keyboard-side-inset) max(8px, env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, rgba(24, 22, 22, 0.98), rgba(12, 11, 11, 0.99));
+  border-top: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 -12px 28px rgba(0, 0, 0, 0.42);
+  font-family: var(--font-ui);
+  touch-action: manipulation;
+}
+
+html.mobile-keyboard-open #mobile-keyboard {
+  display: block;
+}
+
+.mobile-keyboard-keys {
+  display: grid;
+  height: 100%;
+  gap: 5px;
+}
+
+.mobile-keyboard-row {
+  display: flex;
+  min-width: 0;
+  gap: 5px;
+}
+
+.mobile-keyboard-key {
+  min-width: 0;
+  flex: 1 1 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #4b4745, #302d2c);
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: clamp(16px, 2.6vh, 25px);
+  line-height: 1;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-keyboard-key:active {
+  transform: translateY(1px);
+  background: linear-gradient(180deg, #655d59, #3a3533);
+}
+
+.mobile-keyboard-key--action {
+  flex: 1.35 1 0;
+  background: linear-gradient(180deg, #5b5350, #393331);
+}
+
+.mobile-keyboard-key--active,
+.mobile-keyboard-key--done {
+  background: linear-gradient(180deg, #9a7050, #66422d);
+}
+
+.mobile-keyboard-key--space {
+  flex: 4 1 0;
+}
+
+.mobile-keyboard-row--bottom .mobile-keyboard-key--done,
+.mobile-keyboard-row--numeric-controls .mobile-keyboard-key--done {
+  flex: 1.65 1 0;
+}
+
+@media (orientation: portrait) {
+  #mobile-keyboard {
+    display: none !important;
+  }
 }
 
 .seo-fallback {

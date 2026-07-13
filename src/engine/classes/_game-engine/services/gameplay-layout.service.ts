@@ -1,11 +1,13 @@
 const REFERENCE_WIDTH = 1920;
 const REFERENCE_HEIGHT = 1080;
 const MIN_UI_SCALE = 2 / 3;
+const MIN_MOBILE_UI_SCALE = 0.3;
 // Keep authored SVG and HUD pixels native at FHD and above. High-resolution
 // displays centre the FHD gameplay composition instead of enlarging it.
 const MAX_UI_SCALE = 1;
 const COMPACT_TABLE_FILL = 0.58;
 const STANDARD_TABLE_FILL = 0.72;
+const MOBILE_TABLE_VIEWPORT_FILL = 0.84;
 
 export interface GameplayLayoutMetrics {
   viewportWidth: number;
@@ -101,9 +103,10 @@ export class GameplayLayoutService {
     const rect = this.canvas.getBoundingClientRect();
     const viewportWidth = Math.max(1, Math.round(rect.width || window.innerWidth));
     const viewportHeight = Math.max(1, Math.round(rect.height || window.innerHeight));
+    const mobileRuntime = document.documentElement.classList.contains('mobile-runtime');
     const uiScale = clamp(
       Math.min(viewportWidth / REFERENCE_WIDTH, viewportHeight / REFERENCE_HEIGHT),
-      MIN_UI_SCALE,
+      mobileRuntime ? MIN_MOBILE_UI_SCALE : MIN_UI_SCALE,
       MAX_UI_SCALE,
     );
     const compactProgress = clamp(
@@ -121,7 +124,9 @@ export class GameplayLayoutService {
       uiScale,
       referencePhysicalWidth: REFERENCE_WIDTH * uiScale,
       referencePhysicalHeight,
-      tableViewportFill: referenceTableFill * (referencePhysicalHeight / viewportHeight),
+      tableViewportFill: mobileRuntime
+        ? MOBILE_TABLE_VIEWPORT_FILL
+        : referenceTableFill * (referencePhysicalHeight / viewportHeight),
     };
   }
 
