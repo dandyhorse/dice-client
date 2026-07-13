@@ -42,6 +42,7 @@
   --app-bg-overlay: rgba(21, 20, 20, 0.5);
   --menu-bg-x: 0px;
   --menu-bg-y: 0px;
+  --responsive-ui-scale: 1;
 }
 
 html,
@@ -60,6 +61,23 @@ body {
 #app {
   width: 100vw;
   height: 100vh;
+}
+
+.responsive-ui-content {
+  transform: scale(var(--responsive-ui-scale));
+  transform-origin: center;
+}
+
+.responsive-ui-corner {
+  transform: scale(var(--responsive-ui-scale));
+}
+
+.responsive-ui-corner-top-right {
+  transform-origin: top right;
+}
+
+.responsive-ui-corner-bottom-right {
+  transform-origin: bottom right;
 }
 
 .seo-fallback {

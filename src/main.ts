@@ -30,6 +30,7 @@ import {
 } from './ui/i18n';
 import { bindMouseOnlyClick } from './ui/mouse-only-button';
 import { installCustomCursor } from './ui/custom-cursor';
+import { installResponsiveUiScale } from './ui/responsive-ui-scale';
 import { createSoundSliders } from './ui/sound-controls';
 import {
   TOP_MENU_DROPDOWN_CLOSE_EVENT,
@@ -196,6 +197,7 @@ const renderMobileSoon = (): void => {
 };
 
 const mobileRuntime = isMobileRuntime();
+installResponsiveUiScale();
 if (mobileRuntime) {
   renderMobileSoon();
 } else {
@@ -762,6 +764,7 @@ const renderBackButton = (includeSettings = true): void => {
   clearBackButton();
   const wrap = document.createElement('div');
   wrap.id = BACK_BUTTON_ID;
+  wrap.classList.add('responsive-ui-corner', 'responsive-ui-corner-bottom-right');
   Object.assign(wrap.style, {
     position: 'fixed',
     right: '12px',
@@ -1301,6 +1304,7 @@ const renderLanguageControls = (): void => {
   if (!canEditProfile) clearProfilePopup();
   const wrap = document.createElement('div');
   wrap.id = LANG_CONTROLS_ID;
+  wrap.classList.add('responsive-ui-corner', 'responsive-ui-corner-top-right');
   Object.assign(wrap.style, {
     position: 'fixed',
     top: `${TOP_MENU_EDGE_OFFSET}px`,
@@ -1408,6 +1412,7 @@ const createProfilePopup = (): HTMLDivElement => {
   } satisfies Partial<CSSStyleDeclaration>);
 
   const panel = document.createElement('div');
+  panel.classList.add('responsive-ui-content');
   Object.assign(panel.style, {
     width: 'min(520px, calc(100vw - 32px))',
     maxHeight: 'calc(100vh - 32px)',
@@ -1852,6 +1857,7 @@ const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
   });
 
   const panel = document.createElement('div');
+  panel.classList.add('responsive-ui-content');
   Object.assign(panel.style, {
     width: 'min(460px, calc(100vw - 32px))',
     padding: '22px',
@@ -2222,6 +2228,7 @@ const renderSettingsModal = (): void => {
   } satisfies Partial<CSSStyleDeclaration>);
 
   const panel = document.createElement('div');
+  panel.classList.add('responsive-ui-content');
   Object.assign(panel.style, {
     width: 'min(520px, calc(100vw - 32px))',
     maxHeight: 'calc(100vh - 32px)',
@@ -2277,6 +2284,15 @@ const createLobbyFrame = (
     });
   }
 
+  const content = document.createElement('div');
+  content.classList.add('responsive-ui-content');
+  Object.assign(content.style, {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: scaledPx(22),
+  } satisfies Partial<CSSStyleDeclaration>);
+
   const card = document.createElement('div');
   Object.assign(card.style, {
     display: 'flex',
@@ -2297,7 +2313,8 @@ const createLobbyFrame = (
     card.addEventListener('click', (event) => event.stopPropagation());
   }
 
-  lobby.appendChild(card);
+  content.appendChild(card);
+  lobby.appendChild(content);
   document.body.appendChild(lobby);
   return card;
 };
@@ -3087,6 +3104,7 @@ const openRoomPasswordModal = (
   } satisfies Partial<CSSStyleDeclaration>);
 
   const panel = document.createElement('form');
+  panel.classList.add('responsive-ui-content');
   panel.setAttribute('role', 'dialog');
   panel.setAttribute('aria-modal', 'true');
   panel.setAttribute('aria-label', t('roomPassword'));

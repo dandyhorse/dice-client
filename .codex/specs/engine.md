@@ -17,14 +17,15 @@
 1. `createScene()` — фон + ambient + directional + point light; свет слегка смещён к дальнему краю стола, shadow map включается только в local-mode
 2. `createCamera()` — `up = CAMERA_UP` → `position = (CAMERA_X, computeCameraY(aspect), CAMERA_Z)` → `lookAt(CAMERA_TARGET)` (порядок важен: `up` до `lookAt`)
 3. `createRenderer()` — настройка теней и PR
-4. `createPhysicsWorld()` — gravity `(0, WORLD_GRAVITY, 0)`, broadphase, sleep
-5. `setupContactMaterials()`:
+4. `new GameplayLayoutService(renderer.domElement)` — central FHD reference-layer для gameplay DOM UI и resize-метрики
+5. `createPhysicsWorld()` — gravity `(0, WORLD_GRAVITY, 0)`, broadphase, sleep
+6. `setupContactMaterials()`:
    - dice ↔ table/walls: `friction 0.88, restitution 0.10, contactEquationStiffness 1e8, contactEquationRelaxation 2`
    - dice ↔ dice: `friction 0.34, restitution 0.46`
-6. `createPlayArea()` — **один раз** создаёт стол `TABLE_WIDTH × TABLE_DEPTH`, 4 невидимые физические стены (с `WALL_INSET` от кромки) и невидимый потолок на высоте `WALL_HEIGHT`
-7. `new DiceService(...).spawn()` — спавн костей
-8. `new ShakeInputService(...)` — подписка на `hold-start` → `dice.pickup()` и `release` → `dice.release(velocity, position)`. `hold-move` сервис эмитит, но движок его не слушает.
-9. `addEventListener('resize', onResize)` — пересчёт aspect и Y камеры
+7. `createPlayArea()` — **один раз** создаёт стол `TABLE_WIDTH × TABLE_DEPTH`, 4 невидимые физические стены (с `WALL_INSET` от кромки) и невидимый потолок на высоте `WALL_HEIGHT`
+8. `new DiceService(...).spawn()` — спавн костей
+9. `new ShakeInputService(...)` — подписка на `hold-start` → `dice.pickup()` и `release` → `dice.release(velocity, position)`. `hold-move` сервис эмитит, но движок его не слушает.
+10. `addEventListener('resize', onResize)` — пересчёт layout-метрик, aspect и Y камеры
 
 ### Game Loop (`gameLoop`)
 
@@ -50,7 +51,7 @@ ShakeInputService.events:
 
 ### Старт/стоп
 
-- `start()` — фиксирует `lastTime` и стартует `rafId`
+- `start()` — после монтирования canvas обновляет layout/camera, фиксирует `lastTime` и стартует `rafId`
 - `stop()` — `cancelAnimationFrame`, обнуляет `rafId`
 
 ## Play area (фиксированный стол + стены + потолок)
@@ -77,6 +78,14 @@ ShakeInputService.events:
 - `public/assets/cursors/*.png` — базовый target-hand cursor и игровые open/close hand cursors, список URL в `asset-manifest.ts`.
 - `public/assets/dice/`, `public/assets/table/`, `public/assets/background/`, `public/assets/lang/` — текстуры, фон и UI-иконки.
 
+## Gameplay adaptive layout
+
+- Ниже FHD gameplay DOM живёт в центрированном виртуальном холсте `1920×1080`, масштабируемом от `66.7%` на `1280×720`. На FHD и выше SVG/HUD остаются в исходном масштабе `100%`, а reference-layer занимает весь viewport, чтобы viewport-relative HUD-отступы оставались у краёв экрана на QHD/4K.
+- На 21:9 и шире стол остаётся центральной FHD-композицией, а HUD использует свободные поля по бокам через исходные responsive-отступы; SVG и HUD не растягиваются.
+- Menu-контент и все dialog-панели используют общий `--responsive-ui-scale`: от `66.7%` на `1280×720` до `100%` на FHD и выше. Back/top-menu controls масштабируются от закреплённого края, а backdrop не уменьшается.
+- `GameplayLayoutService` берёт CSS-размер canvas, поэтому browser zoom/resize меняют композицию без пересоздания физического мира. Полноэкранный `#gameplay-overlay-viewport` содержит только блокирующие игровые модалки; custom cursor остаётся вне этого слоя.
+- Внутреннее WebGL-разрешение остаётся `PS1_RENDER_SCALE = 0.48`; layout не меняет quality/FPS-профиль.
+
 ## Camera fit (contain)
 
 Камера подстраивается под viewport так, чтобы стол целиком был виден на любом аспекте.
@@ -85,11 +94,12 @@ ShakeInputService.events:
 tanHalf  = tan(CAMERA_FOV/2 in rad)
 hForDepth = (TABLE_DEPTH/2) / tanHalf
 hForWidth = (TABLE_WIDTH/2) / (tanHalf * camera.aspect)
-camera.y  = max(hForDepth, hForWidth)   // contain — берём большую высоту
+camera.y  = max(hForDepth, hForWidth) / tableViewportFill
 ```
 
-- На 16:9 viewport обе формулы дают одну Y, стол занимает экран впритык
-- На ultrawide (aspect > 16/9) `hForDepth` побеждает → камера ниже, по бокам видны поля сцены (фон `0x1a1a22`)
+- `tableViewportFill` интерполируется от `0.58` на compact desktop до `0.72` на FHD и привязан к высоте reference-layer. На `1280×720` поле заметно компактнее, чтобы HUD помещался без растяжения.
+- На 16:9 FHD обе формулы дают одну Y; визуальное поле занимает 72% reference-height.
+- На ultrawide (aspect > 16/9) `hForDepth` побеждает → стол остаётся в центральной FHD-композиции, по бокам виден фон.
 - На portrait/square `hForWidth` побеждает → камера выше, поля сверху/снизу
 
 `computeCameraY(aspect = camera.aspect)` — приватный метод. Вызывается из `createCamera` и `onResize`.
@@ -136,8 +146,9 @@ camera.y  = max(hForDepth, hForWidth)   // contain — берём большую
 - `public/assets/ost/*.mp3` перечислены в URL-списке `asset-manifest.ts`. `MusicService` играет OST всю жизнь приложения через `HTMLAudioElement`, без `audioService.preloadGroup()`.
 - Первый трек выбирается random на клиенте. Текущий трек stream/range-грузится браузером; следующий random track (без повтора текущего) создаётся с `preload="auto"` только когда до конца текущего остаётся около 25 секунд. При нескольких треках переход идёт через короткий crossfade. Если отдельный `next.play()` блокируется или срывается на границе `ended`, `MusicService` переиспользует текущий `HTMLAudioElement`, переключает `src` на следующий трек и продолжает бесконечный OST loop.
 - `public/assets/rules.svg` используется как обычный `/assets/rules.svg` URL и preloads as image. Текущий rules-board эксперимент отключает 3D-объект в runtime и показывает SVG как обычный DOM `<img>` поверх WebGL canvas, чтобы избежать WebGL texture inversion/filtering/pixelation.
-- `RulesBoardService` сохраняет прежний lifecycle (`update`, `updateLayout`, `destroy`) и constructor-call из `GameEngine`, но scene/camera/canvas не используют для геометрии. Overlay добавляется в `document.body` с `position: fixed`, `z-index: 12`.
-- `KeyH` переключает DOM-плашку: overlay плавно едет из-за правого края экрана и обратно; shown-позиция держит правый отступ `168px`, чтобы плашка была ближе к центру. Когда скрыта, `pointer-events: none`.
+- `RulesBoardService` сохраняет прежний lifecycle (`update`, `updateLayout`, `destroy`) и constructor-call из `GameEngine`, но scene/camera/canvas не используют для геометрии. Board и `Rules / Правила (<клавиша>)` монтируются в gameplay reference-layer и масштабируются вместе с HUD.
+- Rules-board имеет дополнительный вертикальный scale: на FHD (`1080px` высоты) — `100%`; на QHD (`1440px`) — `75%` и этот минимум сохраняется на 4K. Ниже FHD собственный scale плавно идёт к `75%` на `720px`; вместе с общим gameplay scale это даёт `50%` итогового размера на `1280×720`. `Rules / Правила` Button_L использует тот же scale.
+- Настраиваемая `showRules` клавиша (`KeyC` по умолчанию) или Button_L переключает DOM-плашку: overlay плавно едет из-за правого края reference-layer и обратно; shown-позиция держит правый отступ `168px`. Когда board показана, Button_L плавно скрыт и не принимает pointer events.
 - На hover DOM-панель получает лёгкий Steam-card-style CSS tilt: cursor offset относительно центра маппится в `rotateX/rotateY` с clamp `±5deg`; при уходе курсора tilt возвращается в `0/0`. Постоянного `rotateZ`-наклона нет.
 
 ## Освещение
@@ -160,4 +171,4 @@ Debug overlay включается через `?perf` в URL или `localStorag
 
 ## Resize
 
-`onResize` пересчитывает `camera.aspect`, обновляет `camera.position.y = computeCameraY()`, делает `lookAt(CAMERA_TARGET)` (после move — чтобы пересчитать ориентацию), `updateProjectionMatrix()` и `renderer.setSize(...)`. **Стол и стены НЕ пересоздаются** — они в фиксированных координатах.
+`onResize` берёт CSS-размер canvas из `GameplayLayoutService`, обновляет reference-layer, `camera.aspect`, `camera.position.y = computeCameraY()`, делает `lookAt(CAMERA_TARGET)` (после move — чтобы пересчитать ориентацию), `updateProjectionMatrix()` и backing size renderer c тем же `PS1_RENDER_SCALE`. **Стол и стены НЕ пересоздаются** — они в фиксированных координатах.

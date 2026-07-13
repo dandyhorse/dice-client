@@ -55,7 +55,7 @@ owning a separate UI service.
 
 ### Структура DOM
 
-5 фиксированных оверлеев поверх canvas (`pointer-events: none` где можно, чтобы не блокировать клики по сцене):
+Ниже FHD HUD монтируется в центрированный виртуальный холст `1920×1080`, scale'ящийся от 66.7% на `1280×720`. На FHD и выше SVG/HUD остаются в исходном размере, а reference-layer занимает весь viewport: фиксированные размеры не растут, viewport-relative отступы панелей остаются у краёв QHD/ultrawide. `pointer-events: none` используется где можно, чтобы не блокировать клики по сцене.
 
 | id | где | что |
 |---|---|---|
@@ -67,7 +67,7 @@ owning a separate UI service.
 | `#hud-turn-banner` | center | `ТВОЙ ХОД` держится до первого click/tap или текущей клавиши броска (`Space` по умолчанию); чужой ход скрывается автоматически через `1500ms` |
 | `#hud-final-actions` | center | финальные кнопки `Выйти` / `Реванш`; реванш скрыт для `DISCONNECT` и `EXIT` |
 
-Player cards use enlarged avatar+score rectangles (`430px` min width, real `128px` avatar asset area, `18px 24px` padding) and sit near the table bounds: top/bottom cards use `clamp(90px, 14vh, 170px)`, horizontal placement uses `max(48px, calc(25vw - 18vh))` so left-side duel cards stay outside the table edge.
+Player cards use enlarged avatar+score rectangles (`430px` min width, real `128px` avatar asset area, `18px 24px` padding). Их размеры сохраняются на FHD+, а исходные viewport-relative отступы двигают панели к краям QHD/ultrawide; compact desktop уменьшает всю композицию пропорционально.
 
 The top turn stat tiles (`Banked` / `Selected`) use larger padding/min-width/value text than the original compact HUD so they read closer in scale to the player cards.
 

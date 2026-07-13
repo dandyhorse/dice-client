@@ -20,6 +20,8 @@ import type { MatchSelectionPreviewPayload } from '../../../../network/protocol/
 const PANEL_FG = '#eee';
 const PANEL_RADIUS = UI_RADIUS;
 const PANEL_PAD = '18px 24px';
+// Keep authored panel sizes fixed; only their viewport-relative offset changes
+// on FHD and larger screens.
 const PLAYER_PANEL_TOP_Y = 'calc(clamp(90px, 14vh, 170px) + 15px)';
 const PLAYER_PANEL_BOTTOM_Y = 'calc(clamp(90px, 14vh, 170px) + 25px)';
 const PLAYER_PANEL_TABLE_X = 'max(18px, calc(20vw - 14.4vh - 20px))';
@@ -122,6 +124,7 @@ export class HudUiService {
     ownUserId: string,
     controls: ControlBindings = DEFAULT_PLAYER_SETTINGS.controls,
     isTurnBannerDismissPointer: TurnBannerDismissPointerPredicate = isCanvasPointer,
+    host: HTMLElement = document.body,
   ) {
     this.ownUserId = ownUserId;
     this.isTurnBannerDismissPointer = isTurnBannerDismissPointer;
@@ -294,13 +297,13 @@ export class HudUiService {
     this.root.appendChild(this.opponentPanel);
     this.root.appendChild(this.rightPanel);
     this.root.appendChild(this.turnStatsPanel);
-    document.body.appendChild(this.root);
-    document.body.appendChild(this.actionsPanel);
-    document.body.appendChild(this.surrenderPanel);
-    document.body.appendChild(this.statusPanel);
-    document.body.appendChild(this.errorPanel);
-    document.body.appendChild(this.turnBannerPanel);
-    document.body.appendChild(this.finalActionsPanel);
+    host.appendChild(this.root);
+    host.appendChild(this.actionsPanel);
+    host.appendChild(this.surrenderPanel);
+    host.appendChild(this.statusPanel);
+    host.appendChild(this.errorPanel);
+    host.appendChild(this.turnBannerPanel);
+    host.appendChild(this.finalActionsPanel);
 
     this.unsubscribeLanguage = onLanguageChange(() => {
       this.renderButtonLabels();

@@ -20,7 +20,7 @@ export const showLoadingOverlay = (
     document.body.appendChild(overlay);
   }
 
-  overlay.innerHTML = `<div class="loading-dots">${label}<span>.</span><span>.</span><span>.</span></div>`;
+  overlay.innerHTML = `<div class="loading-dots responsive-ui-content">${label}<span>.</span><span>.</span><span>.</span></div>`;
   Object.assign(overlay.style, {
     position: 'fixed',
     inset: '0',

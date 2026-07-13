@@ -32,6 +32,10 @@ import {
 import { audioService } from '../../audio/audio.service';
 import { BenchDiceService } from './services/bench-dice.service';
 import { DiceService, type DiceCollisionKind } from './services/dice.service';
+import {
+  GameplayLayoutService,
+  type GameplayLayoutMetrics,
+} from './services/gameplay-layout.service';
 import { HudUiService } from './services/hud-ui.service';
 import { NetworkService } from './services/network.service';
 import { RulesBoardService } from './services/rules-board.service';
@@ -167,6 +171,8 @@ export class GameEngine {
   private readonly benchDice: BenchDiceService | null;
   private readonly hud: HudUiService | null;
   private readonly rulesBoard: RulesBoardService;
+  private gameplayLayout: GameplayLayoutService | null = null;
+  private unsubscribeGameplayLayout: (() => void) | null = null;
   private readonly localMatchConfig: LocalMatchConfig | null;
   private currentRoomState: RoomState | null = null;
   private currentMatchState: MatchStatePayload | null = null;
@@ -228,6 +234,7 @@ export class GameEngine {
     this.scene = this.createScene();
     this.camera = this.createCamera();
     this.renderer = this.createRenderer();
+    this.gameplayLayout = new GameplayLayoutService(this.renderer.domElement);
 
     if (this.mode === 'local') {
       this.physicsWorld = this.createPhysicsWorld();
@@ -255,7 +262,9 @@ export class GameEngine {
       this.camera,
       this.renderer.domElement,
       playerSettings.controls.showRules,
+      this.gameplayLayout.reference,
     );
+    this.unsubscribeGameplayLayout = this.gameplayLayout.onChange(this.handleGameplayLayoutChange);
     this.perf = this.createPerfStats();
 
     this.input = new ShakeInputService(
@@ -347,6 +356,7 @@ export class GameEngine {
           ownUserId,
           playerSettings.controls,
           (event) => this.input.isPointerInsideThrowZone(event),
+          this.gameplayLayout.reference,
         );
       if (this.currentRoomState) this.hud?.setRoomState(this.currentRoomState);
 
@@ -496,6 +506,7 @@ export class GameEngine {
         LOCAL_HUMAN_USER_ID,
         playerSettings.controls,
         (event) => this.input.isPointerInsideThrowZone(event),
+        this.gameplayLayout.reference,
       );
       this.syncLocalMatchHud(MATCH_PHASE.WAITING);
 
@@ -519,7 +530,6 @@ export class GameEngine {
       this.hud = null;
     }
 
-    window.addEventListener('resize', this.onResize);
   }
 
   private listen<TArgs extends unknown[]>(
@@ -1065,6 +1075,7 @@ export class GameEngine {
     } satisfies Partial<CSSStyleDeclaration>);
 
     const panel = document.createElement('div');
+    panel.classList.add('responsive-ui-content');
     Object.assign(panel.style, {
       width: 'min(540px, calc(100vw - 48px))',
       padding: '27px',
@@ -1133,7 +1144,7 @@ export class GameEngine {
     actions.append(yesBtn, noBtn);
     panel.append(question, actions);
     overlay.appendChild(panel);
-    document.body.appendChild(overlay);
+    (this.gameplayLayout?.viewport ?? document.body).appendChild(overlay);
     this.surrenderConfirmEl = overlay;
     window.addEventListener('keydown', this.handleSurrenderConfirmKeyDown, true);
   }
@@ -1520,6 +1531,7 @@ export class GameEngine {
   }
 
   start(): void {
+    this.onResize();
     this.lastTime = performance.now();
     this.rafId = requestAnimationFrame(this.gameLoop);
   }
@@ -1536,7 +1548,6 @@ export class GameEngine {
     this.clearLocalBotActionTimer();
     if (this.networkActionsBlockTimer !== null) clearTimeout(this.networkActionsBlockTimer);
     this.networkActionsBlockTimer = null;
-    window.removeEventListener('resize', this.onResize);
     window.removeEventListener(GAME_POPUP_CLOSE_EVENT, this.handleCloseGamePopups);
     for (const unsubscribe of this.eventUnsubscribers.splice(0)) unsubscribe();
     this.turnHotkeys.destroy();
@@ -1545,6 +1556,10 @@ export class GameEngine {
     this.benchDice?.destroy();
     this.hud?.destroy();
     this.rulesBoard.destroy();
+    this.unsubscribeGameplayLayout?.();
+    this.unsubscribeGameplayLayout = null;
+    this.gameplayLayout?.destroy();
+    this.gameplayLayout = null;
     this.dice.destroy();
     this.clearNetworkCollisionAudioState();
     this.perf?.el.remove();
@@ -1648,9 +1663,13 @@ export class GameEngine {
     return renderer;
   }
 
-  private setRendererPixelSize(renderer: THREE.WebGLRenderer): void {
-    const width = Math.max(320, Math.floor(window.innerWidth * PS1_RENDER_SCALE));
-    const height = Math.max(180, Math.floor(window.innerHeight * PS1_RENDER_SCALE));
+  private setRendererPixelSize(
+    renderer: THREE.WebGLRenderer,
+    viewportWidth = window.innerWidth,
+    viewportHeight = window.innerHeight,
+  ): void {
+    const width = Math.max(320, Math.floor(viewportWidth * PS1_RENDER_SCALE));
+    const height = Math.max(180, Math.floor(viewportHeight * PS1_RENDER_SCALE));
     renderer.setSize(width, height, false);
   }
 
@@ -1688,7 +1707,8 @@ export class GameEngine {
     const tanHalf = Math.tan((CAMERA_FOV * Math.PI) / 360);
     const hForDepth = TABLE_DEPTH / 2 / tanHalf;
     const hForWidth = TABLE_WIDTH / 2 / (tanHalf * aspect);
-    return Math.max(hForDepth, hForWidth) / TABLE_VIEWPORT_FILL;
+    const tableViewportFill = this.gameplayLayout?.current.tableViewportFill ?? TABLE_VIEWPORT_FILL;
+    return Math.max(hForDepth, hForWidth) / tableViewportFill;
   }
 
   private createPlayArea(withBodies: boolean): void {
@@ -1924,15 +1944,24 @@ export class GameEngine {
   }
 
   private onResize = (): void => {
-    this.camera.aspect = window.innerWidth / window.innerHeight;
+    const layout = this.gameplayLayout?.refresh();
+    if (layout) this.applyGameplayLayout(layout);
+  };
+
+  private handleGameplayLayoutChange = (layout: GameplayLayoutMetrics): void => {
+    this.applyGameplayLayout(layout);
+  };
+
+  private applyGameplayLayout(layout: GameplayLayoutMetrics): void {
+    this.camera.aspect = layout.viewportWidth / layout.viewportHeight;
     this.camera.position.y = this.computeCameraY();
     this.camera.lookAt(...CAMERA_TARGET);
     this.camera.updateProjectionMatrix();
-    this.setRendererPixelSize(this.renderer);
+    this.setRendererPixelSize(this.renderer, layout.viewportWidth, layout.viewportHeight);
     this.updateBackgroundPlaneSize();
     this.updateVisualTableSize();
-    this.rulesBoard.updateLayout();
-  };
+    this.rulesBoard.updateLayout(layout.viewportHeight);
+  }
 
   private gameLoop = (): void => {
     const frameStartMs = performance.now();

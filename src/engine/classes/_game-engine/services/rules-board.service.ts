@@ -1,6 +1,8 @@
 import { DICE_RULE_ICON_URLS } from '../../../assets/asset-manifest';
 import { audioService } from '../../../audio/audio.service';
 import { onLanguageChange, t } from '../../../../ui/i18n';
+import { controlCodeLabel } from '../../../../player-settings';
+import { bindMouseOnlyClick } from '../../../../ui/mouse-only-button';
 import {
   isGameInteractionBlocked,
   requestTopMenuDropdownClose,
@@ -12,7 +14,10 @@ const RULES_BOARD_Z_INDEX = '12';
 const RULES_BOARD_RIGHT_OFFSET_PX = 168;
 const RULES_BOARD_HIDDEN_OFFSET_PX = 48;
 const RULES_BOARD_PADDING_PX = 10;
-const RULES_BOARD_WIDTH_CSS = 'min(42vw, 560px, calc(86vh * 299 / 511), calc(920px * 299 / 511))';
+const RULES_BOARD_REFERENCE_WIDTH_PX = 538;
+const RULES_BOARD_FHD_HEIGHT_PX = 1080;
+const RULES_BOARD_MIN_SCALE = 0.75;
+const RULES_BOARD_COMPACT_HEIGHT_PX = 720;
 const RULES_BOARD_TILT_FULL_DISTANCE_PX = 420;
 const RULES_BOARD_HOVER_TILT_DEG = 5;
 const RULES_BOARD_CANVAS_SCALE = 4;
@@ -24,6 +29,8 @@ const RULE_TITLE_FONT_SIZE = 15.2;
 const RULE_TEXT_COLOR = '#f4f0ea';
 const RULES_BOARD_TILT_TRANSITION = 'transform 140ms ease';
 const RULES_BOARD_TILT_RETURN_TRANSITION = 'transform 1200ms cubic-bezier(0.16, 1, 0.3, 1)';
+const RULES_BUTTON_RIGHT_PX = 24;
+const RULES_BUTTON_WIDTH_PX = 345;
 const LANGUAGE_MATRIX_STEP_MS = 84;
 const LANGUAGE_MATRIX_ROUNDS = 5;
 const LANGUAGE_MATRIX_CHARS =
@@ -33,6 +40,9 @@ type DieFace = 1 | 2 | 3 | 4 | 5 | 6;
 const DIE_FACES: readonly DieFace[] = [1, 2, 3, 4, 5, 6];
 type RuleLabelKey = 'extraDiceLine1' | 'extraDiceLine2' | 'specialCombinations';
 type RuleLabels = Record<RuleLabelKey, string>;
+
+const clamp = (value: number, min: number, max: number): number =>
+  Math.max(min, Math.min(max, value));
 
 interface RuleScoreRow {
   faces: readonly DieFace[];
@@ -71,9 +81,13 @@ export class RulesBoardService {
   private readonly root = document.createElement('div');
   private readonly panel = document.createElement('div');
   private readonly canvas = document.createElement('canvas');
+  private readonly toggleButton = document.createElement('button');
+  private readonly toggleButtonLabel = document.createElement('span');
   private readonly diceImages = new Map<DieFace, HTMLImageElement>();
+  private readonly host: HTMLElement;
 
   private shown = false;
+  private rulesScale = 1;
   private tiltX = 0;
   private tiltY = 0;
   private toggleKeyCode: string;
@@ -88,20 +102,24 @@ export class RulesBoardService {
     _camera: unknown,
     _canvas: HTMLCanvasElement,
     toggleKeyCode = 'KeyC',
+    host: HTMLElement = document.body,
   ) {
     void _scene;
     void _camera;
     void _canvas;
     this.toggleKeyCode = toggleKeyCode;
+    this.host = host;
 
     this.createDomOverlay();
+    this.createToggleButton();
+    this.updateLayout();
     this.applyVisibility();
     this.applyTilt();
 
     window.addEventListener('keydown', this.onKeyDown);
     this.panel.addEventListener('pointermove', this.onPointerMove);
     this.panel.addEventListener('pointerleave', this.onPointerLeave);
-    this.removeLanguageListener = onLanguageChange(this.runLanguageMatrixAnimation);
+    this.removeLanguageListener = onLanguageChange(this.handleLanguageChange);
     void document.fonts?.ready.then(() => this.renderRulesBoard());
   }
 
@@ -109,10 +127,30 @@ export class RulesBoardService {
     void _dt;
   }
 
-  updateLayout(): void {}
+  updateLayout(viewportHeight = window.innerHeight): void {
+    if (viewportHeight < RULES_BOARD_FHD_HEIGHT_PX) {
+      const compactProgress = clamp(
+        (viewportHeight - RULES_BOARD_COMPACT_HEIGHT_PX) /
+          (RULES_BOARD_FHD_HEIGHT_PX - RULES_BOARD_COMPACT_HEIGHT_PX),
+        0,
+        1,
+      );
+      this.rulesScale =
+        RULES_BOARD_MIN_SCALE + (1 - RULES_BOARD_MIN_SCALE) * compactProgress;
+    } else {
+      this.rulesScale = clamp(
+        RULES_BOARD_FHD_HEIGHT_PX / Math.max(1, viewportHeight),
+        RULES_BOARD_MIN_SCALE,
+        1,
+      );
+    }
+    this.panel.style.width = `${RULES_BOARD_REFERENCE_WIDTH_PX * this.rulesScale}px`;
+    this.applyVisibility();
+  }
 
   setToggleKeyCode(code: string): void {
     this.toggleKeyCode = code;
+    this.renderToggleButtonLabel();
   }
 
   destroy(): void {
@@ -124,9 +162,11 @@ export class RulesBoardService {
     this.removeLanguageListener?.();
     this.removeLanguageListener = null;
     this.root.remove();
+    this.toggleButton.remove();
   }
 
   private createDomOverlay(): void {
+    this.root.id = 'rules-board';
     this.root.className = 'dice-rules-board-overlay';
     Object.assign(this.root.style, {
       position: 'fixed',
@@ -155,7 +195,7 @@ export class RulesBoardService {
       transformStyle: 'preserve-3d',
       transition: RULES_BOARD_TILT_TRANSITION,
       userSelect: 'none',
-      width: RULES_BOARD_WIDTH_CSS,
+      width: `${RULES_BOARD_REFERENCE_WIDTH_PX}px`,
       willChange: 'transform',
     } satisfies Partial<CSSStyleDeclaration>);
 
@@ -178,7 +218,37 @@ export class RulesBoardService {
     // Previous static rules image for rollback: /assets/rules-board-static.svg.
     this.panel.append(this.canvas);
     this.root.append(this.panel);
-    document.body.append(this.root);
+    this.host.append(this.root);
+  }
+
+  private createToggleButton(): void {
+    this.toggleButton.id = 'rules-toggle-button';
+    this.toggleButton.classList.add('menu-frame-button');
+    this.toggleButton.setAttribute('aria-controls', 'rules-board');
+    Object.assign(this.toggleButton.style, {
+      position: 'fixed',
+      top: '50%',
+      right: `${RULES_BUTTON_RIGHT_PX}px`,
+      zIndex: '11',
+      width: `${RULES_BUTTON_WIDTH_PX}px`,
+      maxWidth: `${RULES_BUTTON_WIDTH_PX}px`,
+      opacity: '1',
+      pointerEvents: 'auto',
+      transformOrigin: '100% 50%',
+      transform: 'translate3d(0, -50%, 0)',
+      transition: 'transform 240ms ease, opacity 180ms ease',
+      willChange: 'transform, opacity',
+    } satisfies Partial<CSSStyleDeclaration>);
+    Object.assign(this.toggleButtonLabel.style, {
+      position: 'relative',
+      zIndex: '1',
+      maxWidth: 'calc(100% - 24px)',
+    } satisfies Partial<CSSStyleDeclaration>);
+
+    this.toggleButton.append(this.toggleButtonLabel);
+    this.renderToggleButtonLabel();
+    bindMouseOnlyClick(this.toggleButton, this.toggleRulesBoard);
+    this.host.append(this.toggleButton);
   }
 
   private renderRulesBoard = (): void => {
@@ -343,6 +413,13 @@ export class RulesBoardService {
     this.root.style.transform = this.shown
       ? 'translate3d(0, -50%, 0)'
       : `translate3d(calc(100% + ${RULES_BOARD_HIDDEN_OFFSET_PX}px), -50%, 0)`;
+
+    this.toggleButton.style.opacity = this.shown ? '0' : '1';
+    this.toggleButton.style.pointerEvents = this.shown ? 'none' : 'auto';
+    this.toggleButton.style.transform = this.shown
+      ? `translate3d(24px, -50%, 0) scale(${this.rulesScale})`
+      : `translate3d(0, -50%, 0) scale(${this.rulesScale})`;
+    this.toggleButton.setAttribute('aria-expanded', String(this.shown));
   }
 
   private applyTilt(): void {
@@ -355,10 +432,26 @@ export class RulesBoardService {
     if (isInteractiveKeyboardTarget(event.target)) return;
 
     event.preventDefault();
+    this.toggleRulesBoard();
+  };
+
+  private toggleRulesBoard = (): void => {
+    if (isGameInteractionBlocked()) return;
     requestTopMenuDropdownClose();
     audioService.play('ui-dropdown-toggle');
     this.shown = !this.shown;
     this.applyVisibility();
+  };
+
+  private renderToggleButtonLabel(): void {
+    const label = `${t('showRules')} (${controlCodeLabel(this.toggleKeyCode)})`;
+    this.toggleButtonLabel.textContent = label;
+    this.toggleButton.setAttribute('aria-label', label);
+  }
+
+  private handleLanguageChange = (): void => {
+    this.renderToggleButtonLabel();
+    this.runLanguageMatrixAnimation();
   };
 
   private onPointerMove = (event: PointerEvent): void => {
