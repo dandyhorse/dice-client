@@ -7,6 +7,7 @@ import {
   isGameInteractionBlocked,
   requestTopMenuDropdownClose,
 } from '../../../../ui/game-modal-state';
+import { RulesBoardDesktopDragService } from './rules-board-desktop-drag.service';
 
 const RULES_BOARD_ASPECT_WIDTH = 299;
 const RULES_BOARD_ASPECT_HEIGHT = 511;
@@ -31,6 +32,9 @@ const RULES_BOARD_TILT_TRANSITION = 'transform 140ms ease';
 const RULES_BOARD_TILT_RETURN_TRANSITION = 'transform 1200ms cubic-bezier(0.16, 1, 0.3, 1)';
 const RULES_BUTTON_RIGHT_PX = 24;
 const RULES_BUTTON_WIDTH_PX = 345;
+const RULES_DRAG_CLOSE_RATIO = 0.5;
+const MOBILE_RULES_DISMISS_GUARD_MARGIN_PX = 24;
+const MOBILE_RULES_DISMISS_GUARD_MS = 500;
 const LANGUAGE_MATRIX_STEP_MS = 84;
 const LANGUAGE_MATRIX_ROUNDS = 5;
 const LANGUAGE_MATRIX_CHARS =
@@ -85,6 +89,8 @@ export class RulesBoardService {
   private readonly toggleButtonLabel = document.createElement('span');
   private readonly diceImages = new Map<DieFace, HTMLImageElement>();
   private readonly host: HTMLElement;
+  private readonly mobileRuntime = document.documentElement.classList.contains('mobile-runtime');
+  private readonly interaction: { destroy(): void };
 
   private shown = false;
   private rulesScale = 1;
@@ -96,6 +102,13 @@ export class RulesBoardService {
   private animatedLabels: RuleLabels | null = null;
   private animatedScores: string[] | null = null;
   private removeLanguageListener: (() => void) | null = null;
+  private mobileDismissGuard: {
+    until: number;
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+  } | null = null;
 
   constructor(
     _scene: unknown,
@@ -111,14 +124,36 @@ export class RulesBoardService {
     this.host = host;
 
     this.createDomOverlay();
-    this.createToggleButton();
+    if (!this.mobileRuntime) this.createToggleButton();
     this.updateLayout();
     this.applyVisibility();
     this.applyTilt();
 
     window.addEventListener('keydown', this.onKeyDown);
-    this.panel.addEventListener('pointermove', this.onPointerMove);
-    this.panel.addEventListener('pointerleave', this.onPointerLeave);
+    if (this.mobileRuntime) {
+      this.interaction = { destroy: () => undefined };
+      this.root.addEventListener('pointerdown', this.onMobileBackdropPointerDown);
+      window.addEventListener('click', this.consumeMobileDismissClick, true);
+    } else {
+      this.interaction = new RulesBoardDesktopDragService(this.panel, {
+        begin: () => {
+          this.root.style.transition = 'none';
+        },
+        move: (distance) => {
+          this.root.style.transform = `translate3d(${distance}px, -50%, 0)`;
+        },
+        commit: (distance) => {
+          if (distance >= this.desktopCloseThreshold()) {
+            this.setShown(false);
+            return;
+          }
+          this.applyVisibility();
+        },
+        cancel: () => this.applyVisibility(),
+      });
+      this.panel.addEventListener('pointermove', this.onPointerMove);
+      this.panel.addEventListener('pointerleave', this.onPointerLeave);
+    }
     this.removeLanguageListener = onLanguageChange(this.handleLanguageChange);
     void document.fonts?.ready.then(() => this.renderRulesBoard());
   }
@@ -128,6 +163,14 @@ export class RulesBoardService {
   }
 
   updateLayout(viewportHeight = window.innerHeight): void {
+    if (this.mobileRuntime) {
+      void viewportHeight;
+      this.panel.style.width = `min(${RULES_BOARD_REFERENCE_WIDTH_PX}px, calc(100vw - 32px))`;
+      this.panel.style.height = 'auto';
+      this.panel.style.maxHeight = 'calc(100dvh - 32px)';
+      this.applyVisibility();
+      return;
+    }
     if (viewportHeight < RULES_BOARD_FHD_HEIGHT_PX) {
       const compactProgress = clamp(
         (viewportHeight - RULES_BOARD_COMPACT_HEIGHT_PX) /
@@ -144,7 +187,8 @@ export class RulesBoardService {
         1,
       );
     }
-    this.panel.style.width = `${RULES_BOARD_REFERENCE_WIDTH_PX * this.rulesScale}px`;
+    const width = RULES_BOARD_REFERENCE_WIDTH_PX * this.rulesScale;
+    this.panel.style.width = `${width}px`;
     this.applyVisibility();
   }
 
@@ -153,8 +197,16 @@ export class RulesBoardService {
     this.renderToggleButtonLabel();
   }
 
+  toggle(): void {
+    if (!this.mobileRuntime && isGameInteractionBlocked()) return;
+    this.setShown(!this.shown);
+  }
+
   destroy(): void {
     window.removeEventListener('keydown', this.onKeyDown);
+    this.interaction.destroy();
+    this.root.removeEventListener('pointerdown', this.onMobileBackdropPointerDown);
+    window.removeEventListener('click', this.consumeMobileDismissClick, true);
     this.panel.removeEventListener('pointermove', this.onPointerMove);
     this.panel.removeEventListener('pointerleave', this.onPointerLeave);
     this.clearLanguageMatrixTimers();
@@ -183,7 +235,7 @@ export class RulesBoardService {
     } satisfies Partial<CSSStyleDeclaration>);
 
     Object.assign(this.panel.style, {
-      aspectRatio: `${RULES_BOARD_ASPECT_WIDTH} / ${RULES_BOARD_ASPECT_HEIGHT}`,
+      aspectRatio: this.mobileRuntime ? 'auto' : `${RULES_BOARD_ASPECT_WIDTH} / ${RULES_BOARD_ASPECT_HEIGHT}`,
       background: '#2a1b12',
       borderRadius: '8px',
       boxShadow: '0 14px 34px rgba(0, 0, 0, 0.34)',
@@ -196,6 +248,9 @@ export class RulesBoardService {
       transition: RULES_BOARD_TILT_TRANSITION,
       userSelect: 'none',
       width: `${RULES_BOARD_REFERENCE_WIDTH_PX}px`,
+      overflowY: this.mobileRuntime ? 'auto' : 'visible',
+      overscrollBehavior: this.mobileRuntime ? 'contain' : 'auto',
+      touchAction: this.mobileRuntime ? 'pan-y' : 'auto',
       willChange: 'transform',
     } satisfies Partial<CSSStyleDeclaration>);
 
@@ -203,7 +258,7 @@ export class RulesBoardService {
     this.canvas.height = RULES_BOARD_ASPECT_HEIGHT * RULES_BOARD_CANVAS_SCALE;
     Object.assign(this.canvas.style, {
       display: 'block',
-      height: '100%',
+      height: this.mobileRuntime ? 'auto' : '100%',
       opacity: '1',
       pointerEvents: 'none',
       transition: 'opacity 60ms ease',
@@ -218,7 +273,7 @@ export class RulesBoardService {
     // Previous static rules image for rollback: /assets/rules-board-static.svg.
     this.panel.append(this.canvas);
     this.root.append(this.panel);
-    this.host.append(this.root);
+    (this.mobileRuntime ? document.body : this.host).append(this.root);
   }
 
   private createToggleButton(): void {
@@ -247,7 +302,7 @@ export class RulesBoardService {
 
     this.toggleButton.append(this.toggleButtonLabel);
     this.renderToggleButtonLabel();
-    bindMouseOnlyClick(this.toggleButton, this.toggleRulesBoard);
+    bindMouseOnlyClick(this.toggleButton, () => this.toggle());
     this.host.append(this.toggleButton);
   }
 
@@ -408,8 +463,38 @@ export class RulesBoardService {
   }
 
   private applyVisibility(): void {
+    if (this.mobileRuntime) {
+      this.root.dataset.mobileRulesOpen = this.shown ? 'true' : 'false';
+      Object.assign(this.root.style, {
+        position: 'fixed',
+        inset: '0',
+        top: '0',
+        right: '0',
+        zIndex: '70',
+        opacity: this.shown ? '1' : '0',
+        pointerEvents: this.shown ? 'auto' : 'none',
+        transform: 'none',
+        transition: 'opacity 180ms ease',
+        background: this.shown ? 'rgba(0, 0, 0, 0.18)' : 'transparent',
+      } satisfies Partial<CSSStyleDeclaration>);
+      Object.assign(this.panel.style, {
+        position: 'absolute',
+        top: '50%',
+        left: '50%',
+        right: 'auto',
+        width: `min(${RULES_BOARD_REFERENCE_WIDTH_PX}px, calc(100vw - 32px))`,
+        maxHeight: 'calc(100dvh - 32px)',
+        overflowY: 'auto',
+        transition: 'none',
+      } satisfies Partial<CSSStyleDeclaration>);
+      this.applyTilt();
+      this.toggleButton.setAttribute('aria-expanded', String(this.shown));
+      return;
+    }
+
     this.root.style.opacity = this.shown ? '1' : '0';
     this.root.style.pointerEvents = this.shown ? 'auto' : 'none';
+    this.root.style.transition = 'transform 240ms ease, opacity 180ms ease';
     this.root.style.transform = this.shown
       ? 'translate3d(0, -50%, 0)'
       : `translate3d(calc(100% + ${RULES_BOARD_HIDDEN_OFFSET_PX}px), -50%, 0)`;
@@ -423,24 +508,19 @@ export class RulesBoardService {
   }
 
   private applyTilt(): void {
-    this.panel.style.transform = `rotateX(${this.tiltX}deg) rotateY(${this.tiltY}deg)`;
+    this.panel.style.transform = this.mobileRuntime
+      ? 'translate3d(-50%, -50%, 0)'
+      : `rotateX(${this.tiltX}deg) rotateY(${this.tiltY}deg)`;
   }
 
   private onKeyDown = (event: KeyboardEvent): void => {
+    if (this.mobileRuntime) return;
     if (event.repeat || event.defaultPrevented || event.code !== this.toggleKeyCode) return;
     if (isGameInteractionBlocked()) return;
     if (isInteractiveKeyboardTarget(event.target)) return;
 
     event.preventDefault();
-    this.toggleRulesBoard();
-  };
-
-  private toggleRulesBoard = (): void => {
-    if (isGameInteractionBlocked()) return;
-    requestTopMenuDropdownClose();
-    audioService.play('ui-dropdown-toggle');
-    this.shown = !this.shown;
-    this.applyVisibility();
+    this.toggle();
   };
 
   private renderToggleButtonLabel(): void {
@@ -452,6 +532,69 @@ export class RulesBoardService {
   private handleLanguageChange = (): void => {
     this.renderToggleButtonLabel();
     this.runLanguageMatrixAnimation();
+  };
+
+  private desktopCloseThreshold(): number {
+    return (
+      (Math.max(1, this.panel.getBoundingClientRect().width) + RULES_BOARD_HIDDEN_OFFSET_PX) *
+      RULES_DRAG_CLOSE_RATIO
+    );
+  }
+
+  private setShown(shown: boolean): void {
+    if (this.shown === shown) {
+      this.applyVisibility();
+      return;
+    }
+    this.shown = shown;
+    requestTopMenuDropdownClose();
+    audioService.play('ui-dropdown-toggle');
+    this.applyVisibility();
+  }
+
+  private onMobileBackdropPointerDown = (event: PointerEvent): void => {
+    if (!this.mobileRuntime || !this.shown) return;
+    if (event.target instanceof Node && this.panel.contains(event.target)) return;
+    this.armMobileDismissGuard();
+    event.preventDefault();
+    event.stopPropagation();
+    this.setShown(false);
+  };
+
+  private armMobileDismissGuard(): void {
+    const rulesButton = document.querySelector<HTMLElement>(
+      '#hud-mobile-actions [data-mobile-gameplay-action="rules"]',
+    );
+    if (!rulesButton) {
+      this.mobileDismissGuard = null;
+      return;
+    }
+    const bounds = rulesButton.getBoundingClientRect();
+    this.mobileDismissGuard = {
+      until: performance.now() + MOBILE_RULES_DISMISS_GUARD_MS,
+      left: bounds.left - MOBILE_RULES_DISMISS_GUARD_MARGIN_PX,
+      top: bounds.top - MOBILE_RULES_DISMISS_GUARD_MARGIN_PX,
+      right: bounds.right + MOBILE_RULES_DISMISS_GUARD_MARGIN_PX,
+      bottom: bounds.bottom + MOBILE_RULES_DISMISS_GUARD_MARGIN_PX,
+    };
+  }
+
+  private consumeMobileDismissClick = (event: MouseEvent): void => {
+    const guard = this.mobileDismissGuard;
+    if (!guard) return;
+    if (performance.now() > guard.until) {
+      this.mobileDismissGuard = null;
+      return;
+    }
+    const withinRulesZone =
+      event.clientX >= guard.left &&
+      event.clientX <= guard.right &&
+      event.clientY >= guard.top &&
+      event.clientY <= guard.bottom;
+    this.mobileDismissGuard = null;
+    if (!withinRulesZone) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
   };
 
   private onPointerMove = (event: PointerEvent): void => {

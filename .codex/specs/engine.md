@@ -83,9 +83,9 @@ ShakeInputService.events:
 - Ниже FHD gameplay DOM живёт в центрированном виртуальном холсте `1920×1080`, масштабируемом от `66.7%` на `1280×720`. На FHD и выше SVG/HUD остаются в исходном масштабе `100%`, а reference-layer занимает весь viewport, чтобы viewport-relative HUD-отступы оставались у краёв экрана на QHD/4K.
 - На 21:9 и шире стол остаётся центральной FHD-композицией, а HUD использует свободные поля по бокам через исходные responsive-отступы; SVG и HUD не растягиваются.
 - Menu-контент и все dialog-панели используют общий `--responsive-ui-scale`: от `66.7%` на `1280×720` до `100%` на FHD и выше. Back/top-menu controls масштабируются от закреплённого края, а backdrop не уменьшается.
-- Mobile runtime требует landscape. В portrait поверх app показывается только prompt поворота и фоновые menu dice; в landscape открывается обычное меню без logo, но с верхним menu; desktop cursor отключён. Menu text/number fields используют собственную DOM-клавиатуру, поэтому Android IME не ужимает игровой viewport. У gameplay скрыты верхнее menu и правая player-панель, а квадратный стол занимает `84%` короткой стороны viewport по центру.
+- Mobile runtime требует landscape. В portrait поверх TWA показывается только prompt поворота и фоновые menu dice; в landscape открывается menu с верхним menu и logo; desktop cursor отключён. Обычный Android browser/PWA вместо игрового runtime показывает только APK download landing. Menu text/number fields используют собственную DOM-клавиатуру, поэтому Android IME не ужимает игровой viewport. Gameplay mobile показывает стол до `96%` короткой стороны viewport по центру.
 - Mobile PWA запускается из manifest в `fullscreen`/`landscape`; browser install и service-worker cache/update правила описаны в `pwa.md`. Это не меняет world units, camera physics или authoritative server simulation.
-- В gameplay `#lang-controls` и `#hud-turn-stats` используют общую координату верхнего ряда с учётом compact reference-layer; `#hud-surrender` и `#hud-actions` имеют один нижний offset. Перемещаются внешние overlay-слои, не их внутренние элементы.
+- Desktop gameplay сохраняет общую верхнюю линию `#lang-controls` и `#hud-turn-stats`. Только на mobile `MobileGameplayLayoutService` создаёт `#mobile-gameplay-grid` поверх viewport: `edge | left rail | table | right rail | edge`. В Grid находятся Surrender, Settings/Sound/Language и оба rail. Grid измеряет только внешний visual span Settings/Sound/Language и использует его как единственный track width для обеих боковых колонок; позиции не измеряются и не имеют независимых fixed-координат. Слева от стола идёт вертикальный rail: Banked, Selected, opponents сверху вниз, свой player последним; справа — action rail. Центральная grid-строка ровно содержит четыре `45px` карточки с `8px` gap: первые четыре карточки 1×1 совпадают по строкам, дополнительные opponents продолжаются только вниз. `#hud-surrender` — profile-sized `48px` элемент первой левой grid-колонки; верхняя группа — первая правая колонка. Desktop layout не меняется.
 - `GameplayLayoutService` берёт CSS-размер canvas, поэтому browser zoom/resize меняют композицию без пересоздания физического мира. Полноэкранный `#gameplay-overlay-viewport` содержит только блокирующие игровые модалки; custom cursor остаётся вне этого слоя.
 - Внутреннее WebGL-разрешение остаётся `PS1_RENDER_SCALE = 0.48`; layout не меняет quality/FPS-профиль.
 
@@ -100,7 +100,7 @@ hForWidth = (TABLE_WIDTH/2) / (tanHalf * camera.aspect)
 camera.y  = max(hForDepth, hForWidth) / tableViewportFill
 ```
 
-- `tableViewportFill` интерполируется от `0.58` на compact desktop до `0.72` на FHD и привязан к высоте reference-layer. На `1280×720` поле заметно компактнее, чтобы HUD помещался без растяжения.
+- На desktop `tableViewportFill` после обычной адаптивной интерполяции получает visual zoom `1.32`: стол, кости и bench на 10% крупнее предыдущей композиции без изменения размеров арены. На mobile итог по-прежнему ограничен `0.96`, чтобы квадратный стол не обрезался.
 - На 16:9 FHD обе формулы дают одну Y; визуальное поле занимает 72% reference-height.
 - На ultrawide (aspect > 16/9) `hForDepth` побеждает → стол остаётся в центральной FHD-композиции, по бокам виден фон.
 - На portrait/square `hForWidth` побеждает → камера выше, поля сверху/снизу
@@ -119,7 +119,7 @@ camera.y  = max(hForDepth, hForWidth) / tableViewportFill
 | `WALL_THICKNESS` | 0.10 | Толщина стен и потолка |
 | `WALL_INSET` | 0.10 | Сдвиг внутренней грани стены от кромки стола |
 | `DICE_COUNT` | 6 | Сколько костей спавнить |
-| `DICE_HALF_SIZE` | 0.273 | Полуразмер ребра кости (куб 0.546×0.546×0.546) |
+| `DICE_HALF_SIZE` | 0.3276 | Полуразмер ребра кости (куб 0.6552×0.6552×0.6552), одинаковый в client/server physics |
 | `DICE_MASS` | 4.86 | Масса кости |
 | `DICE_SPACING` | 0.76 | Разнос костей в release-row; сверху/снизу ряд идёт по X, слева/справа по Z |
 | `DICE_LINEAR_DAMPING` / `DICE_ANGULAR_DAMPING` | 0.27 / 0.35 | Торможение полёта и вращения; более плотное и спокойное движение после контакта |
@@ -150,9 +150,9 @@ camera.y  = max(hForDepth, hForWidth) / tableViewportFill
 - Первый OST-трек всегда создаётся с нулевой громкостью и после успешного `play()` плавно входит в рабочую громкость за `420ms`; это исключает резкий стартовый импульс и наложение на первый `ui-click`.
 - Первый трек выбирается random на клиенте. Текущий трек stream/range-грузится браузером; следующий random track (без повтора текущего) создаётся с `preload="auto"` только когда до конца текущего остаётся около 25 секунд. При нескольких треках переход идёт через короткий crossfade. Если отдельный `next.play()` блокируется или срывается на границе `ended`, `MusicService` переиспользует текущий `HTMLAudioElement`, переключает `src` на следующий трек и продолжает бесконечный OST loop.
 - `public/assets/rules.svg` используется как обычный `/assets/rules.svg` URL и preloads as image. Текущий rules-board эксперимент отключает 3D-объект в runtime и показывает SVG как обычный DOM `<img>` поверх WebGL canvas, чтобы избежать WebGL texture inversion/filtering/pixelation.
-- `RulesBoardService` сохраняет прежний lifecycle (`update`, `updateLayout`, `destroy`) и constructor-call из `GameEngine`, но scene/camera/canvas не используют для геометрии. Board и `Rules / Правила (<клавиша>)` монтируются в gameplay reference-layer и масштабируются вместе с HUD.
+- `RulesBoardService` сохраняет прежний lifecycle (`update`, `updateLayout`, `destroy`) и constructor-call из `GameEngine`, но scene/camera/canvas не используют для геометрии. Desktop board и `Rules / Правила (<клавиша>)` монтируются в gameplay reference-layer и масштабируются вместе с HUD; mobile board монтируется в body с тем же вычисленным physical scale, чтобы перекрывать top controls.
 - Rules-board имеет дополнительный вертикальный scale: на FHD (`1080px` высоты) — `100%`; на QHD (`1440px`) — `75%` и этот минимум сохраняется на 4K. Ниже FHD собственный scale плавно идёт к `75%` на `720px`; вместе с общим gameplay scale это даёт `50%` итогового размера на `1280×720`. `Rules / Правила` Button_L использует тот же scale.
-- Настраиваемая `showRules` клавиша (`KeyC` по умолчанию) или Button_L переключает DOM-плашку: overlay плавно едет из-за правого края reference-layer и обратно; shown-позиция держит правый отступ `168px`. Когда board показана, Button_L плавно скрыт и не принимает pointer events.
+- На desktop настраиваемая `showRules` клавиша (`KeyC` по умолчанию) или Button_L переключает DOM-плашку: overlay плавно едет из-за правого края reference-layer и обратно; shown-позиция держит правый отступ `168px`. Board можно тащить вправо: release после 50% пути закрывает её, иначе она плавно возвращается. Когда board показана, Button_L плавно скрыт и не принимает pointer events. На mobile rules открываются action-плашкой как центральный modal: panel имеет `max-height`, вертикальный scroll, а tap по backdrop закрывает его. Edge-swipe и drag-close отсутствуют.
 - На hover DOM-панель получает лёгкий Steam-card-style CSS tilt: cursor offset относительно центра маппится в `rotateX/rotateY` с clamp `±5deg`; при уходе курсора tilt возвращается в `0/0`. Постоянного `rotateZ`-наклона нет.
 
 ## Освещение

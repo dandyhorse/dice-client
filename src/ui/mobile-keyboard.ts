@@ -155,7 +155,9 @@ const renderLettersKeyboard = (container: HTMLDivElement): void => {
       createKey('⇧', () => {
         uppercase = !uppercase;
         renderKeyboard();
-      }, uppercase ? 'mobile-keyboard-key--active' : 'mobile-keyboard-key--action'),
+      }, uppercase
+        ? 'mobile-keyboard-key--action mobile-keyboard-key--active'
+        : 'mobile-keyboard-key--action'),
       createKey('⌫', deleteCharacter, 'mobile-keyboard-key--action'),
     ),
   );

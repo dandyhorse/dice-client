@@ -1,7 +1,7 @@
 # Task: current-sparc client
 
 ## Scope
-Capture the current client-side state after scoring, auth UX, production routing, PM2 preview, test-room, and leave/back-button work.
+Capture the current client-side state after scoring, auth UX, production routing, PM2 preview, and gameplay exit work.
 
 ## Acceptance Criteria
 - Progress records what changed and what was verified.

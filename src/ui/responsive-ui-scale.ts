@@ -1,3 +1,8 @@
+import {
+  MOBILE_TOP_MENU_SCALE_VARIABLE,
+  mobileTopMenuScale,
+} from './mobile-gameplay-grid';
+
 const REFERENCE_WIDTH = 1920;
 const REFERENCE_HEIGHT = 1080;
 const MIN_SCALE = 2 / 3;
@@ -22,6 +27,10 @@ const updateScale = (): void => {
     ? Math.max(0, (height - referencePhysicalHeight) / 2)
     : 0;
   document.documentElement.style.setProperty(SCALE_VARIABLE, scale.toFixed(4));
+  document.documentElement.style.setProperty(
+    MOBILE_TOP_MENU_SCALE_VARIABLE,
+    String(mobileTopMenuScale()),
+  );
   document.documentElement.style.setProperty(
     GAMEPLAY_TOP_ROW_OFFSET_VARIABLE,
     `${(referenceTop + GAMEPLAY_TOP_ROW_OFFSET_PX * scale).toFixed(2)}px`,

@@ -16,7 +16,7 @@ export const WALL_THICKNESS = 0.1;
 export const WALL_INSET = 0.1;
 
 export const DICE_COUNT = 6;
-export const DICE_HALF_SIZE = 0.273;
+export const DICE_HALF_SIZE = 0.3276;
 export const DICE_MASS = 4.86;
 export const DICE_SPACING = 0.76;
 export const DICE_LINEAR_DAMPING = 0.27;

@@ -24,6 +24,7 @@ class SelectionService {
   disable(): void;       // выключить + clear()
   getSelectedIndices(): number[];  // в порядке кликов
   clear(): void;         // снять подсветку, очистить set, эмит [].
+  toggleSelectAllAvailable(): void; // довыбрать все valid dice, либо clear если выбраны все
 }
 ```
 
@@ -71,11 +72,13 @@ Player cards use enlarged avatar+score rectangles (`430px` min width, real `128p
 
 The top turn stat tiles (`Banked` / `Selected`) use larger padding/min-width/value text than the original compact HUD so they read closer in scale to the player cards. Их внешний слой всегда выровнен по верхней линии с `#lang-controls`; внутренние tiles не перестраиваются.
 
+Mobile uses `MobileGameplayLayoutService`; desktop layout remains untouched. One five-column CSS Grid (`edge | left rail | table | right rail | edge`) owns Surrender, Settings/Sound/Language and both rails. Rail token equals full outer span of `[Settings] gap [Sound] gap [Language]`; every action, stat and player card uses `width: 100%` of its grid track. Left rail order is: numeric-only Banked/Selected tiles, every opponent top-to-bottom, own player last. Each left card and right action has `45px` height; central grid row makes four 1×1 rows line up exactly, extra opponents continue below. Player avatar follows desktop geometry proportionally: avatar image is masked inside its own frame, which is inside the player-card frame. Right rail buttons are `Select all`, `Take and roll`, `Take and pass turn`, `Rules`; Throw button does not exist. Action availability still follows authoritative match state. Opening settings, sound or language immediately makes the right rail inactive, grayscale and nearly transparent; closing the surface restores it immediately. Mobile controls have no hover state or dropdown animation. Mobile top menu contains Settings, sound and language; surrender is a standalone `48px` frame with `X` centered inside it at the first left grid-column line.
+
 ### API
 
 ```ts
 class HudUiService {
-  readonly events: EventEmitter;  // 'continue-clicked', 'bank-clicked'
+  readonly events: EventEmitter;  // 'select-all-clicked', 'continue-clicked', 'bank-clicked', 'rules-clicked'
   constructor(ownUserId: string);
   setMatchState(state: MatchStatePayload): void;  // из MATCH_STATE
   setSelectedCount(n: number): void;              // из SelectionService
@@ -93,6 +96,7 @@ class HudUiService {
 - **Singleplayer avatars**: local human получает выбранный `PlayerSettings.profile.avatarIndex`; local bot получает следующий доступный avatar index или `0`, если доступна только одна картинка.
 - **Singleplayer bench parity**: local mode now mirrors server `MATCH_STATE.bench`. Continue appends selected faces, hot-dice/bust/bank/new-turn clears it, and `BenchDiceService` renders the held dice just like network mode.
 - **Автобросок после Continue**: если `PlayerSettings.gameplay.autoRollAfterContinue=true`, valid Continue игрока-человека сразу после перехода в local `WAITING` вызывает обычный keyboard throw. Для network этот же intent ждёт авторитативный `MATCH_STATE.WAITING`; бот никогда не использует эту настройку и бросает только своим delay-timer.
+- **Select all**: общая команда (desktop button/hotkey и mobile `Select all / Взять всё`) довыбирает все доступные scoring dice при частичном выборе; снимает выделение только когда выбраны все доступные.
 - **Turn banners / non-FARKLE transient errors**: `ТВОЙ ХОД` держится на экране до первого `pointerdown` или текущей клавиши броска (`Space` по умолчанию) в capture-фазе. Ход другого игрока показывается коротко (`1500ms`) и скрывается сам. Обычные ошибки держатся до первого `pointerdown`. Click/tap и клавиша броска только скрывают нужный overlay и не отменяют само действие под курсором.
 - **BUST/FARKLE**: на `match-roll-result.bust=true` показываем «FARKLE» (через showError) на обязательный таймер `1200ms`. Пока таймер идёт, действия заблокированы; следующий turn banner показывается только после окончания FARKLE-таймера.
 - **WIN/FARKLE**: на `MATCH_STATE.phase=FINISHED` показываем финальный экран. После `LAST_PLAYER` реванш недоступен.

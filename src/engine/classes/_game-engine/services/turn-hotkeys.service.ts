@@ -1,7 +1,7 @@
 import { EventEmitter } from '../../event-emitter.class';
 import { DEFAULT_PLAYER_SETTINGS, type ControlBindings } from '../../../../player-settings';
 import {
-  isGameInteractionBlocked,
+  isGameplayInteractionBlocked,
   isInteractiveGameTarget,
   requestTopMenuDropdownClose,
 } from '../../../../ui/game-modal-state';
@@ -33,7 +33,7 @@ export class TurnHotkeysService {
   private onKeyDown = (event: KeyboardEvent): void => {
     if (!this.enabled) return;
     if (event.repeat || event.defaultPrevented) return;
-    if (isInteractiveGameTarget(event.target) || isGameInteractionBlocked()) return;
+    if (isInteractiveGameTarget(event.target) || isGameplayInteractionBlocked()) return;
 
     const action = this.actionForCode(event.code);
     if (!action) return;

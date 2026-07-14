@@ -8,6 +8,8 @@ const MAX_UI_SCALE = 1;
 const COMPACT_TABLE_FILL = 0.58;
 const STANDARD_TABLE_FILL = 0.72;
 const MOBILE_TABLE_VIEWPORT_FILL = 0.84;
+const GAMEPLAY_VISUAL_ZOOM = 1.32;
+const MOBILE_TABLE_VIEWPORT_FILL_MAX = 0.96;
 
 export interface GameplayLayoutMetrics {
   viewportWidth: number;
@@ -125,8 +127,8 @@ export class GameplayLayoutService {
       referencePhysicalWidth: REFERENCE_WIDTH * uiScale,
       referencePhysicalHeight,
       tableViewportFill: mobileRuntime
-        ? MOBILE_TABLE_VIEWPORT_FILL
-        : referenceTableFill * (referencePhysicalHeight / viewportHeight),
+        ? Math.min(MOBILE_TABLE_VIEWPORT_FILL * GAMEPLAY_VISUAL_ZOOM, MOBILE_TABLE_VIEWPORT_FILL_MAX)
+        : referenceTableFill * (referencePhysicalHeight / viewportHeight) * GAMEPLAY_VISUAL_ZOOM,
     };
   }
 

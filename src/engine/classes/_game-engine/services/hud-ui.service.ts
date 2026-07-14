@@ -8,6 +8,11 @@ import { onLanguageChange, t } from '../../../../ui/i18n';
 import { bindMouseOnlyClick } from '../../../../ui/mouse-only-button';
 import { FONT_FAMILY, FONT_SIZE, UI_RADIUS } from '../../../../ui/theme';
 import { avatarUrlForIndex } from '../../../../avatars';
+import {
+  MobileGameplayLayoutService,
+  type MobileGameplayAction,
+  type MobileGameplayPlayer,
+} from './mobile-gameplay-layout.service';
 
 import {
   DEFAULT_ROOM_OPTIONS,
@@ -98,6 +103,7 @@ export class HudUiService {
   private readonly finalExitBtn: HTMLButtonElement;
   private readonly finalRematchBtn: HTMLButtonElement;
   private readonly unsubscribeLanguage: () => void;
+  private readonly mobileLayout: MobileGameplayLayoutService | null;
 
   private state: MatchStatePayload | null = null;
   private roomState: RoomStatePayload | null = null;
@@ -305,6 +311,18 @@ export class HudUiService {
     host.appendChild(this.turnBannerPanel);
     host.appendChild(this.finalActionsPanel);
 
+    const mobileLayout = document.documentElement.classList.contains('mobile-runtime')
+      ? new MobileGameplayLayoutService({
+      turnStatsPanel: this.turnStatsPanel,
+      playerPanels: [this.leftPanel, this.opponentPanel, this.rightPanel],
+      desktopActionsPanel: this.actionsPanel,
+      surrenderPanel: this.surrenderPanel,
+      surrenderButton: this.surrenderBtn,
+      onAction: (action) => this.handleMobileAction(action),
+      })
+      : null;
+    this.mobileLayout = mobileLayout;
+
     this.unsubscribeLanguage = onLanguageChange(() => {
       this.renderButtonLabels();
       this.render();
@@ -433,6 +451,7 @@ export class HudUiService {
     this.turnBannerClickDismissable = false;
     this.queuedTurnBannerUserId = '';
     this.unsubscribeLanguage();
+    this.mobileLayout?.destroy();
     this.root.remove();
     this.actionsPanel.remove();
     this.surrenderPanel.remove();
@@ -466,10 +485,24 @@ export class HudUiService {
       t('surrenderAction'),
       this.controls.surrender,
     ));
+    this.mobileLayout?.setActionLabels({
+      'select-all': t('selectAllAction'),
+      continue: t('continueAction'),
+      bank: t('bankAction'),
+      rules: t('showRules'),
+    });
+    this.mobileLayout?.setSurrenderLabel(t('surrenderAction'));
     this.renderFinalButtons();
   }
 
   private renderLeft(): void {
+    if (this.mobileLayout) {
+      this.leftPanel.style.setProperty('display', 'none', 'important');
+      this.opponentPanel.style.setProperty('display', 'none', 'important');
+      this.rightPanel.style.setProperty('display', 'none', 'important');
+      this.renderMobilePlayers();
+      return;
+    }
     const s = this.state;
     if (!s) {
       this.leftPanel.textContent = t('connecting');
@@ -510,6 +543,35 @@ export class HudUiService {
     this.stylePlayerPanel(this.leftPanel, null, false);
   }
 
+  private renderMobilePlayers(): void {
+    const layout = this.mobileLayout;
+    const state = this.state;
+    const room = this.roomState;
+    if (!layout || !state || !room) {
+      layout?.setPlayers([]);
+      return;
+    }
+    const targetScore = room.options.targetScore ?? DEFAULT_ROOM_OPTIONS.targetScore;
+    const totals = new Map(state.totals.map((entry) => [entry.userId, entry.total]));
+    const players = room.members.filter((member) => member.role === ROOM_ROLE.PLAYER);
+    const ordered = [
+      ...players.filter((member) => member.userId !== this.ownUserId),
+      ...players.filter((member) => member.userId === this.ownUserId),
+    ];
+    const items: MobileGameplayPlayer[] = ordered.map((member) => {
+      const label = formatMember(member.displayName);
+      return {
+        displayName: member.userId === this.ownUserId ? `${label} (${t('youSuffix')})` : label,
+        avatarIndex: member.avatarIndex,
+        total: totals.get(member.userId) ?? 0,
+        targetScore,
+        active: state.currentPlayer === member.userId,
+        own: member.userId === this.ownUserId,
+      };
+    });
+    layout.setPlayers(items);
+  }
+
   private renderTurnStats(): void {
     const s = this.state;
     if (!s || s.phase === MATCH_PHASE.FINISHED) {
@@ -517,7 +579,7 @@ export class HudUiService {
       return;
     }
 
-    this.turnStatsPanel.style.display = 'grid';
+    this.turnStatsPanel.style.display = this.mobileLayout ? 'flex' : 'grid';
     const remoteSelected =
       s.currentPlayer !== this.ownUserId &&
       this.remoteSelectionPreview?.userId === s.currentPlayer &&
@@ -537,6 +599,28 @@ export class HudUiService {
 
   private makeStatTile(label: string, value: string): HTMLDivElement {
     const tile = document.createElement('div');
+    if (this.mobileLayout) {
+      Object.assign(tile.style, {
+        width: '100%',
+        height: '45px',
+        padding: '0',
+        backgroundImage: "url('/assets/ui/menu-button-small-frame-stretch.svg')",
+        backgroundRepeat: 'no-repeat',
+        backgroundPosition: 'center',
+        backgroundSize: '100% 100%',
+        color: PANEL_FG,
+        display: 'grid',
+        placeItems: 'center',
+        boxSizing: 'border-box',
+        fontSize: '25px',
+        lineHeight: '1',
+        fontWeight: '700',
+        fontVariantNumeric: 'tabular-nums',
+      } satisfies Partial<CSSStyleDeclaration>);
+      tile.textContent = value;
+      tile.setAttribute('aria-label', `${label}: ${value}`);
+      return tile;
+    }
     Object.assign(tile.style, {
       width: `${TURN_STAT_TILE_WIDTH}px`,
       height: `${TURN_STAT_TILE_HEIGHT}px`,
@@ -873,6 +957,30 @@ export class HudUiService {
     this.setButtonEnabled(this.continueBtn, canSubmit);
     this.setButtonEnabled(this.bankBtn, canBank);
     this.setButtonEnabled(this.surrenderBtn, showPanel && !this.actionsBlocked);
+    this.mobileLayout?.setActionState({
+      visible: showPanel,
+      selectAllEnabled: canUseSelection,
+      bankEnabled: canBank,
+      continueEnabled: canSubmit,
+      rulesEnabled: showPanel && !this.actionsBlocked,
+    });
+  }
+
+  private handleMobileAction(action: MobileGameplayAction): void {
+    switch (action) {
+      case 'select-all':
+        if (!this.selectAllBtn.disabled) this.events.emit('select-all-clicked');
+        return;
+      case 'continue':
+        if (!this.continueBtn.disabled) this.events.emit('continue-clicked');
+        return;
+      case 'bank':
+        if (!this.bankBtn.disabled) this.events.emit('bank-clicked');
+        return;
+      case 'rules':
+        this.events.emit('rules-clicked');
+        return;
+    }
   }
 
   private renderStatus(): void {

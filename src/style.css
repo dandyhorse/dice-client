@@ -91,10 +91,17 @@ html.mobile-runtime * {
   cursor: auto !important;
 }
 
+html.mobile-runtime {
+  --mobile-gameplay-edge-offset: max(
+    40px,
+    calc(env(safe-area-inset-left) + 12px),
+    calc(env(safe-area-inset-right) + 12px)
+  );
+}
+
 html.mobile-orientation-locked #lobby,
 html.mobile-orientation-locked #room-screen,
 html.mobile-orientation-locked #lang-controls,
-html.mobile-orientation-locked #back-button,
 html.mobile-orientation-locked #profile-popup,
 html.mobile-orientation-locked #settings-modal,
 html.mobile-orientation-locked #room-password-modal {
@@ -109,6 +116,56 @@ html.mobile-orientation-locked #hud {
 
 html.mobile-runtime #hud-right {
   display: none !important;
+}
+
+html.mobile-runtime #hud-surrender.mobile-surrender-control,
+html.mobile-runtime #hud-surrender.mobile-surrender-control > button {
+  width: 48px !important;
+  height: 48px !important;
+  min-width: 48px !important;
+  min-height: 48px !important;
+  max-width: 48px !important;
+  max-height: 48px !important;
+}
+
+html.twa-runtime,
+html.twa-runtime * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -webkit-touch-callout: none;
+}
+
+html.mobile-runtime #lang-controls {
+  scale: var(--mobile-top-menu-scale);
+}
+
+html.mobile-runtime #lobby .menu-frame-button:not(.menu-frame-button-small):not(.menu-frame-button-fit),
+html.mobile-runtime #room-screen .menu-frame-button:not(.menu-frame-button-small):not(.menu-frame-button-fit),
+html.mobile-runtime #profile-popup .menu-frame-button:not(.menu-frame-button-small):not(.menu-frame-button-fit),
+html.mobile-runtime #settings-modal .menu-frame-button:not(.menu-frame-button-small):not(.menu-frame-button-fit),
+html.mobile-runtime #room-password-modal .menu-frame-button:not(.menu-frame-button-small):not(.menu-frame-button-fit) {
+  width: min(414px, calc(100vw - 48px)) !important;
+  height: 72px !important;
+  background-size: 414px 72px !important;
+}
+
+html.mobile-runtime #lobby .menu-frame-button:not(.menu-frame-button-small):not(.menu-frame-button-fit)::after,
+html.mobile-runtime #room-screen .menu-frame-button:not(.menu-frame-button-small):not(.menu-frame-button-fit)::after,
+html.mobile-runtime #profile-popup .menu-frame-button:not(.menu-frame-button-small):not(.menu-frame-button-fit)::after,
+html.mobile-runtime #settings-modal .menu-frame-button:not(.menu-frame-button-small):not(.menu-frame-button-fit)::after,
+html.mobile-runtime #room-password-modal .menu-frame-button:not(.menu-frame-button-small):not(.menu-frame-button-fit)::after {
+  background-size: 385px 58px;
+}
+
+html.twa-runtime #lobby.mobile-twa-home-lobby .menu-frame-button:not(.menu-frame-button-small) {
+  width: 362px !important;
+  height: 63px !important;
+  background-size: 362px 63px !important;
+  font-size: 27px !important;
+}
+
+html.twa-runtime #lobby.mobile-twa-home-lobby .menu-frame-button:not(.menu-frame-button-small)::after {
+  background-size: 338px 51px;
 }
 
 html.mobile-orientation-locked #mobile-keyboard {
@@ -175,7 +232,7 @@ html.mobile-keyboard-open #mobile-keyboard {
   background: linear-gradient(180deg, #4b4745, #302d2c);
   color: #fff;
   font-family: var(--font-ui);
-  font-size: clamp(16px, 2.6vh, 25px);
+  font-size: clamp(19px, 2.6vh, 28px);
   line-height: 1;
   -webkit-tap-highlight-color: transparent;
 }

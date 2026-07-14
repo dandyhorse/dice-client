@@ -1,5 +1,6 @@
 export const GAME_POPUP_CLOSE_EVENT = 'dice:close-game-popups';
 export const TOP_MENU_DROPDOWN_CLOSE_EVENT = 'dice:close-top-menu-dropdowns';
+export const GAMEPLAY_OVERLAY_STATE_EVENT = 'dice:gameplay-overlay-state';
 
 export const GAME_BLOCKING_OVERLAY_SELECTORS = [
   '#settings-modal',
@@ -18,8 +19,19 @@ export const requestTopMenuDropdownClose = (): void => {
   window.dispatchEvent(new Event(TOP_MENU_DROPDOWN_CLOSE_EVENT));
 };
 
+export const notifyGameplayOverlayState = (): void => {
+  window.dispatchEvent(new Event(GAMEPLAY_OVERLAY_STATE_EVENT));
+};
+
 export const isGameInteractionBlocked = (): boolean =>
   document.querySelector(GAME_BLOCKING_OVERLAY_SELECTORS) !== null;
+
+export const isMobileRulesInteractionLocked = (): boolean =>
+  document.documentElement.classList.contains('mobile-runtime') &&
+  document.getElementById('rules-board')?.dataset.mobileRulesOpen === 'true';
+
+export const isGameplayInteractionBlocked = (): boolean =>
+  isGameInteractionBlocked() || isMobileRulesInteractionLocked();
 
 export const isInteractiveGameTarget = (target: EventTarget | null): boolean => {
   if (!(target instanceof Element)) return false;

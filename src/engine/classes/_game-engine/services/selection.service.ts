@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { EventEmitter } from '../../event-emitter.class';
 import { DiceService } from './dice.service';
 import { validateSelection, type ScoringOption } from '../../../../domain/scorer';
-import { isGameInteractionBlocked } from '../../../../ui/game-modal-state';
+import { isGameplayInteractionBlocked } from '../../../../ui/game-modal-state';
 
 const HIGHLIGHT_PRIORITY = {
   straight: 3,
@@ -102,7 +102,7 @@ export class SelectionService {
 
   selectAllAvailable(): void {
     if (!this.enabled) return;
-    if (isGameInteractionBlocked()) return;
+    if (isGameplayInteractionBlocked()) return;
     this.selected.clear();
     this.orderedSelection.length = 0;
 
@@ -114,6 +114,22 @@ export class SelectionService {
 
     this.updateMarkers();
     this.emitSelectionChanged();
+  }
+
+  /** Select every currently valid die, or clear only when all are selected. */
+  toggleSelectAllAvailable(): void {
+    if (!this.enabled) return;
+    if (isGameplayInteractionBlocked()) return;
+
+    const available = this.dice
+      .getActiveDiceMeshes()
+      .map((entry) => entry.index)
+      .filter((index) => this.selectable.has(index));
+    if (available.length > 0 && available.every((index) => this.selected.has(index))) {
+      this.clear();
+      return;
+    }
+    this.selectAllAvailable();
   }
 
   setScoringOptions(rolledFaces: number[], options: ScoringOption[], showHighlights = true): void {
@@ -209,7 +225,7 @@ export class SelectionService {
 
   private onPointerUp = (event: PointerEvent): void => {
     if (!this.enabled) return;
-    if (isGameInteractionBlocked()) return;
+    if (isGameplayInteractionBlocked()) return;
     if (!event.isPrimary || event.button !== 0) return;
 
     const rect = this.canvas.getBoundingClientRect();

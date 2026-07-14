@@ -55,7 +55,6 @@ export type RoomStatus = (typeof ROOM_STATUS)[keyof typeof ROOM_STATUS];
 
 export const ROOM_MODE = {
   MATCH: 0,
-  TEST: 1,
 } as const;
 
 export type RoomMode = (typeof ROOM_MODE)[keyof typeof ROOM_MODE];

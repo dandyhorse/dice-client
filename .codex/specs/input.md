@@ -33,6 +33,7 @@
 - На desktop `src/ui/custom-cursor.ts` скрывает native cursor после первого pointer movement и рисует DOM overlay поверх страницы; overlay имеет `pointer-events: none`. `open-hand`/`close-hand` остаются `147×147` (`+15%`), базовый `target-hand` — `50×50`.
 - Mobile runtime не устанавливает DOM-cursor, а CSS принудительно возвращает обычный touch cursor для всех элементов.
 - В mobile runtime не регистрируется menu `ui-hover` sound; `ui-click` проигрывается только у реальных интерактивных DOM-controls, поэтому тап по пустому месту, фону или игровому столу полностью тихий. Custom mobile keyboard также не проигрывает `ui-click`, чтобы первый ввод текста не накладывался на техническое audio-unlock событие.
+- Открытые mobile rules являются gameplay interaction lock: ShakeInput, SelectionService и keyboard actions игнорируют ввод. Rules открываются action-плашкой, показываются в центре как scrollable modal и закрываются tap по свободному backdrop; tap не проходит в элементы под overlay. После закрытия зона кнопки Rules и `24px` вокруг неё поглощает тот же завершающий tap, чтобы не открыть rules повторно.
 - Базовый cursor всего клиента: `target-hand`; он действует в меню, паузах, выборе костей и любых состояниях без активного hold/release.
 - Когда input включён, кости ещё не взяты, pointer находится над throw-zone стола и поверх нет DOM-меню/модалки: `open-hand`.
 - Когда игрок держит кости и pointer остаётся над throw-zone стола без DOM-меню/модалки поверх: `close-hand`.
@@ -104,6 +105,7 @@
 - В игровом поле справа показывается `Rules / Правила (<клавиша>)` в рамке `Button_L`. Клик по ней переключает ту же доску.
 - Пока доска выезжает и показана, подсказка плавно исчезает; после её закрытия — плавно возвращается.
 - Клавиша игнорируется в `input`, `textarea`, `select`, `button`, `[contenteditable]`.
+- На mobile нет Button_L и rules hotkey. Rules открываются отдельной action-плашкой `Rules / Правила`, а закрываются только tap в свободной области backdrop; edge swipe и drag-close отключены. Панель скроллится по вертикали и ловит весь pointer input.
 
 ## Важные тонкости
 

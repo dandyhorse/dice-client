@@ -17,15 +17,16 @@
 - Browser/PWA не пытается вызвать DOM `requestFullscreen()`: центральной
   кнопки «На весь экран» нет. Полноэкранный режим с областью выреза камеры
   является ответственностью native TWA shell.
-- TWA запускает `/?twa=1` в sticky immersive с layout in the display cutout.
+- TWA запускает `/?twa=1` в sticky immersive с layout in the display cutout. Этот query marker добавляет `html.twa-runtime`: в TWA запрещено любое text selection/callout, пока отдельно не будет задан allowlist копируемого текста.
 
 ## Install, cache, offline
 
-- В Android browser lobby кнопка «Установить игру» всегда загружает signed APK
-  с `/downloads/farklepit-android.apk` через нативную `<a download>` ссылку, а
-  не навигацию текущего PWA окна. Workbox исключает `/downloads/` из
-  `navigateFallback`, поэтому APK-запрос всегда доходит до nginx. Внутри TWA
-  кнопка скрыта: приложение уже установлено. iOS не получает Android APK кнопку.
+- Обычный Android browser/PWA не показывает game lobby, name flow, top menu или
+  orientation prompt: единственный экран содержит «Установить игру» — нативную
+  `<a download>` ссылку на signed APK `/downloads/farklepit-android.apk`.
+  Workbox исключает `/downloads/` из `navigateFallback`, поэтому APK-запрос
+  всегда доходит до nginx. Полный mobile game UI доступен только внутри TWA
+  (`?twa=1`). iOS не получает Android APK landing.
 - Precache содержит shell, JS/CSS, локальные fonts, UI/menu dice assets и PWA
   icons. OST, sound effects, `/auth`, `/ws` и игровые данные не кэшируются.
 - После одного online launch сервис worker может открыть cache shell без сети.
@@ -45,8 +46,22 @@
   настройки; desktop продолжает использовать обычные browser inputs. V1 даёт
   RU/EN, `123`/symbols, Shift, Backspace, Space, Done, password mask и лимиты
   полей; paste, autofill и emoji намеренно не реализованы.
-- Панель занимает максимум `31dvh` снизу в landscape; активная menu/modal
+- Панель занимает максимум `31dvh` снизу в landscape; Shift всегда сохраняет
+  action-key flex width, поэтому keyboard не меняет общий размер между lower/
+  uppercase. Шрифт всех клавиш на `3px` крупнее базовой mobile версии. Активная menu/modal
   композиция получает этот нижний inset и не сжимается системной клавиатурой.
+- Mobile settings не показывают desktop key-binding rows: touch UI использует собственные A/B/C actions и swipe rules. Existing audio and auto-roll settings остаются.
+
+## Mobile menu modals
+
+- Settings, profile и room-password overlays используют общий mobile modal layer: он выше top menu, делает background inert, растягивает panel до доступной высоты и оставляет scroll внутри panel. Тап по backdrop закрывает только modal и не проходит в кнопку под ним.
+- В mobile menu outer large button frames и top-menu controls увеличены на 20%; текст и внутренние отступы не масштабируются отдельно.
+- В TWA home menu logo стоит сверху (`300×102px`), четыре game buttons образуют
+  нижний stack: `362×63px`, `27px` text, `7px` gaps; нижняя кромка последней
+  кнопки держит `20px` safe inset.
+- В mobile top menu profile control вынесен влево: `48px` avatar frame, затем
+  nickname. Nickname truncates with ellipsis до левой кромки центрированного
+  `main-logo.svg`; settings/sound/language остаются справа.
 
 ## Deploy verification
 

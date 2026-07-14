@@ -15,10 +15,6 @@
 - [x] Future account client retained in `src/auth.ts`, but the active `src/main.ts` runtime is guest-only and does not import it.
 - [x] Production server URL fixed in `src/engine/config.ts`: production uses `window.location.origin`, avoiding hardcoded `:3002` and CORS/mixed-origin failures behind nginx.
 - [x] Client PM2 setup added in `ecosystem.config.cjs`: `npm run preview -- --host 0.0.0.0 --port 5174`, watching `dist`.
-- [x] Room protocol mirror extended with `ROOM_MODE.MATCH | ROOM_MODE.TEST` in `src/network/protocol/types.ts` and `src/network/protocol/codecs.ts`.
-- [x] Lobby gained `Тестовая комната`: creates an active free-play test room for multi-screen physics checks.
-- [x] `GameEngine` supports test rooms without turn HUD/selection: any player in a test room can throw while the room is active and not rolling.
-- [x] Added bottom-right `Назад` button in lobby room screen, network game, and local game.
 - [x] Added cleanup path for leaving game: `GameEngine.destroy()`, `ShakeInputService.destroy()`, `SelectionService.destroy()`, and WS disconnect via `NetworkService.disconnect()`.
 - [x] Network dice rendering optimized: `DiceService` now buffers server snapshots and interpolates at `now - INTERPOLATION_DELAY_MS`, using extrapolation only as a short fallback.
 - [x] Release-start latency reduced: interpolation delay now ramps from 0 to 50ms over 120ms after the first visible snapshot of a new roll.
@@ -110,9 +106,6 @@
 - [x] Dice motion slowed without time-scale: `WORLD_GRAVITY = -30`, damping `0.27/0.35`, `THROW_LINEAR_SCALE = 0.60`, `THROW_MAX_SPEED = 9.3`, Space throw scale `0.41`.
 
 ## Verification
-- [x] `npm run build` in `dice-client` passed after test-room changes.
-- [x] `npm run build` in `dice-client` passed after `Назад`/destroy changes.
-- [x] Built frontend bundle contains `Тестовая комната` and `Назад`.
 - [x] `pm2 list` showed `dice-client` online after `dist` rebuild and watch restart.
 - [x] Local nginx check for `https://farklepit.online/` returned `200`.
 - [x] `npm run build` in `dice-client` passed after online physics/render optimization.

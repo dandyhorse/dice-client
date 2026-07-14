@@ -37,10 +37,20 @@ import {
 } from './ui/mobile-keyboard';
 import { installPwaRuntime } from './ui/pwa-runtime';
 import { installResponsiveUiScale } from './ui/responsive-ui-scale';
+import {
+  MOBILE_GAMEPLAY_EDGE_OFFSET,
+  MOBILE_GAMEPLAY_GRID_ID,
+  MOBILE_GAMEPLAY_TOP_MENU_RENDERED_EVENT,
+} from './ui/mobile-gameplay-grid';
+import {
+  applyMobileModalLayer,
+  releaseMobileModalLayer,
+} from './ui/mobile/modal-layer';
 import { createSoundSliders } from './ui/sound-controls';
 import {
   TOP_MENU_DROPDOWN_CLOSE_EVENT,
   closeGamePopups,
+  notifyGameplayOverlayState,
 } from './ui/game-modal-state';
 import {
   FONT_FAMILY,
@@ -83,10 +93,10 @@ import {
 const DISPLAY_NAME_KEY = 'dice.displayName';
 const LEGACY_USER_ID_KEY = 'dice.userId';
 const SETTINGS_MODAL_ID = 'settings-modal';
-const BACK_BUTTON_ID = 'back-button';
 const ROOM_BADGE_ID = 'room-badge';
 const LANG_CONTROLS_ID = 'lang-controls';
 const PROFILE_POPUP_ID = 'profile-popup';
+const PROFILE_TOP_CONTROL_ID = 'profile-top-control';
 const ROOM_LIST_MODAL_ID = 'room-list-modal';
 const ROOM_PASSWORD_MODAL_ID = 'room-password-modal';
 const MOBILE_ORIENTATION_GATE_ID = 'mobile-orientation-gate';
@@ -107,6 +117,11 @@ const BUTTON_S_OVERLAY_SRC = `${UI_ASSET_BASE}/menu-button-small-hover-overlay.s
 const TOP_MENU_EDGE_OFFSET = 40;
 const TOP_MENU_ICON_SIZE = 60;
 const TOP_MENU_ICON_IMAGE_SIZE = 48;
+const MOBILE_TOP_MENU_ICON_SIZE = 48;
+const MOBILE_TOP_MENU_NICKNAME_GAP = 13;
+const MOBILE_TOP_MENU_LOGO_WIDTH = 300;
+const MOBILE_TOP_MENU_EDGE_OFFSET = 40;
+const MOBILE_TOP_MENU_LOGO_GAP = 12;
 const TOP_DROPDOWN_WIDTH = 60;
 const SOUND_DROPDOWN_HEIGHT = 180;
 const LANGUAGE_DROPDOWN_HEIGHT = 99;
@@ -122,6 +137,7 @@ const LANGUAGE_MATRIX_STEP_MS = 84;
 const LANGUAGE_MATRIX_ROUNDS = 5;
 const LANGUAGE_MATRIX_CHARS =
   'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789АБВГДЕЖЗИКЛМНОПРСТУФХЦЧШЭЮЯабвгдежзиклмнопрстуфхцчшэюя';
+
 const LANG_ICON_SRC: Record<Language, string> = {
   en: '/assets/lang/language-en.png',
   ru: '/assets/lang/language-ru.png',
@@ -163,10 +179,14 @@ const isMobileRuntime = (): boolean => {
 };
 
 const mobileRuntime = isMobileRuntime();
+const twaRuntime = new URLSearchParams(window.location.search).get('twa') === '1';
+const androidApkLanding =
+  mobileRuntime && !twaRuntime && /\bAndroid\b/i.test(navigator.userAgent);
 const isMobilePortrait = (): boolean =>
   mobileRuntime && !window.matchMedia('(orientation: landscape)').matches;
 
 document.documentElement.classList.toggle('mobile-runtime', mobileRuntime);
+document.documentElement.classList.toggle('twa-runtime', twaRuntime);
 installResponsiveUiScale();
 installPwaRuntime();
 installMobileKeyboard(mobileRuntime);
@@ -418,7 +438,7 @@ const startLocalMatch = async (
       localMatchConfig,
       playerSettings: getPlayerSettings(),
       playerDisplayName: currentDisplayName(),
-      onSurrender: returnToLobby,
+      onReturnToLobby: returnToLobby,
     });
     game.warmup();
     clearLobby();
@@ -428,7 +448,6 @@ const startLocalMatch = async (
     game.start();
     activeGame = game;
     renderLanguageControls();
-    clearBackButton();
   } catch (error) {
     game?.destroy();
     if (activeGame === game) activeGame = null;
@@ -608,6 +627,7 @@ const clearLobby = (): void => {
 
 const clearRoomScreen = (): void => {
   const existing = document.getElementById('room-screen');
+  releaseMobileModalLayer(existing);
   if (existing) existing.remove();
 };
 
@@ -615,17 +635,21 @@ const clearSettingsModal = (): void => {
   closeMobileKeyboard();
   cleanupSettingsUi();
   const existing = document.getElementById(SETTINGS_MODAL_ID);
+  releaseMobileModalLayer(existing);
   if (existing) existing.remove();
+  notifyGameplayOverlayState();
 };
 
 const clearRoomListModal = (): void => {
   const existing = document.getElementById(ROOM_LIST_MODAL_ID);
+  releaseMobileModalLayer(existing);
   if (existing) existing.remove();
 };
 
 const clearRoomPasswordModal = (): void => {
   closeMobileKeyboard();
   const existing = document.getElementById(ROOM_PASSWORD_MODAL_ID);
+  releaseMobileModalLayer(existing);
   if (existing) existing.remove();
 };
 
@@ -637,11 +661,6 @@ const closeLobbyListNetwork = (): void => {
   network.disconnect();
 };
 
-const clearBackButton = (): void => {
-  const existing = document.getElementById(BACK_BUTTON_ID);
-  if (existing) existing.remove();
-};
-
 const clearRoomBadge = (): void => {
   const existing = document.getElementById(ROOM_BADGE_ID);
   if (existing) existing.remove();
@@ -650,11 +669,15 @@ const clearRoomBadge = (): void => {
 const clearLanguageControls = (): void => {
   const existing = document.getElementById(LANG_CONTROLS_ID);
   if (existing) existing.remove();
+  document.getElementById(PROFILE_TOP_CONTROL_ID)?.remove();
+  notifyGameplayOverlayState();
 };
 
 const clearProfilePopup = (): void => {
   closeMobileKeyboard();
-  document.getElementById(PROFILE_POPUP_ID)?.remove();
+  const existing = document.getElementById(PROFILE_POPUP_ID);
+  releaseMobileModalLayer(existing);
+  existing?.remove();
 };
 
 const clearTopPopupLayer = (): void => {
@@ -756,7 +779,7 @@ const showMobileOrientationGate = (): void => {
   const title = document.createElement('div');
   title.textContent = t('rotateDeviceTitle');
   Object.assign(title.style, {
-    fontSize: '30px',
+    fontSize: '20px',
     lineHeight: '1.1',
   } satisfies Partial<CSSStyleDeclaration>);
   const description = document.createElement('div');
@@ -775,6 +798,11 @@ const syncMobileOrientation = (): void => {
   if (!mobileRuntime) return;
   if (!navigator.onLine && !activeGame) {
     renderOfflineScreen();
+    return;
+  }
+  if (androidApkLanding && !activeGame) {
+    clearMobileOrientationGate();
+    renderAndroidApkLanding();
     return;
   }
   if (isMobilePortrait()) {
@@ -810,7 +838,6 @@ const returnToLobbyAsync = async (): Promise<void> => {
   clearLobby();
   clearRoomScreen();
   clearRoomBadge();
-  clearBackButton();
   clearTopPopupLayer();
   clearRoomListModal();
   closeLobbyListNetwork();
@@ -838,7 +865,6 @@ const handleConnectionLost = (network: NetworkService): void => {
   activeGame = null;
   clearRoomScreen();
   clearRoomBadge();
-  clearBackButton();
   renderHome();
   showError(new Error(t('connectionLost')));
 };
@@ -856,44 +882,15 @@ const scheduleFinishedRoomReturn = (network: NetworkService): void => {
   });
 };
 
-const renderBackButton = (includeSettings = true): void => {
-  clearBackButton();
-  const wrap = document.createElement('div');
-  wrap.id = BACK_BUTTON_ID;
-  wrap.classList.add('responsive-ui-corner', 'responsive-ui-corner-bottom-right');
-  Object.assign(wrap.style, {
-    position: 'fixed',
-    right: '12px',
-    bottom: '12px',
-    display: 'flex',
-    gap: '8px',
-    zIndex: '35',
-  } satisfies Partial<CSSStyleDeclaration>);
-
-  if (includeSettings) {
-    const controlsBtn = button(t('settings'), renderSettingsModal);
-    Object.assign(controlsBtn.style, {
-      background: SETTINGS_BUTTON_BG,
-      border: '1px solid rgba(255,255,255,0.18)',
-      boxShadow: '0 8px 22px rgba(0,0,0,0.35)',
-    } satisfies Partial<CSSStyleDeclaration>);
-    wrap.appendChild(controlsBtn);
-  }
-
-  const backBtn = button(t('back'), returnToLobby);
-  Object.assign(backBtn.style, {
-    background: MENU_BUTTON_BG,
-    border: '1px solid rgba(255,255,255,0.22)',
-    boxShadow: '0 8px 22px rgba(0,0,0,0.35)',
-  } satisfies Partial<CSSStyleDeclaration>);
-  wrap.appendChild(backBtn);
-  document.body.appendChild(wrap);
-};
-
 const rerenderCurrentShell = (): void => {
   if (offlineScreenActive) return;
   if (!navigator.onLine && !activeGame) {
     renderOfflineScreen();
+    return;
+  }
+  if (androidApkLanding && !activeGame) {
+    clearMobileOrientationGate();
+    renderAndroidApkLanding();
     return;
   }
   if (isMobilePortrait()) {
@@ -954,7 +951,9 @@ const toggleProfilePopup = (): void => {
   closeTopMenuDropdowns();
   clearSettingsModal();
   prepareMainMenuTopPopup();
-  document.body.appendChild(createProfilePopup());
+  const popup = createProfilePopup();
+  document.body.appendChild(popup);
+  applyMobileModalLayer(popup, popup.firstElementChild as HTMLElement);
   audioService.play('ui-settings-open');
 };
 
@@ -967,13 +966,16 @@ const toggleSettingsPopup = (): void => {
   clearProfilePopup();
   prepareMainMenuTopPopup();
   renderSettingsModal();
+  notifyGameplayOverlayState();
   audioService.play('ui-settings-open');
 };
 
 const rerenderOpenTopPopup = (popup: 'profile' | 'settings' | null): void => {
   if (popup === 'profile') {
     clearProfilePopup();
-    document.body.appendChild(createProfilePopup());
+    const profilePopup = createProfilePopup();
+    document.body.appendChild(profilePopup);
+    applyMobileModalLayer(profilePopup, profilePopup.firstElementChild as HTMLElement);
     return;
   }
   if (popup === 'settings') {
@@ -1059,17 +1061,34 @@ const closeTopMenuDropdown = (
     languageDropdownPinnedOpen = false;
   }
   if (!options.silentSound) playTopMenuDropdownToggleSound(dropdown);
+  if (mobileRuntime) {
+    dropdown.remove();
+    notifyGameplayOverlayState();
+    return;
+  }
   dropdown.dataset.closing = 'true';
   dropdown.style.pointerEvents = 'none';
   dropdown.style.opacity = '0';
   dropdown.style.transform = 'translateY(-10px)';
   dropdown.style.maxHeight = '0px';
   window.setTimeout(() => dropdown.remove(), TOP_DROPDOWN_ANIMATION_MS);
+  notifyGameplayOverlayState();
 };
 
 const openTopMenuDropdown = (dropdown: HTMLElement): void => {
   const targetHeight = dropdown.offsetHeight || dropdown.scrollHeight;
   playTopMenuDropdownToggleSound(dropdown);
+  if (mobileRuntime) {
+    Object.assign(dropdown.style, {
+      overflow: 'visible',
+      transform: 'none',
+      transition: 'none',
+      opacity: '1',
+      maxHeight: 'none',
+    } satisfies Partial<CSSStyleDeclaration>);
+    notifyGameplayOverlayState();
+    return;
+  }
   dropdown.style.overflow = 'hidden';
   dropdown.style.transformOrigin = 'top center';
   dropdown.style.transition = [
@@ -1086,6 +1105,7 @@ const openTopMenuDropdown = (dropdown: HTMLElement): void => {
     dropdown.style.transform = 'translateY(0)';
     dropdown.style.maxHeight = `${targetHeight}px`;
   });
+  notifyGameplayOverlayState();
 };
 
 const showTopMenuDropdown = (dropdown: HTMLElement): void => {
@@ -1207,8 +1227,13 @@ const runLanguageMatrixAnimation = (): void => {
 };
 
 const selectLanguageFromDropdown = (language: Language): void => {
-  languageDropdownPinnedOpen = true;
-  if (language === getLanguage()) return;
+  // A mobile language tap re-renders the top menu. Do not recreate a stale
+  // dropdown, otherwise the gameplay actions remain dimmed after it closes.
+  languageDropdownPinnedOpen = !mobileRuntime;
+  if (language === getLanguage()) {
+    closeTopMenuDropdowns();
+    return;
+  }
   setLanguage(language);
 };
 
@@ -1250,6 +1275,7 @@ const addSmallFrameHoverOverlay = (
   host: HTMLElement,
   maskSize: number,
 ): void => {
+  if (mobileRuntime) return;
   host.style.position = 'relative';
   host.style.isolation = 'isolate';
   const overlay = document.createElement('span');
@@ -1370,16 +1396,17 @@ const appendMaskedAvatar = (
 const createAvatarFrame = (
   editable: boolean,
   onClick: () => void,
+  size = TOP_MENU_ICON_SIZE,
 ): HTMLElement => {
   const el = editable ? document.createElement('button') : document.createElement('div');
   const name = currentDisplayName();
   el.title = name;
   if (editable) el.setAttribute('aria-label', t('avatar'));
   Object.assign(el.style, {
-    width: `${TOP_MENU_ICON_SIZE}px`,
-    height: `${TOP_MENU_ICON_SIZE}px`,
+    width: `${size}px`,
+    height: `${size}px`,
     padding: '0',
-    background: `url("${SMALL_FRAME_SRC}") center / ${TOP_MENU_ICON_SIZE}px ${TOP_MENU_ICON_SIZE}px no-repeat`,
+    background: `url("${SMALL_FRAME_SRC}") center / ${size}px ${size}px no-repeat`,
     border: 'none',
     borderRadius: '0',
     color: '#fff',
@@ -1390,19 +1417,60 @@ const createAvatarFrame = (
     lineHeight: '1',
     boxSizing: 'border-box',
   } satisfies Partial<CSSStyleDeclaration>);
-  appendMaskedAvatar(el, getPlayerSettings().profile.avatarIndex, name);
+  const imageSize = Math.round((size * TOP_MENU_ICON_IMAGE_SIZE) / TOP_MENU_ICON_SIZE);
+  appendMaskedAvatar(el, getPlayerSettings().profile.avatarIndex, name, imageSize);
   if (editable && el instanceof HTMLButtonElement) {
     el.dataset.uiClickSound = 'none';
-    addSmallFrameHoverOverlay(el, TOP_MENU_ICON_IMAGE_SIZE);
+    addSmallFrameHoverOverlay(el, imageSize);
     bindMouseOnlyClick(el, onClick);
   }
   return el;
 };
 
+const renderMobileProfileControl = (canEditProfile: boolean): void => {
+  const wrap = document.createElement('div');
+  wrap.id = PROFILE_TOP_CONTROL_ID;
+  Object.assign(wrap.style, {
+    position: 'fixed',
+    top: 'var(--gameplay-top-row-offset)',
+    left: MOBILE_GAMEPLAY_EDGE_OFFSET,
+    display: 'flex',
+    alignItems: 'center',
+    gap: `${MOBILE_TOP_MENU_NICKNAME_GAP}px`,
+    height: `${MOBILE_TOP_MENU_ICON_SIZE}px`,
+    zIndex: '45',
+    fontFamily: FONT_FAMILY.ui,
+    color: '#fff',
+    pointerEvents: 'auto',
+  } satisfies Partial<CSSStyleDeclaration>);
+
+  wrap.appendChild(createAvatarFrame(canEditProfile, toggleProfilePopup, MOBILE_TOP_MENU_ICON_SIZE));
+
+  const name = document.createElement('div');
+  name.className = 'player-nickname';
+  name.textContent = currentDisplayName();
+  Object.assign(name.style, {
+    minWidth: '0',
+    maxWidth: `max(0px, calc(50vw - ${MOBILE_TOP_MENU_LOGO_WIDTH / 2 + MOBILE_TOP_MENU_EDGE_OFFSET + MOBILE_TOP_MENU_ICON_SIZE + MOBILE_TOP_MENU_NICKNAME_GAP + MOBILE_TOP_MENU_LOGO_GAP}px))`,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: '30px',
+    lineHeight: '1',
+    textShadow: '0 3px 12px rgba(0,0,0,0.8)',
+  } satisfies Partial<CSSStyleDeclaration>);
+  wrap.appendChild(name);
+  document.body.appendChild(wrap);
+};
+
 const renderLanguageControls = (): void => {
   clearLanguageControls();
   const gameplayActive = isGameplayTopMenu();
-  if (mobileRuntime && gameplayActive) return;
+  const mobileGameplayGrid =
+    mobileRuntime && gameplayActive
+      ? document.getElementById(MOBILE_GAMEPLAY_GRID_ID)
+      : null;
+  const inMobileGameplayGrid = mobileGameplayGrid instanceof HTMLElement;
 
   const canEditProfile = !gameplayActive && currentLobbyView !== 'player-name';
   if (!canEditProfile) clearProfilePopup();
@@ -1410,9 +1478,20 @@ const renderLanguageControls = (): void => {
   wrap.id = LANG_CONTROLS_ID;
   wrap.classList.add('responsive-ui-corner', 'responsive-ui-corner-top-right');
   Object.assign(wrap.style, {
-    position: 'fixed',
-    top: 'var(--gameplay-top-row-offset)',
-    right: `${TOP_MENU_EDGE_OFFSET}px`,
+    position: inMobileGameplayGrid ? 'static' : 'fixed',
+    top: inMobileGameplayGrid ? 'auto' : 'var(--gameplay-top-row-offset)',
+    right: inMobileGameplayGrid
+      ? 'auto'
+      : mobileRuntime
+        ? MOBILE_GAMEPLAY_EDGE_OFFSET
+        : `${TOP_MENU_EDGE_OFFSET}px`,
+    gridColumn: inMobileGameplayGrid ? '4' : 'auto',
+    gridRow: inMobileGameplayGrid ? '1' : 'auto',
+    alignSelf: inMobileGameplayGrid ? 'start' : 'auto',
+    justifySelf: inMobileGameplayGrid ? 'end' : 'auto',
+    marginTop: inMobileGameplayGrid
+      ? 'var(--gameplay-top-row-offset)'
+      : '0',
     display: 'flex',
     alignItems: 'center',
     gap: '16px',
@@ -1422,7 +1501,9 @@ const renderLanguageControls = (): void => {
     pointerEvents: 'auto',
   } satisfies Partial<CSSStyleDeclaration>);
 
-  if (!gameplayActive) {
+  if (!gameplayActive && mobileRuntime && currentLobbyView === 'home') {
+    renderMobileProfileControl(canEditProfile);
+  } else if (!gameplayActive && !mobileRuntime) {
     const name = document.createElement('div');
     name.className = 'player-nickname';
     name.textContent = currentDisplayName();
@@ -1482,7 +1563,7 @@ const renderLanguageControls = (): void => {
     }
     const dropdown = createLanguageDropdown();
     closeTopMenuDropdowns(undefined, { silentSound: true });
-    languageDropdownPinnedOpen = true;
+    languageDropdownPinnedOpen = !mobileRuntime;
     languageItem.appendChild(dropdown);
     openTopMenuDropdown(dropdown);
   });
@@ -1495,7 +1576,10 @@ const renderLanguageControls = (): void => {
   }
   wrap.appendChild(languageItem);
 
-  document.body.appendChild(wrap);
+  (inMobileGameplayGrid ? mobileGameplayGrid : document.body).appendChild(wrap);
+  if (inMobileGameplayGrid) {
+    window.dispatchEvent(new Event(MOBILE_GAMEPLAY_TOP_MENU_RENDERED_EVENT));
+  }
   if (pinnedLanguageDropdown) showTopMenuDropdown(pinnedLanguageDropdown);
 };
 
@@ -1675,15 +1759,23 @@ const createProfilePopup = (): HTMLDivElement => {
     renderLanguageControls();
   };
 
+  nameInput.addEventListener('input', () => {
+    if (!mobileRuntime || !nameInput.value.trim()) return;
+    nameInput.value = saveDisplayName(nameInput.value);
+    renderLanguageControls();
+  });
   nameInput.addEventListener('blur', saveProfileName);
   nameInput.addEventListener('keydown', (event) => {
     if (event.code !== 'Enter') return;
     event.preventDefault();
+    saveProfileName();
     nameInput.blur();
   });
 
   overlay.addEventListener('click', (event) => {
-    if (event.target === overlay) clearProfilePopup();
+    if (event.target !== overlay) return;
+    if (mobileRuntime && nameInput.value.trim()) saveProfileName();
+    clearProfilePopup();
   });
   panel.addEventListener('click', (event) => event.stopPropagation());
   overlay.appendChild(panel);
@@ -1851,8 +1943,6 @@ const handleRoomState = (network: NetworkService, state: RoomState): void => {
   clearLobby();
   clearRoomScreen();
   clearRoomBadge();
-  if (state.mode === ROOM_MODE.TEST) renderBackButton(false);
-  else clearBackButton();
   renderLanguageControls();
   if (!activeGame) {
     mountNetworkGame(network).catch(showError);
@@ -1888,7 +1978,7 @@ const mountNetworkGame = async (network: NetworkService): Promise<void> => {
         mode: 'network',
         network,
         playerSettings: getPlayerSettings(),
-        onExit: returnToLobby,
+        onReturnToLobby: returnToLobby,
       });
       game.warmup();
       if (activeGame || activeNetwork !== network) {
@@ -1920,7 +2010,6 @@ const mountNetworkGame = async (network: NetworkService): Promise<void> => {
     if (!failed) return;
     clearRoomScreen();
     clearRoomBadge();
-    clearBackButton();
     renderHome();
     throw failure;
   })();
@@ -1938,7 +2027,6 @@ const mountNetworkGame = async (network: NetworkService): Promise<void> => {
 const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
   clearLobby();
   clearRoomScreen();
-  clearBackButton();
   renderLanguageControls();
   ensureMenuDiceScene();
 
@@ -2044,6 +2132,7 @@ const renderRoomScreen = (network: NetworkService, state: RoomState): void => {
 
   screen.appendChild(panel);
   document.body.appendChild(screen);
+  applyMobileModalLayer(screen, panel);
 };
 
 const memberSection = (
@@ -2103,15 +2192,7 @@ const formatMember = (
   return userId === ownUserId ? `${name} (${t('youSuffix')})` : name;
 };
 
-const roomModeLabel = (mode: RoomMode): string => {
-  switch (mode) {
-    case ROOM_MODE.TEST:
-      return t('testRoom');
-    case ROOM_MODE.MATCH:
-    default:
-      return t('match');
-  }
-};
+const roomModeLabel = (_mode: RoomMode): string => t('match');
 
 const roomOptionsLabel = (
   options: RoomOptionsPayload = DEFAULT_ROOM_OPTIONS,
@@ -2141,6 +2222,7 @@ const controlActionLabel = (action: ControlAction): string => {
 
 const renderSettingsContent = (card: HTMLElement): void => {
   const current = getPlayerSettings();
+  const showControlBindings = !mobileRuntime;
   let draftControls: ControlBindings = { ...current.controls };
   let draftGameplay: GameplaySettings = { ...current.gameplay };
   let draftProfile: PlayerProfileSettings = { ...current.profile };
@@ -2152,28 +2234,30 @@ const renderSettingsContent = (card: HTMLElement): void => {
   const soundSlidersHost = document.createElement('div');
   card.appendChild(soundSlidersHost);
 
-  appendSectionTitle(card, t('controlsTitle'));
-  const rows = document.createElement('div');
-  Object.assign(rows.style, {
-    display: 'grid',
-    gap: scaledPx(8),
-  } satisfies Partial<CSSStyleDeclaration>);
-
-  for (const action of CONTROL_ACTIONS) {
-    const row = button('', () => {
-      capturing = action;
-      renderRows();
-    });
-    Object.assign(row.style, {
-      width: '100%',
-      justifyContent: 'space-between',
-      background: SETTINGS_BUTTON_BG,
-      border: '1px solid rgba(255,255,255,0.18)',
+  if (showControlBindings) {
+    appendSectionTitle(card, t('controlsTitle'));
+    const rows = document.createElement('div');
+    Object.assign(rows.style, {
+      display: 'grid',
+      gap: scaledPx(8),
     } satisfies Partial<CSSStyleDeclaration>);
-    rowButtons.set(action, row);
-    rows.appendChild(row);
+
+    for (const action of CONTROL_ACTIONS) {
+      const row = button('', () => {
+        capturing = action;
+        renderRows();
+      });
+      Object.assign(row.style, {
+        width: '100%',
+        justifyContent: 'space-between',
+        background: SETTINGS_BUTTON_BG,
+        border: '1px solid rgba(255,255,255,0.18)',
+      } satisfies Partial<CSSStyleDeclaration>);
+      rowButtons.set(action, row);
+      rows.appendChild(row);
+    }
+    card.appendChild(rows);
   }
-  card.appendChild(rows);
 
   appendSectionTitle(card, t('gameplaySettings'));
   const autoRollBtn = button('', () => {
@@ -2208,7 +2292,7 @@ const renderSettingsContent = (card: HTMLElement): void => {
   const resetBtn = createMenuFrameButton(t('resetDefaults'), () => {
     capturing = null;
     const reset = applyDraft(
-      { ...DEFAULT_PLAYER_SETTINGS.controls },
+      showControlBindings ? { ...DEFAULT_PLAYER_SETTINGS.controls } : draftControls,
       { ...DEFAULT_PLAYER_SETTINGS.gameplay },
       draftProfile,
       { ...DEFAULT_PLAYER_SETTINGS.audio },
@@ -2305,10 +2389,12 @@ const renderSettingsContent = (card: HTMLElement): void => {
     error.textContent = validation.valid ? '' : t('duplicateControls');
   }
 
-  window.addEventListener('keydown', keyListener, true);
-  settingsScreenCleanup = () => {
-    window.removeEventListener('keydown', keyListener, true);
-  };
+  if (showControlBindings) {
+    window.addEventListener('keydown', keyListener, true);
+    settingsScreenCleanup = () => {
+      window.removeEventListener('keydown', keyListener, true);
+    };
+  }
   renderSoundSliders();
   renderRows();
 };
@@ -2358,6 +2444,7 @@ const renderSettingsModal = (): void => {
   panel.addEventListener('click', (event) => event.stopPropagation());
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
+  applyMobileModalLayer(overlay, panel);
 };
 
 const createLobbyFrame = (
@@ -2365,9 +2452,9 @@ const createLobbyFrame = (
   onBackdropClick?: () => void,
 ): HTMLDivElement => {
   clearLobby();
-  clearBackButton();
   clearRoomBadge();
   const chromeFree = currentLobbyView === 'home';
+  const mobileTwaHome = mobileRuntime && twaRuntime && chromeFree;
   const lobby = document.createElement('div');
   lobby.id = 'lobby';
   Object.assign(lobby.style, {
@@ -2381,6 +2468,15 @@ const createLobbyFrame = (
     background: chromeFree ? 'transparent' : APP_BACKGROUND_OVERLAY,
     zIndex: '20',
   } satisfies Partial<CSSStyleDeclaration>);
+  if (mobileTwaHome) {
+    lobby.classList.add('mobile-twa-home-lobby');
+    Object.assign(lobby.style, {
+      justifyContent: 'flex-end',
+      gap: '0',
+      padding: '8px max(24px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left))',
+      boxSizing: 'border-box',
+    } satisfies Partial<CSSStyleDeclaration>);
+  }
 
   if (onBackdropClick) {
     lobby.addEventListener('click', (event) => {
@@ -2396,6 +2492,13 @@ const createLobbyFrame = (
     alignItems: 'center',
     gap: scaledPx(22),
   } satisfies Partial<CSSStyleDeclaration>);
+  if (mobileTwaHome) {
+    content.classList.remove('responsive-ui-content');
+    Object.assign(content.style, {
+      width: '100%',
+      gap: '7px',
+    } satisfies Partial<CSSStyleDeclaration>);
+  }
 
   const card = document.createElement('div');
   Object.assign(card.style, {
@@ -2413,6 +2516,13 @@ const createLobbyFrame = (
     fontSize: FONT_SIZE.card,
     boxShadow: chromeFree ? 'none' : '0 12px 32px rgba(0,0,0,0.5)',
   } satisfies Partial<CSSStyleDeclaration>);
+  if (mobileTwaHome) {
+    Object.assign(card.style, {
+      width: '362px',
+      maxWidth: '100%',
+      gap: '7px',
+    } satisfies Partial<CSSStyleDeclaration>);
+  }
   if (onBackdropClick) {
     card.addEventListener('click', (event) => event.stopPropagation());
   }
@@ -2424,15 +2534,16 @@ const createLobbyFrame = (
 };
 
 const appendBrand = (card: HTMLElement): void => {
-  if (mobileRuntime) return;
+  if (mobileRuntime && !twaRuntime) return;
   const brand = document.createElement('img');
+  brand.id = 'main-logo';
   brand.src = MAIN_LOGO_SRC;
   brand.alt = 'Farklepit';
   brand.draggable = false;
   Object.assign(brand.style, {
     display: 'block',
-    width: '741px',
-    height: '251px',
+    width: mobileRuntime ? '300px' : '741px',
+    height: mobileRuntime ? '102px' : '251px',
     maxWidth: 'calc(100vw - 32px)',
     objectFit: 'contain',
     pointerEvents: 'none',
@@ -2481,7 +2592,11 @@ const appendLobbyError = (card: HTMLElement): HTMLDivElement => {
   Object.assign(error.style, {
     color: '#f66',
     fontSize: FONT_SIZE.error,
-    minHeight: scaledPx(16),
+    minHeight:
+      mobileRuntime && twaRuntime && currentLobbyView === 'home'
+        ? '0'
+        : scaledPx(16),
+    textAlign: 'center',
   } satisfies Partial<CSSStyleDeclaration>);
   card.appendChild(error);
   return error;
@@ -2552,19 +2667,6 @@ const appendMenuDownloadLink = (
   applyLargeMenuButtonStyle(link);
   card.appendChild(link);
   return link;
-};
-
-const appendPwaLobbyActions = (card: HTMLElement): void => {
-  const isTwaLaunch = new URLSearchParams(window.location.search).get('twa') === '1';
-  const canDownloadAndroidApk = mobileRuntime && /\bAndroid\b/i.test(navigator.userAgent) && !isTwaLaunch;
-  if (!canDownloadAndroidApk) return;
-
-  appendMenuDownloadLink(
-    card,
-    t('installGame'),
-    ANDROID_APK_DOWNLOAD_URL,
-    'farklepit-android.apk',
-  ).dataset.uiClickSound = 'none';
 };
 
 const createSmallMenuButton = (
@@ -2747,7 +2849,6 @@ const renderOfflineScreen = (): void => {
   clearLobby();
   clearRoomScreen();
   clearRoomBadge();
-  clearBackButton();
   clearLanguageControls();
   clearRoomListModal();
   clearRoomPasswordModal();
@@ -2809,6 +2910,10 @@ const renderHome = (): void => {
     offlineScreenActive = false;
     app.replaceChildren();
   }
+  if (androidApkLanding) {
+    renderAndroidApkLanding();
+    return;
+  }
   if (isMobilePortrait()) {
     showMobileOrientationGate();
     return;
@@ -2820,6 +2925,19 @@ const renderHome = (): void => {
     return;
   }
   renderLobby();
+};
+
+const renderAndroidApkLanding = (): void => {
+  currentLobbyView = 'home';
+  clearLanguageControls();
+  destroyMenuDiceScene();
+  const card = createLobbyFrame(380);
+  appendMenuDownloadLink(
+    card,
+    t('installGame'),
+    ANDROID_APK_DOWNLOAD_URL,
+    'farklepit-android.apk',
+  ).dataset.uiClickSound = 'none';
 };
 
 const renderPlayerNameEntry = (): void => {
@@ -2856,6 +2974,10 @@ const renderPlayerNameEntry = (): void => {
 };
 
 const renderLobby = (): void => {
+  if (androidApkLanding) {
+    renderAndroidApkLanding();
+    return;
+  }
   currentLobbyView = 'home';
   renderLanguageControls();
   const card = createLobbyFrame(380);
@@ -2881,7 +3003,6 @@ const renderLobby = (): void => {
   }
   appendMenuButton(card, t('createRoomMenu'), openCreateRoomMenu).dataset.uiClickSound = 'none';
   appendMenuButton(card, t('joinRoom'), openMultiplayerJoin).dataset.uiClickSound = 'none';
-  appendPwaLobbyActions(card);
   appendLobbyError(card);
 };
 
@@ -3398,6 +3519,7 @@ const openRoomPasswordModal = (
   });
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
+  applyMobileModalLayer(overlay, panel);
   passwordInput.focus();
 };
 

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { CLOSED_HAND_CURSOR_URL, OPEN_HAND_CURSOR_URL } from '../../../assets/asset-manifest';
 import { setCustomCursorVariant } from '../../../../ui/custom-cursor';
 import {
-  isGameInteractionBlocked,
+  isGameplayInteractionBlocked,
   isInteractiveGameTarget,
   requestTopMenuDropdownClose,
 } from '../../../../ui/game-modal-state';
@@ -119,7 +119,7 @@ export class ShakeInputService {
 
   triggerKeyboardThrow(): void {
     if (!this.enabled) return;
-    if (isGameInteractionBlocked()) return;
+    if (isGameplayInteractionBlocked()) return;
     if (this.isHolding) return;
     this.emitSpaceThrow();
   }
@@ -167,7 +167,7 @@ export class ShakeInputService {
 
   private onPointerDown = (event: PointerEvent): void => {
     if (!this.enabled) return;
-    if (isGameInteractionBlocked()) return;
+    if (isGameplayInteractionBlocked()) return;
     if (!event.isPrimary || event.button !== 0) return;
     if (!this.projectToHoldPlane(event) || !this.pointerOverTable) {
       this.updateCursor();
@@ -187,7 +187,7 @@ export class ShakeInputService {
   private onPointerMove = (event: PointerEvent): void => {
     if (!this.enabled) return;
     if (!event.isPrimary) return;
-    if (isGameInteractionBlocked()) {
+    if (isGameplayInteractionBlocked()) {
       this.cancelHold();
       this.pointerOverTable = false;
       this.updateCursor();
@@ -220,7 +220,7 @@ export class ShakeInputService {
   private onPointerUp = (event: PointerEvent): void => {
     if (!this.enabled) return;
     if (!event.isPrimary) return;
-    if (isGameInteractionBlocked()) {
+    if (isGameplayInteractionBlocked()) {
       this.cancelHold();
       this.updateCursor();
       return;
@@ -273,7 +273,7 @@ export class ShakeInputService {
     if (event.code !== this.throwKeyCode) return;
     if (event.repeat || event.defaultPrevented) return;
     if (this.isHolding) return;
-    if (isInteractiveGameTarget(event.target) || isGameInteractionBlocked()) return;
+    if (isInteractiveGameTarget(event.target) || isGameplayInteractionBlocked()) return;
 
     event.preventDefault();
     requestTopMenuDropdownClose();

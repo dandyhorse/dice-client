@@ -92,8 +92,7 @@ export interface GameEngineOptions {
   localMatchConfig?: LocalMatchConfig;
   playerSettings?: PlayerSettings;
   playerDisplayName?: string;
-  onSurrender?: () => void;
-  onExit?: () => void;
+  onReturnToLobby?: () => void;
 }
 
 interface PerfStats {
@@ -189,8 +188,7 @@ export class GameEngine {
   private pendingNetworkAutoRoll = false;
   private networkActionsBlockedUntil = 0;
   private networkActionsBlockTimer: number | null = null;
-  private readonly onSurrender?: () => void;
-  private readonly onExit?: () => void;
+  private readonly onReturnToLobby?: () => void;
   private readonly playerDisplayName: string;
   private readonly unsubscribeLanguage: () => void;
   private playerSettings: PlayerSettings;
@@ -216,8 +214,7 @@ export class GameEngine {
     this.mode = options.mode ?? 'local';
     this.network = options.network ?? null;
     this.localMatchConfig = this.mode === 'local' ? (options.localMatchConfig ?? null) : null;
-    this.onSurrender = options.onSurrender;
-    this.onExit = options.onExit;
+    this.onReturnToLobby = options.onReturnToLobby;
     this.playerDisplayName = options.playerDisplayName?.trim() || t('player');
     this.unsubscribeLanguage = onLanguageChange(this.handleLanguageChange);
     this.playerSettings = options.playerSettings ?? DEFAULT_PLAYER_SETTINGS;
@@ -343,21 +340,16 @@ export class GameEngine {
 
       this.currentRoomState = net.getRoomState();
       const ownUserId = net.getUserId() ?? '';
-      const isTestRoom = this.currentRoomState?.mode === ROOM_MODE.TEST;
       if (this.currentRoomState) this.preloadRoomDicePresetSounds(this.currentRoomState);
       this.syncActiveDicePreset();
-      this.selection = isTestRoom
-        ? null
-        : new SelectionService(this.renderer.domElement, this.camera, this.dice, this.scene);
-      this.benchDice = isTestRoom ? null : new BenchDiceService(this.scene);
-      this.hud = isTestRoom
-        ? null
-        : new HudUiService(
-          ownUserId,
-          playerSettings.controls,
-          (event) => this.input.isPointerInsideThrowZone(event),
-          this.gameplayLayout.reference,
-        );
+      this.selection = new SelectionService(this.renderer.domElement, this.camera, this.dice, this.scene);
+      this.benchDice = new BenchDiceService(this.scene);
+      this.hud = new HudUiService(
+        ownUserId,
+        playerSettings.controls,
+        (event) => this.input.isPointerInsideThrowZone(event),
+        this.gameplayLayout.reference,
+      );
       if (this.currentRoomState) this.hud?.setRoomState(this.currentRoomState);
 
       this.listen(net.events, 'room-state', (state: RoomState) => {
@@ -365,22 +357,13 @@ export class GameEngine {
         this.preloadRoomDicePresetSounds(state);
         this.syncActiveDicePreset();
         this.hud?.setRoomState(state);
-        if (isTestRoom) this.input.setEnabled(this.canUseTestInput(ownUserId));
         this.syncTurnHotkeysEnabled();
       });
 
-      if (isTestRoom) {
-        this.listen(net.events, 'match-state', (state: MatchStatePayload) => {
-          this.currentMatchState = state;
-          this.syncActiveDicePreset();
-          this.input.setEnabled(this.canUseTestInput(ownUserId));
-        });
-        this.input.setEnabled(this.canUseTestInput(ownUserId));
-      } else {
-        // Координация input vs selection: SELECTING на своём ходу включает клик
-        // по костям и выключает hold/release; всё остальное — инверсно.
-        // Без этого pickup() прячет кости как раз когда игрок хочет в них кликать.
-        this.listen(net.events, 'match-state', (state: MatchStatePayload) => {
+      // Координация input vs selection: SELECTING на своём ходу включает клик
+      // по костям и выключает hold/release; всё остальное — инверсно.
+      // Без этого pickup() прячет кости как раз когда игрок хочет в них кликать.
+      this.listen(net.events, 'match-state', (state: MatchStatePayload) => {
           const staggerBench = this.shouldStaggerBenchAppend(this.currentMatchState, state);
           this.currentMatchState = state;
           this.syncActiveDicePreset();
@@ -428,9 +411,9 @@ export class GameEngine {
           }
           this.syncTurnHotkeysEnabled();
           this.tryNetworkAutoRoll();
-        });
+      });
 
-        this.listen(net.events, 'match-roll-result', (r: MatchRollResultPayload) => {
+      this.listen(net.events, 'match-roll-result', (r: MatchRollResultPayload) => {
           if (r.bust) {
             this.networkLastRolledFaces = [];
             this.selection?.clearScoringOptions();
@@ -452,50 +435,50 @@ export class GameEngine {
             this.hud?.setRollResult(r.rolledFaces);
           }
           this.syncTurnHotkeysEnabled();
-        });
+      });
 
-        this.listen(net.events, 'match-turn-result', (r: MatchTurnResultPayload) => {
+      this.listen(net.events, 'match-turn-result', (r: MatchTurnResultPayload) => {
           this.clearNetworkTurnDice();
           if (!r.bust && r.banked > 0) audioService.play('gameplay-bank');
-        });
+      });
 
-        this.listen(net.events, 'match-rematch-state', (payload: MatchRematchStatePayload) => {
+      this.listen(net.events, 'match-rematch-state', (payload: MatchRematchStatePayload) => {
           this.networkRematchRequestedBy = [...payload.requestedBy];
           this.hud?.setFinalRematchRequestedBy(payload.requestedBy);
-        });
+      });
 
-        this.listen(net.events, 'match-selection-preview', (payload: MatchSelectionPreviewPayload) => {
+      this.listen(net.events, 'match-selection-preview', (payload: MatchSelectionPreviewPayload) => {
           if (!this.selection) return;
           if (payload.userId === ownUserId) return;
           const preview = this.withSelectionPreviewPoints(payload);
           this.hud?.setSelectionPreview(preview);
           this.pendingSelectionPreview = preview;
           this.applyPendingSelectionPreview();
-        });
+      });
 
-        this.listen(
-          this.selection?.events,
-          'selection-changed',
-          (indices: number[], valid: boolean, points: number) => {
-            this.hud?.setSelectionState(indices.length, valid, points);
-            if (this.canUseNetworkSelectionControls()) {
-              this.network?.sendSelectionPreview(indices);
-            }
-          },
-        );
+      this.listen(
+        this.selection.events,
+        'selection-changed',
+        (indices: number[], valid: boolean, points: number) => {
+          this.hud?.setSelectionState(indices.length, valid, points);
+          if (this.canUseNetworkSelectionControls()) {
+            this.network?.sendSelectionPreview(indices);
+          }
+        },
+      );
 
-        this.listen(this.hud?.events, 'select-all-clicked', this.handleHotkeySelectAll);
-        this.listen(this.hud?.events, 'continue-clicked', this.handleNetworkContinue);
-        this.listen(this.hud?.events, 'bank-clicked', this.handleNetworkBank);
-        this.listen(this.hud?.events, 'surrender-clicked', this.handleNetworkSurrender);
-        this.listen(this.hud?.events, 'final-exit-clicked', this.handleNetworkFinalExit);
-        this.listen(this.hud?.events, 'rematch-clicked', this.handleNetworkRematch);
+      this.listen(this.hud.events, 'select-all-clicked', this.handleHotkeySelectAll);
+      this.listen(this.hud.events, 'continue-clicked', this.handleNetworkContinue);
+      this.listen(this.hud.events, 'bank-clicked', this.handleNetworkBank);
+      this.listen(this.hud.events, 'rules-clicked', this.handleMobileRules);
+      this.listen(this.hud.events, 'surrender-clicked', this.handleNetworkSurrender);
+      this.listen(this.hud.events, 'final-exit-clicked', this.handleNetworkFinalExit);
+      this.listen(this.hud.events, 'rematch-clicked', this.handleNetworkRematch);
 
-        // До получения первого MATCH_STATE: shake-input выключен, чтобы игрок
-        // не успел отправить release в неподтверждённой фазе. Включится в
-        // обработчике выше, когда придёт состояние "WAITING + own turn".
-        this.input.setEnabled(false);
-      }
+      // До получения первого MATCH_STATE: shake-input выключен, чтобы игрок
+      // не успел отправить release в неподтверждённой фазе. Включится в
+      // обработчике выше, когда придёт состояние "WAITING + own turn".
+      this.input.setEnabled(false);
       net.replayLatestMatchData();
     } else if (this.mode === 'local' && this.localMatchConfig) {
       this.benchDice = new BenchDiceService(this.scene);
@@ -521,8 +504,9 @@ export class GameEngine {
       this.listen(this.hud.events, 'select-all-clicked', this.handleHotkeySelectAll);
       this.listen(this.hud.events, 'continue-clicked', this.handleLocalMatchContinue);
       this.listen(this.hud.events, 'bank-clicked', this.handleLocalMatchBank);
+      this.listen(this.hud.events, 'rules-clicked', this.handleMobileRules);
       this.listen(this.hud.events, 'surrender-clicked', this.handleHotkeySurrender);
-      this.listen(this.hud.events, 'final-exit-clicked', () => this.onSurrender?.());
+      this.listen(this.hud.events, 'final-exit-clicked', () => this.onReturnToLobby?.());
       this.enterLocalMatchTurn();
     } else {
       this.selection = null;
@@ -1014,11 +998,7 @@ export class GameEngine {
     if (!this.canUseTurnHotkeys()) return;
     const selection = this.selection;
     if (!selection) return;
-    if (selection.getSelectedIndices().length > 0) {
-      selection.clear();
-      return;
-    }
-    selection.selectAllAvailable();
+    selection.toggleSelectAllAvailable();
   };
 
   private handleHotkeyContinue = (): void => {
@@ -1030,6 +1010,10 @@ export class GameEngine {
 
     if (!this.canUseNetworkHotkeys() || !this.canSubmitNetworkSelection()) return;
     this.handleNetworkContinue();
+  };
+
+  private handleMobileRules = (): void => {
+    this.rulesBoard.toggle();
   };
 
   private handleHotkeyBank = (): void => {
@@ -1137,7 +1121,7 @@ export class GameEngine {
         this.submitNetworkSurrender();
         return;
       }
-      this.onSurrender?.();
+      this.onReturnToLobby?.();
     });
     noBtn.addEventListener('click', () => this.closeSurrenderConfirm());
     overlay.addEventListener('click', (event) => {
@@ -1239,20 +1223,20 @@ export class GameEngine {
     network
       .leaveRoom()
       .catch(() => undefined)
-      .finally(() => this.onExit?.());
+      .finally(() => this.onReturnToLobby?.());
   };
 
   private handleNetworkFinalExit = (): void => {
     const network = this.network;
     this.pendingNetworkAutoRoll = false;
     if (!network) {
-      this.onExit?.();
+      this.onReturnToLobby?.();
       return;
     }
     network
       .leaveRoom()
       .catch(() => undefined)
-      .finally(() => this.onExit?.());
+      .finally(() => this.onReturnToLobby?.());
   };
 
   private handleNetworkRematch = (): void => {
@@ -1525,13 +1509,6 @@ export class GameEngine {
     } else {
       this.selection.setExternalSelection(payload.indices);
     }
-  }
-
-  private canUseTestInput(ownUserId: string): boolean {
-    const member = this.currentRoomState?.members.find((m) => m.userId === ownUserId);
-    const roomActive = this.currentRoomState?.status === ROOM_STATUS.ACTIVE;
-    const rolling = this.currentMatchState?.phase === MATCH_PHASE.ROLLING;
-    return member?.role === ROOM_ROLE.PLAYER && roomActive && !rolling;
   }
 
   start(): void {
