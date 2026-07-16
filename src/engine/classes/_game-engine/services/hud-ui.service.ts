@@ -561,7 +561,7 @@ export class HudUiService {
     const items: MobileGameplayPlayer[] = ordered.map((member) => {
       const label = formatMember(member.displayName);
       return {
-        displayName: member.userId === this.ownUserId ? `${label} (${t('youSuffix')})` : label,
+        displayName: label,
         avatarIndex: member.avatarIndex,
         total: totals.get(member.userId) ?? 0,
         targetScore,
@@ -763,8 +763,7 @@ export class HudUiService {
         const name = document.createElement('div');
         name.className = 'player-nickname';
         const label = formatMember(member.displayName);
-        name.textContent =
-          member.userId === this.ownUserId ? `${label} (${t('youSuffix')})` : label;
+        name.textContent = label;
         Object.assign(name.style, {
           minWidth: '0',
           overflow: 'hidden',

@@ -92,7 +92,7 @@ class HudUiService {
 - **Кнопки видны** только если `phase === SELECTING && currentPlayer === ownUserId`.
 - **Кнопки enabled** только если `selectedCount > 0` (нельзя отправить пустой выбор — сервер всё равно отвергнет, но UX-фильтр на клиенте дешевле).
 - **Статус-строка** по фазе (см. таблицу в `match-rules.md`).
-- **Player cards**: имя берётся из `RoomState.members[].displayName`, avatar из `RoomState.members[].avatarIndex`. Картинки берутся из tracked runtime-файлов `public/assets/avatars/*.png` через статический список `src/avatars.ts`; если индекс недоступен, используется avatar `0`, если список пуст — initials fallback.
+- **Player cards**: имя берётся из `RoomState.members[].displayName` без suffix `(ты)` / `(you)` во всех desktop и mobile layout, avatar из `RoomState.members[].avatarIndex`. Картинки берутся из tracked runtime-файлов `public/assets/avatars/*.png` через статический список `src/avatars.ts`; если индекс недоступен, используется avatar `0`, если список пуст — initials fallback.
 - **Singleplayer avatars**: local human получает выбранный `PlayerSettings.profile.avatarIndex`; local bot получает следующий доступный avatar index или `0`, если доступна только одна картинка.
 - **Singleplayer bench parity**: local mode now mirrors server `MATCH_STATE.bench`. Continue appends selected faces, hot-dice/bust/bank/new-turn clears it, and `BenchDiceService` renders the held dice just like network mode.
 - **Автобросок после Continue**: если `PlayerSettings.gameplay.autoRollAfterContinue=true`, valid Continue игрока-человека сразу после перехода в local `WAITING` вызывает обычный keyboard throw. Для network этот же intent ждёт авторитативный `MATCH_STATE.WAITING`; бот никогда не использует эту настройку и бросает только своим delay-timer.
